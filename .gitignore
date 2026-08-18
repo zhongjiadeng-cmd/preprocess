@@ -1,0 +1,23 @@
+.DS_Store
+**/.DS_Store
+
+# Python caches and environments
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+
+# .NET build outputs
+**/bin/
+**/obj/
+
+# Generated processing outputs and large input images
+machine_file_*/
+*_dxf/
+*.tif
+*.tiff
+
+# Local implementation-review artifacts
+.superpowers/
+design-evidence/
