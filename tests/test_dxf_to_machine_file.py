@@ -1,5 +1,6 @@
 from pathlib import Path
 from datetime import datetime
+from dataclasses import FrozenInstanceError
 import inspect
 import json
 import os
@@ -41,6 +42,41 @@ def write_dxf(path: Path, rows: list[tuple[float, float, float, float, float, fl
         )
     chunks.append("0\nENDSEC\n0\nEOF\n")
     path.write_text("".join(chunks), encoding="ascii")
+
+
+def write_block_metadata(
+    path: Path,
+    border: int,
+    blocks: list[dict[str, object]],
+) -> None:
+    path.with_suffix(".blocks.json").write_text(
+        json.dumps({"version": 1, "border_line_count": border, "blocks": blocks}),
+        encoding="utf-8",
+    )
+
+
+def write_two_layer_block_fixture(dxf_dir: Path) -> list[Path]:
+    first = dxf_dir / "layer_1_a.dxf"
+    second = dxf_dir / "layer_2_b.dxf"
+    write_dxf(first, [
+        (-1, -1, 0, 1, -1, 0),
+        (11, 7, 0, 14, 3, 0),
+        (19, 4, 0, 16, 0, 0),
+    ])
+    write_block_metadata(first, 1, [
+        {"block_index": 4, "center_x": 10.0, "center_y": 5.0, "line_count": 1},
+        {"block_index": 7, "center_x": 18.0, "center_y": 2.0, "line_count": 1},
+    ])
+    write_dxf(second, [
+        (-2, -2, 0, 2, -2, 0),
+        (-3, 8, 0, -5, 6, 0),
+        (0, 12, 0, -2, 10, 0),
+    ])
+    write_block_metadata(second, 1, [
+        {"block_index": 2, "center_x": -4.0, "center_y": 7.0, "line_count": 1},
+        {"block_index": 9, "center_x": -1.0, "center_y": 11.0, "line_count": 1},
+    ])
+    return [first, second]
 
 
 class ReadDxfLinesTests(unittest.TestCase):
@@ -320,6 +356,225 @@ class MachineDocumentTests(unittest.TestCase):
                 build_machine_document(placements, 3, valid)
 
 
+class BlockMetadataTests(unittest.TestCase):
+    def test_reads_exact_v1_metadata_into_immutable_values(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            dxf = Path(directory) / "layer_1_a.dxf"
+            write_block_metadata(dxf, 4, [
+                {
+                    "block_index": 7,
+                    "center_x": 10.5,
+                    "center_y": -2,
+                    "line_count": 3,
+                }
+            ])
+
+            metadata = machine.read_block_metadata(dxf)
+
+            self.assertEqual(metadata, machine.BlockMetadata(
+                border_line_count=4,
+                blocks=(machine.BlockDefinition(7, 10.5, -2.0, 3),),
+            ))
+            with self.assertRaises(FrozenInstanceError):
+                metadata.border_line_count = 5
+            with self.assertRaises(FrozenInstanceError):
+                metadata.blocks[0].center_x = 11.0
+
+    def test_rejects_missing_malformed_nonregular_and_symlink_sidecars(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            dxf = root / "layer_1_a.dxf"
+            sidecar = dxf.with_suffix(".blocks.json")
+
+            with self.subTest(case="missing"), self.assertRaises(ValueError):
+                machine.read_block_metadata(dxf)
+
+            sidecar.write_text("{broken", encoding="utf-8")
+            with self.subTest(case="malformed"), self.assertRaises(ValueError):
+                machine.read_block_metadata(dxf)
+
+            sidecar.unlink()
+            sidecar.mkdir()
+            with self.subTest(case="directory"), self.assertRaises(ValueError):
+                machine.read_block_metadata(dxf)
+
+            sidecar.rmdir()
+            target = root / "metadata-target.json"
+            target.write_text(
+                json.dumps({"version": 1, "border_line_count": 0, "blocks": []}),
+                encoding="utf-8",
+            )
+            try:
+                sidecar.symlink_to(target)
+            except OSError as exc:
+                self.skipTest(f"symlinks unsupported: {exc}")
+            with self.subTest(case="symlink"), self.assertRaises(ValueError):
+                machine.read_block_metadata(dxf)
+
+    def test_rejects_invalid_top_level_schema_and_types(self) -> None:
+        valid = {"version": 1, "border_line_count": 0, "blocks": []}
+        invalid_documents = {
+            "top-level list": [],
+            "version value": {**valid, "version": 2},
+            "version bool": {**valid, "version": True},
+            "version float": {**valid, "version": 1.0},
+            "missing field": {"version": 1, "blocks": []},
+            "extra field": {**valid, "extra": None},
+            "blocks type": {**valid, "blocks": {}},
+            "border bool": {**valid, "border_line_count": False},
+            "border negative": {**valid, "border_line_count": -1},
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            dxf = Path(directory) / "layer_1_a.dxf"
+            sidecar = dxf.with_suffix(".blocks.json")
+            for case, document in invalid_documents.items():
+                with self.subTest(case=case):
+                    sidecar.write_text(json.dumps(document), encoding="utf-8")
+                    with self.assertRaises(ValueError):
+                        machine.read_block_metadata(dxf)
+
+    def test_rejects_invalid_block_schema_types_values_and_duplicates(self) -> None:
+        valid_block = {
+            "block_index": 0,
+            "center_x": 1.0,
+            "center_y": 2.0,
+            "line_count": 1,
+        }
+        invalid_blocks = {
+            "block not object": [None],
+            "missing field": [
+                {key: value for key, value in valid_block.items() if key != "center_x"}
+            ],
+            "extra field": [{**valid_block, "extra": None}],
+            "index bool": [{**valid_block, "block_index": True}],
+            "index negative": [{**valid_block, "block_index": -1}],
+            "line count bool": [{**valid_block, "line_count": False}],
+            "line count negative": [{**valid_block, "line_count": -1}],
+            "center bool": [{**valid_block, "center_x": True}],
+            "center string": [{**valid_block, "center_y": "2"}],
+            "center nan": [{**valid_block, "center_x": float("nan")}],
+            "center infinity": [{**valid_block, "center_y": float("inf")}],
+            "duplicate index": [valid_block, {**valid_block, "center_x": 9.0}],
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            dxf = Path(directory) / "layer_1_a.dxf"
+            for case, blocks in invalid_blocks.items():
+                with self.subTest(case=case):
+                    write_block_metadata(dxf, 0, blocks)
+                    with self.assertRaises(ValueError):
+                        machine.read_block_metadata(dxf)
+
+
+class PatchPlanTests(unittest.TestCase):
+    def test_block_plan_excludes_border_skips_empty_and_localizes_xy(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            dxf = Path(directory) / "layer_1_a.dxf"
+            write_dxf(dxf, [
+                (-5, -5, 0, 5, -5, 0), (5, -5, 0, 5, 5, 0),
+                (5, 5, 0, -5, 5, 0), (-5, 5, 0, -5, -5, 0),
+                (11, 7, 0, 14, 3, 0), (20, 8, 0, 23, 9, 0),
+            ])
+            write_block_metadata(dxf, 4, [
+                {"block_index": 4, "center_x": 10.0, "center_y": 5.0, "line_count": 1},
+                {"block_index": 7, "center_x": 15.0, "center_y": 6.0, "line_count": 0},
+                {"block_index": 2, "center_x": 20.0, "center_y": 8.0, "line_count": 1},
+            ])
+
+            plan = machine.build_patch_plan([dxf], block_center_positioning=True)
+
+            self.assertEqual([item.placement for item in plan], [
+                PatchPlacement(0, 10.0, 5.0), PatchPlacement(0, 20.0, 8.0)
+            ])
+            np.testing.assert_array_equal(plan[0].lines, np.array([
+                [11, 7, 0, 14, 3, 0]
+            ], dtype=np.float64))
+            np.testing.assert_array_equal(plan[1].lines, np.array([
+                [20, 8, 0, 23, 9, 0]
+            ], dtype=np.float64))
+            patch = make_patch(
+                plan[0].lines,
+                layer_index=plan[0].placement.layer_index,
+                layer_step_um=6,
+                center_x=plan[0].placement.center_x,
+                center_y=plan[0].placement.center_y,
+            )
+            np.testing.assert_array_equal(patch[0, [0, 1, 3, 4]], [1, 2, 4, -2])
+
+    def test_unblocked_plan_retains_all_lines_without_opening_sidecar(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            dxf = Path(directory) / "layer_1_a.dxf"
+            rows = [(1, 2, 3, 4, 5, 6), (7, 8, 9, 10, 11, 12)]
+            write_dxf(dxf, rows)
+            dxf.with_suffix(".blocks.json").mkdir()
+
+            plan = machine.build_patch_plan([dxf], block_center_positioning=False)
+
+            self.assertEqual(
+                [item.placement for item in plan],
+                [PatchPlacement(0, 0.0, 0.0)],
+            )
+            np.testing.assert_array_equal(plan[0].lines, np.array(rows, dtype=np.float64))
+
+    def test_rejects_metadata_counts_that_do_not_consume_every_line(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            dxf = Path(directory) / "layer_1_a.dxf"
+            write_dxf(dxf, [(1, 2, 0, 3, 4, 0), (5, 6, 0, 7, 8, 0)])
+            for case, border, line_count in (
+                ("under-count", 0, 1),
+                ("over-count", 1, 2),
+            ):
+                with self.subTest(case=case):
+                    write_block_metadata(dxf, border, [{
+                        "block_index": 0,
+                        "center_x": 0.0,
+                        "center_y": 0.0,
+                        "line_count": line_count,
+                    }])
+                    with self.assertRaises(ValueError):
+                        machine.build_patch_plan([dxf], block_center_positioning=True)
+
+    def test_rejects_all_empty_block_plan_and_empty_layer_list(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            dxf = Path(directory) / "layer_1_a.dxf"
+            write_dxf(dxf, [(1, 2, 0, 3, 4, 0), (5, 6, 0, 7, 8, 0)])
+            write_block_metadata(dxf, 2, [{
+                "block_index": 0,
+                "center_x": 0.0,
+                "center_y": 0.0,
+                "line_count": 0,
+            }])
+
+            with self.assertRaises(ValueError):
+                machine.build_patch_plan([dxf], block_center_positioning=True)
+            for block_center_positioning in (False, True):
+                with self.subTest(block_center_positioning=block_center_positioning):
+                    with self.assertRaises(ValueError):
+                        machine.build_patch_plan([], block_center_positioning)
+
+    def test_rejects_an_empty_block_layer_even_when_another_layer_has_a_patch(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            first = root / "layer_1_a.dxf"
+            second = root / "layer_2_b.dxf"
+            write_dxf(first, [(1, 2, 0, 3, 4, 0)])
+            write_block_metadata(first, 0, [{
+                "block_index": 0,
+                "center_x": 1.0,
+                "center_y": 2.0,
+                "line_count": 1,
+            }])
+            write_dxf(second, [(5, 6, 0, 7, 8, 0)])
+            write_block_metadata(second, 1, [{
+                "block_index": 1,
+                "center_x": 5.0,
+                "center_y": 6.0,
+                "line_count": 0,
+            }])
+
+            with self.assertRaises(ValueError):
+                machine.build_patch_plan([first, second], block_center_positioning=True)
+
+
 class OutputNameTests(unittest.TestCase):
     def test_resolves_valid_and_deterministic_blank_names(self) -> None:
         instant = datetime(2026, 8, 17, 12, 34, 56)
@@ -441,6 +696,80 @@ class GenerateMachineFileTests(unittest.TestCase):
             np.testing.assert_array_equal(second[:, [2, 5]], np.array([[-0.003, -0.003], [-0.003, -0.003]], dtype="<f4"))
             document = json.loads((result / "machine.json").read_text(encoding="utf-8"))
             self.assertEqual(document["laser_params"][0]["power"], 41)
+
+    def test_generates_two_layer_block_local_package_and_relative_commands(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            dxf_dir = root / "dxfs"
+            dxf_dir.mkdir()
+            write_two_layer_block_fixture(dxf_dir)
+
+            result = generate_machine_file(
+                dxf_dir,
+                "job",
+                6,
+                dict(DEFAULT_LASER_PARAMS[0]),
+                block_center_positioning=True,
+            )
+
+            patches = result / "patches"
+            self.assertEqual(sorted(path.name for path in patches.iterdir()), [
+                "0_0.npy", "1_0.npy", "2_0.npy", "3_0.npy"
+            ])
+            expected_xy = (
+                [1, 2, 4, -2],
+                [1, 2, -2, -2],
+                [1, 1, -1, -1],
+                [1, 1, -1, -1],
+            )
+            for index, xy in enumerate(expected_xy):
+                patch = np.load(patches / f"{index}_0.npy", allow_pickle=False)
+                np.testing.assert_array_equal(patch[0, [0, 1, 3, 4]], xy)
+                np.testing.assert_array_equal(
+                    patch[0, [2, 5]],
+                    np.array(
+                        [0.0, 0.0] if index < 2 else [-0.006, -0.006],
+                        dtype="<f4",
+                    ),
+                )
+            document = json.loads((result / "machine.json").read_text(encoding="utf-8"))
+            commands = [
+                cycle["galvo_0"][1]
+                for cycle in document["machine_cycle"]
+            ]
+            self.assertEqual(commands, [
+                "G91G00X10.000Y5.000Z0.000F40",
+                "G00X8.000Y-3.000Z0.000F40",
+                "G00X-22.000Y5.000Z-0.006F40",
+                "G00X3.000Y4.000Z0.000F40G90",
+            ])
+
+    def test_block_mode_rejects_all_empty_layer_without_publishing(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            dxf_dir = root / "dxfs"
+            dxf_dir.mkdir()
+            dxf = dxf_dir / "layer_1_a.dxf"
+            write_dxf(dxf, [(1, 2, 0, 3, 4, 0)])
+            write_block_metadata(dxf, 1, [{
+                "block_index": 0,
+                "center_x": 1.0,
+                "center_y": 2.0,
+                "line_count": 0,
+            }])
+
+            with self.assertRaises(ValueError):
+                generate_machine_file(
+                    dxf_dir,
+                    "job",
+                    6,
+                    dict(DEFAULT_LASER_PARAMS[0]),
+                    block_center_positioning=True,
+                )
+
+            self.assertFalse(os.path.lexists(root / "job"))
+            self.assertFalse(os.path.lexists(root / ".job.building"))
+            self.assertFalse(os.path.lexists(root / ".job.lock"))
 
     def test_strips_nonblank_output_name_before_creating_package(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -775,6 +1104,20 @@ class ValidateMachineDirectoryTests(unittest.TestCase):
             PlannedPatch(PatchPlacement(1, 0.0, 0.0), second_lines),
         ]
 
+    def _make_block_package(self, root: Path) -> tuple[Path, list[PlannedPatch]]:
+        dxf_dir = root / "dxfs"
+        dxf_dir.mkdir()
+        layer_files = write_two_layer_block_fixture(dxf_dir)
+        plan = machine.build_patch_plan(layer_files, block_center_positioning=True)
+        package = generate_machine_file(
+            dxf_dir,
+            "job",
+            6,
+            dict(DEFAULT_LASER_PARAMS[0]),
+            block_center_positioning=True,
+        )
+        return package, plan
+
     def test_rejects_subresolution_step_before_reading_machine_directory(self) -> None:
         plan = [
             PlannedPatch(
@@ -818,6 +1161,22 @@ class ValidateMachineDirectoryTests(unittest.TestCase):
             np.save(patch_path, patch)
             with self.assertRaises(ValueError):
                 validate_machine_directory(package, plan, 3, dict(DEFAULT_LASER_PARAMS[0]))
+
+    def test_rejects_tampered_same_layer_block_local_patch(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            package, plan = self._make_block_package(Path(directory))
+            patch_path = package / "patches" / "1_0.npy"
+            patch = np.load(patch_path, allow_pickle=False)
+            patch[0, 0] += 1
+            np.save(patch_path, patch)
+
+            with self.assertRaises(ValueError):
+                validate_machine_directory(
+                    package,
+                    plan,
+                    6,
+                    dict(DEFAULT_LASER_PARAMS[0]),
+                )
 
     def test_rejects_bad_cycle_reference(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -908,6 +1267,7 @@ class CliTests(unittest.TestCase):
             self.assertEqual(completed.returncode, 0, completed.stderr)
             self.assertIn("加工文件生成完成", completed.stdout)
             self.assertIn("层数: 2", completed.stdout)
+            self.assertIn("补丁数: 2", completed.stdout)
             self.assertIn("线段总数: 3", completed.stdout)
             self.assertIn("Z 范围: -0.005000 ～ 0.000000 mm", completed.stdout)
             self.assertIn(f"输出目录: {(root / 'cli-job').absolute()}", completed.stdout)
@@ -941,6 +1301,60 @@ class CliTests(unittest.TestCase):
                 second_patch[:, [2, 5]],
                 np.array([[-0.005, -0.005], [-0.005, -0.005]], dtype="<f4"),
             )
+
+    def test_cli_generates_block_local_package_and_reports_layer_and_patch_counts(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            dxf_dir = root / "dxfs"
+            dxf_dir.mkdir()
+            write_two_layer_block_fixture(dxf_dir)
+
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    str(Path(__file__).parents[1] / "dxf_to_machine_file.py"),
+                    str(dxf_dir),
+                    "cli-block-job",
+                    "--layer-step-um", "6",
+                    "--block-center-positioning",
+                ],
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            self.assertIn("层数: 2", completed.stdout)
+            self.assertIn("补丁数: 4", completed.stdout)
+            self.assertEqual(
+                sorted(path.name for path in (root / "cli-block-job" / "patches").iterdir()),
+                ["0_0.npy", "1_0.npy", "2_0.npy", "3_0.npy"],
+            )
+
+    def test_cli_missing_block_metadata_fails_without_publishing(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            dxf_dir = root / "dxfs"
+            dxf_dir.mkdir()
+            write_dxf(dxf_dir / "layer_1_a.dxf", [(1, 2, 0, 3, 4, 0)])
+
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    str(Path(__file__).parents[1] / "dxf_to_machine_file.py"),
+                    str(dxf_dir),
+                    "cli-block-job",
+                    "--block-center-positioning",
+                ],
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+
+            self.assertNotEqual(completed.returncode, 0)
+            self.assertFalse(os.path.lexists(root / "cli-block-job"))
+            self.assertFalse(os.path.lexists(root / ".cli-block-job.building"))
+            self.assertFalse(os.path.lexists(root / ".cli-block-job.lock"))
 
 
 if __name__ == "__main__":

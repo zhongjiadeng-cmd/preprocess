@@ -68,6 +68,24 @@ class PlannedPatch:
     lines: np.ndarray
 
 
+@dataclass(frozen=True)
+class BlockDefinition:
+    """The center and LINE count recorded for one source hatch block."""
+
+    block_index: int
+    center_x: float
+    center_y: float
+    line_count: int
+
+
+@dataclass(frozen=True)
+class BlockMetadata:
+    """Validated v1 block metadata for one layered DXF."""
+
+    border_line_count: int
+    blocks: tuple[BlockDefinition, ...]
+
+
 def _validate_layer_step(layer_step_um: float) -> None:
     if (
         isinstance(layer_step_um, bool)
@@ -269,6 +287,127 @@ def read_dxf_lines(path: Path) -> np.ndarray:
     return np.array(rows, dtype=np.float64)
 
 
+def _reject_duplicate_json_keys(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    result: dict[str, object] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"duplicate metadata field: {key}")
+        result[key] = value
+    return result
+
+
+def read_block_metadata(dxf_path: Path) -> BlockMetadata:
+    """Read and strictly validate the v1 sidecar for one DXF."""
+    sidecar_path = dxf_path.with_suffix(".blocks.json")
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    fd: int | None = None
+    try:
+        if not hasattr(os, "O_NOFOLLOW"):
+            path_stat = os.lstat(sidecar_path)
+            if stat.S_ISLNK(path_stat.st_mode):
+                raise ValueError("block metadata must not be a symlink")
+        fd = os.open(sidecar_path, flags)
+        opened_stat = os.fstat(fd)
+        if not stat.S_ISREG(opened_stat.st_mode):
+            raise ValueError("block metadata must be a regular file")
+        with os.fdopen(fd, "r", encoding="utf-8") as sidecar_file:
+            fd = None
+            document = json.load(
+                sidecar_file,
+                object_pairs_hook=_reject_duplicate_json_keys,
+            )
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise ValueError(f"invalid block metadata: {sidecar_path}") from exc
+    finally:
+        if fd is not None:
+            os.close(fd)
+
+    if type(document) is not dict or set(document) != {
+        "version", "border_line_count", "blocks"
+    }:
+        raise ValueError("block metadata must contain exactly the v1 top-level fields")
+    if type(document["version"]) is not int or document["version"] != 1:
+        raise ValueError("block metadata version must be integer 1")
+    border_line_count = document["border_line_count"]
+    if type(border_line_count) is not int or border_line_count < 0:
+        raise ValueError("border_line_count must be a non-negative integer")
+    block_values = document["blocks"]
+    if type(block_values) is not list:
+        raise ValueError("blocks must be a list")
+
+    blocks: list[BlockDefinition] = []
+    block_indices: set[int] = set()
+    for block_value in block_values:
+        if type(block_value) is not dict or set(block_value) != {
+            "block_index", "center_x", "center_y", "line_count"
+        }:
+            raise ValueError("each block must contain exactly the required fields")
+        block_index = block_value["block_index"]
+        line_count = block_value["line_count"]
+        if type(block_index) is not int or block_index < 0:
+            raise ValueError("block_index must be a non-negative integer")
+        if block_index in block_indices:
+            raise ValueError("block indices must be unique")
+        if type(line_count) is not int or line_count < 0:
+            raise ValueError("line_count must be a non-negative integer")
+        centers = (block_value["center_x"], block_value["center_y"])
+        if any(type(center) not in (int, float) or not np.isfinite(center) for center in centers):
+            raise ValueError("block centers must be finite numbers")
+        block_indices.add(block_index)
+        blocks.append(BlockDefinition(
+            block_index=block_index,
+            center_x=float(centers[0]),
+            center_y=float(centers[1]),
+            line_count=line_count,
+        ))
+    return BlockMetadata(
+        border_line_count=border_line_count,
+        blocks=tuple(blocks),
+    )
+
+
+def build_patch_plan(
+    layer_files: list[Path],
+    block_center_positioning: bool,
+) -> list[PlannedPatch]:
+    """Build source-coordinate patches for unblocked or block-local generation."""
+    if type(layer_files) is not list or not layer_files:
+        raise ValueError("layer_files must be a non-empty list")
+    if type(block_center_positioning) is not bool:
+        raise ValueError("block_center_positioning must be a bool")
+
+    plan: list[PlannedPatch] = []
+    for layer_index, layer_file in enumerate(layer_files):
+        lines = read_dxf_lines(layer_file)
+        if not block_center_positioning:
+            plan.append(PlannedPatch(
+                PatchPlacement(layer_index, 0.0, 0.0),
+                lines,
+            ))
+            continue
+
+        metadata = read_block_metadata(layer_file)
+        cursor = metadata.border_line_count
+        layer_plan: list[PlannedPatch] = []
+        for block in metadata.blocks:
+            next_cursor = cursor + block.line_count
+            if block.line_count:
+                layer_plan.append(PlannedPatch(
+                    PatchPlacement(layer_index, block.center_x, block.center_y),
+                    lines[cursor:next_cursor],
+                ))
+            cursor = next_cursor
+        if cursor != len(lines):
+            raise ValueError("block metadata counts must consume every DXF LINE")
+        if not layer_plan:
+            raise ValueError("each block-positioned layer must contain a non-empty block")
+        plan.extend(layer_plan)
+
+    if not plan:
+        raise ValueError("patch plan must not be empty")
+    return plan
+
+
 def make_patch(
     lines: np.ndarray,
     layer_index: int,
@@ -387,6 +526,7 @@ def generate_machine_file(
     layer_step_um: float,
     first_laser_params: dict[str, object],
     owner_token: str | None = None,
+    block_center_positioning: bool = False,
 ) -> Path:
     """Generate, validate, and atomically publish a machine-file directory."""
     _validate_layer_step(layer_step_um)
@@ -423,12 +563,9 @@ def generate_machine_file(
         os.mkdir(temp_path)
         temp_stat = os.lstat(temp_path)
         temp_identity = (temp_stat.st_dev, temp_stat.st_ino)
-        (temp_path / "patches").mkdir()
         layer_files = discover_layer_dxf_files(dxf_dir)
-        planned_patches = [
-            PlannedPatch(PatchPlacement(index, 0.0, 0.0), read_dxf_lines(layer_file))
-            for index, layer_file in enumerate(layer_files)
-        ]
+        planned_patches = build_patch_plan(layer_files, block_center_positioning)
+        (temp_path / "patches").mkdir()
         for index, planned_patch in enumerate(planned_patches):
             patch = make_patch(
                 planned_patch.lines,
@@ -554,6 +691,11 @@ def _build_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument("output_name", nargs="?")
     parser.add_argument("--owner-token")
     parser.add_argument("--layer-step-um", type=float, default=3)
+    parser.add_argument(
+        "--block-center-positioning",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+    )
     integer_options = (
         ("--power", "power"),
         ("--frequency", "frequency"),
@@ -586,6 +728,7 @@ def _build_argument_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = _build_argument_parser().parse_args(argv)
+    layer_count = len(discover_layer_dxf_files(args.dxf_dir))
     params = {
         key: getattr(args, key)
         for key in DEFAULT_LASER_PARAMS[0]
@@ -596,6 +739,7 @@ def main(argv: list[str] | None = None) -> int:
         args.layer_step_um,
         params,
         owner_token=args.owner_token,
+        block_center_positioning=args.block_center_positioning,
     )
     patches = [
         np.load(path, allow_pickle=False)
@@ -604,7 +748,8 @@ def main(argv: list[str] | None = None) -> int:
     line_count = sum(patch.shape[0] for patch in patches)
     z_values = np.concatenate([patch[:, 2] for patch in patches])
     print("加工文件生成完成")
-    print(f"层数: {len(patches)}")
+    print(f"层数: {layer_count}")
+    print(f"补丁数: {len(patches)}")
     print(f"线段总数: {line_count}")
     print(f"Z 范围: {float(z_values.min()):.6f} ～ {float(z_values.max()):.6f} mm")
     print(f"输出目录: {output_path}")
