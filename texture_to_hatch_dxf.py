@@ -11,7 +11,10 @@
 from __future__ import annotations
 
 import argparse
+import json
 import math
+import os
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TextIO
@@ -43,6 +46,65 @@ class VoronoiBlock:
     seed_y: float
     polygon: tuple[tuple[float, float], ...]
     area: float
+
+
+def block_metadata_path(dxf_path: Path) -> Path:
+    return dxf_path.with_suffix(".blocks.json")
+
+
+def build_block_metadata(
+    voronoi_blocks: list[VoronoiBlock],
+    block_order: list[int],
+    ordered_block_counts: list[int],
+    border_line_count: int,
+) -> dict[str, object]:
+    if len(block_order) != len(ordered_block_counts):
+        raise ValueError("block_order and ordered_block_counts must have equal lengths")
+    return {
+        "version": 1,
+        "border_line_count": border_line_count,
+        "blocks": [
+            {
+                "block_index": voronoi_blocks[index].index,
+                "center_x": voronoi_blocks[index].seed_x,
+                "center_y": voronoi_blocks[index].seed_y,
+                "line_count": count,
+            }
+            for index, count in zip(block_order, ordered_block_counts)
+        ],
+    }
+
+
+def write_block_metadata(path: Path, document: dict[str, object]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary_path: Path | None = None
+    try:
+        file_descriptor, temporary_name = tempfile.mkstemp(
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            dir=path.parent,
+        )
+        temporary_path = Path(temporary_name)
+        with os.fdopen(
+            file_descriptor,
+            "w",
+            encoding="utf-8",
+            newline="",
+        ) as stream:
+            json.dump(
+                document,
+                stream,
+                ensure_ascii=False,
+                allow_nan=False,
+                indent=4,
+            )
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary_path, path)
+        temporary_path = None
+    finally:
+        if temporary_path is not None:
+            temporary_path.unlink(missing_ok=True)
 
 
 def read_binary_texture(
@@ -620,6 +682,7 @@ def export_horizontal_hatch_dxf(
     include_border: bool = False,
     bidirectional: bool = False,
     voronoi_blocks: list[VoronoiBlock] | None = None,
+    block_metadata_output: Path | None = None,
     boundary_blur_mm: float = 0.0,
     boundary_correlation_mm: float = 1.0,
     random_seed: int = 12345,
@@ -838,6 +901,17 @@ def export_horizontal_hatch_dxf(
         dxf_pair(stream, 0, "ENDSEC")
         dxf_pair(stream, 0, "EOF")
 
+    if block_metadata_output is not None and scan_blocks:
+        write_block_metadata(
+            block_metadata_output,
+            build_block_metadata(
+                voronoi_blocks,
+                block_order,
+                ordered_block_counts,
+                4 if include_border else 0,
+            ),
+        )
+
     return line_count, ordered_block_counts
 
 
@@ -925,6 +999,7 @@ def convert_texture_to_dxf(
         if voronoi_block_count > 0
         else None
     )
+    metadata_output = block_metadata_path(output_path) if voronoi_blocks else None
 
     line_count, block_line_counts = export_horizontal_hatch_dxf(
         fitted,
@@ -938,6 +1013,7 @@ def convert_texture_to_dxf(
         include_border=include_border,
         bidirectional=bidirectional,
         voronoi_blocks=voronoi_blocks,
+        block_metadata_output=metadata_output,
         boundary_blur_mm=boundary_blur_mm,
         boundary_correlation_mm=boundary_correlation_mm,
         random_seed=random_seed,
@@ -989,6 +1065,7 @@ def convert_texture_to_dxf(
             "各块 LINE 数量（按输出顺序）: "
             + ", ".join(str(count) for count in block_line_counts)
         )
+        print(f"块元数据: {metadata_output}")
     else:
         print("Voronoi 分块: 关闭")
     print(f"DXF LINE 数量: {line_count}")

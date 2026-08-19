@@ -1,12 +1,17 @@
 from pathlib import Path
+import json
 import math
 import tempfile
 import unittest
 
 import numpy as np
+from PIL import Image
 
 from texture_to_hatch_dxf import (
+    VoronoiBlock,
+    block_metadata_path,
     create_constrained_voronoi_blocks,
+    convert_texture_to_dxf,
     export_horizontal_hatch_dxf,
 )
 
@@ -27,6 +32,77 @@ def read_line_coordinates(path: Path) -> list[tuple[float, float, float, float]]
             continue
         index += 2
     return entities
+
+
+class BlockMetadataTests(unittest.TestCase):
+    def test_writes_centers_counts_in_actual_dxf_block_order(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "layer_01.dxf"
+            metadata = block_metadata_path(output)
+            blocks = [
+                VoronoiBlock(0, -2.0, -1.0, ((-5, -5), (0, -5), (0, 5), (-5, 5)), 50),
+                VoronoiBlock(1, 2.0, 1.0, ((0, -5), (5, -5), (5, 5), (0, 5)), 50),
+            ]
+            _, counts = export_horizontal_hatch_dxf(
+                np.ones((10, 10), dtype=bool), output,
+                10, 10, 1, 1, 1,
+                voronoi_blocks=blocks,
+                block_metadata_output=metadata,
+            )
+
+            document = json.loads(metadata.read_text(encoding="utf-8"))
+            self.assertEqual(document["version"], 1)
+            self.assertEqual(document["border_line_count"], 0)
+            self.assertEqual([block["line_count"] for block in document["blocks"]], counts)
+            self.assertEqual(
+                [(block["center_x"], block["center_y"]) for block in document["blocks"]],
+                [(2.0, 1.0), (-2.0, -1.0)],
+            )
+
+    def test_records_four_border_lines_before_block_lines(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "layer_01.dxf"
+            metadata = block_metadata_path(output)
+            blocks = create_constrained_voronoi_blocks(10, 10, 2, random_seed=7)
+            export_horizontal_hatch_dxf(
+                np.ones((10, 10), dtype=bool), output,
+                10, 10, 1, 1, 1,
+                include_border=True,
+                voronoi_blocks=blocks,
+                block_metadata_output=metadata,
+            )
+            document = json.loads(metadata.read_text(encoding="utf-8"))
+            self.assertEqual(document["border_line_count"], 4)
+            self.assertEqual(
+                4 + sum(block["line_count"] for block in document["blocks"]),
+                len(read_line_coordinates(output)),
+            )
+
+    def test_convert_writes_sidecar_only_when_blocks_are_enabled(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            input_path = root / "texture.tiff"
+            Image.fromarray(np.zeros((10, 10), dtype=np.uint8)).save(
+                input_path, dpi=(25.4, 25.4)
+            )
+            blocked = root / "blocked.dxf"
+            plain = root / "plain.dxf"
+            common = dict(
+                target_width_mm=10,
+                target_height_mm=10,
+                hatch_spacing_mm=1,
+                tile_mode="repeat",
+                min_block_area_mm2=0,
+                max_block_area_mm2=100,
+            )
+            convert_texture_to_dxf(
+                input_path, blocked, voronoi_block_count=2, **common
+            )
+            convert_texture_to_dxf(
+                input_path, plain, voronoi_block_count=0, **common
+            )
+            self.assertTrue(block_metadata_path(blocked).is_file())
+            self.assertFalse(block_metadata_path(plain).exists())
 
 
 class AngledHatchTests(unittest.TestCase):
