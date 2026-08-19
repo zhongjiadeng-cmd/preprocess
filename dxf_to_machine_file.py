@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 from copy import deepcopy
 import ctypes
+from dataclasses import dataclass
 from datetime import datetime
 import errno
 import json
@@ -50,6 +51,23 @@ DEFAULT_GALVO_OFFSET: dict[str, list[int]] = {"galvo_0": [0, 0, 0, 0]}
 _BOOLEAN_LASER_KEYS = {"scan_ahead", "sky_writing"}
 
 
+@dataclass(frozen=True)
+class PatchPlacement:
+    """The layer and global center for a single planned patch."""
+
+    layer_index: int
+    center_x: float
+    center_y: float
+
+
+@dataclass(frozen=True)
+class PlannedPatch:
+    """A patch's placement and its source-coordinate DXF line segments."""
+
+    placement: PatchPlacement
+    lines: np.ndarray
+
+
 def _validate_layer_step(layer_step_um: float) -> None:
     if (
         isinstance(layer_step_um, bool)
@@ -69,6 +87,41 @@ def _validate_first_laser_params(params: dict[str, object]) -> None:
                 raise ValueError(f"{key} must be a bool")
         elif type(value) is not int:
             raise ValueError(f"{key} must be an int")
+
+
+def _validate_placements(placements: list[PatchPlacement]) -> None:
+    if not isinstance(placements, list) or not placements:
+        raise ValueError("placements must be a non-empty list")
+
+    previous_layer: int | None = None
+    for placement in placements:
+        if not isinstance(placement, PatchPlacement):
+            raise ValueError("placements must contain PatchPlacement values")
+        if (
+            isinstance(placement.layer_index, bool)
+            or not isinstance(placement.layer_index, (int, np.integer))
+            or placement.layer_index < 0
+        ):
+            raise ValueError("placement layer_index must be a non-negative integer")
+        for center in (placement.center_x, placement.center_y):
+            if (
+                isinstance(center, bool)
+                or not isinstance(center, (int, float, np.integer, np.floating))
+                or not np.isfinite(center)
+            ):
+                raise ValueError("placement centers must be finite numbers")
+        layer_index = int(placement.layer_index)
+        if previous_layer is None:
+            if layer_index != 0:
+                raise ValueError("placements must start at layer zero")
+        elif layer_index not in {previous_layer, previous_layer + 1}:
+            raise ValueError("placement layers must repeat or advance by one")
+        previous_layer = layer_index
+
+
+def _rounded_machine_coordinate(value: float) -> float:
+    rounded = float(f"{value:.3f}")
+    return 0.0 if rounded == 0.0 else rounded
 
 
 def _validate_owner_token(owner_token: str) -> None:
@@ -94,26 +147,33 @@ def resolve_output_name(output_name: str | None, now: datetime | None = None) ->
 
 
 def build_machine_document(
-    layer_count: int,
+    placements: list[PatchPlacement],
     layer_step_um: float,
     first_laser_params: dict[str, object],
 ) -> dict[str, object]:
     """Build the complete machine.json object in its required insertion order."""
-    if isinstance(layer_count, bool) or not isinstance(layer_count, int) or layer_count <= 0:
-        raise ValueError("layer_count must be a positive integer")
+    _validate_placements(placements)
     _validate_layer_step(layer_step_um)
     _validate_first_laser_params(first_laser_params)
     step_mm = layer_step_um / 1000
-    cycles = [
-        {
-            "galvo_0": [
-                0,
-                f"G00X0.000Y0.000Z{(0.0 if index == 0 else -(index * step_mm)):.3f}F40",
-                [index, 0],
-            ]
-        }
-        for index in range(layer_count)
-    ]
+    previous_commanded_x = previous_commanded_y = 0.0
+    previous_layer = 0
+    cycles = []
+    for patch_index, placement in enumerate(placements):
+        target_x = _rounded_machine_coordinate(float(placement.center_x))
+        target_y = _rounded_machine_coordinate(float(placement.center_y))
+        delta_x = _rounded_machine_coordinate(target_x - previous_commanded_x)
+        delta_y = _rounded_machine_coordinate(target_y - previous_commanded_y)
+        delta_z = 0.0 if placement.layer_index == previous_layer else -step_mm
+        command = f"G00X{delta_x:.3f}Y{delta_y:.3f}Z{delta_z:.3f}F40"
+        if patch_index == 0:
+            command = "G91" + command
+        if patch_index == len(placements) - 1:
+            command += "G90"
+        cycles.append({"galvo_0": [0, command, [patch_index, 0]]})
+        previous_commanded_x = target_x
+        previous_commanded_y = target_y
+        previous_layer = int(placement.layer_index)
     return {
         "laser_params": [deepcopy(first_laser_params), *deepcopy(DEFAULT_LASER_PARAMS[1:])],
         "galvo_offset": deepcopy(DEFAULT_GALVO_OFFSET),
@@ -200,31 +260,58 @@ def read_dxf_lines(path: Path) -> np.ndarray:
     return np.array(rows, dtype=np.float64)
 
 
-def make_patch(lines: np.ndarray, patch_index: int, layer_step_um: float) -> np.ndarray:
+def make_patch(
+    lines: np.ndarray,
+    layer_index: int,
+    layer_step_um: float,
+    center_x: float = 0.0,
+    center_y: float = 0.0,
+) -> np.ndarray:
     """Create one little-endian float32 patch at its negative Z depth in mm."""
     if not isinstance(lines, np.ndarray) or lines.ndim != 2 or lines.shape[1] != 6:
         raise ValueError("lines must be a 2-D array with exactly six columns")
-    if isinstance(patch_index, bool) or not isinstance(patch_index, (int, np.integer)) or patch_index < 0:
-        raise ValueError("patch_index must be a non-negative integer")
-    if not isinstance(layer_step_um, (int, float, np.integer, np.floating)) or not np.isfinite(layer_step_um) or layer_step_um <= 0:
-        raise ValueError("layer_step_um must be finite and positive")
+    if isinstance(layer_index, bool) or not isinstance(layer_index, (int, np.integer)) or layer_index < 0:
+        raise ValueError("layer_index must be a non-negative integer")
+    _validate_layer_step(layer_step_um)
+    for center in (center_x, center_y):
+        if (
+            isinstance(center, bool)
+            or not isinstance(center, (int, float, np.integer, np.floating))
+            or not np.isfinite(center)
+        ):
+            raise ValueError("patch centers must be finite numbers")
 
-    patch = lines.astype("<f4", copy=True)
-    z_depth_mm = np.float32(-int(patch_index) * layer_step_um / 1000.0)
+    try:
+        patch = lines.astype(np.float64, copy=True)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("lines must contain numeric coordinates") from exc
+    patch[:, 0] -= center_x
+    patch[:, 3] -= center_x
+    patch[:, 1] -= center_y
+    patch[:, 4] -= center_y
+    z_depth_mm = -int(layer_index) * layer_step_um / 1000.0
     patch[:, 2] = z_depth_mm
     patch[:, 5] = z_depth_mm
+    if not np.isfinite(patch).all():
+        raise ValueError("transformed patch contains non-finite values")
+    patch = patch.astype("<f4")
+    if not np.isfinite(patch).all():
+        raise ValueError("transformed patch contains non-finite values")
     return patch
 
 
 def validate_machine_directory(
     path: Path,
-    layer_count: int,
+    planned_patches: list[PlannedPatch],
     layer_step_um: float,
     expected_first_laser_params: dict[str, object],
 ) -> None:
     """Reload and validate every generated artifact in a machine directory."""
-    if isinstance(layer_count, bool) or not isinstance(layer_count, int) or layer_count <= 0:
-        raise ValueError("layer_count must be a positive integer")
+    if not isinstance(planned_patches, list) or not planned_patches:
+        raise ValueError("planned_patches must be a non-empty list")
+    if any(not isinstance(planned_patch, PlannedPatch) for planned_patch in planned_patches):
+        raise ValueError("planned_patches must contain PlannedPatch values")
+    _validate_placements([planned_patch.placement for planned_patch in planned_patches])
     _validate_layer_step(layer_step_um)
     _validate_first_laser_params(expected_first_laser_params)
     if not path.is_dir():
@@ -235,12 +322,11 @@ def validate_machine_directory(
         actual_patch_names = {entry.name for entry in patches_path.iterdir()}
     except OSError as exc:
         raise ValueError("invalid patches directory") from exc
-    expected_patch_names = {f"{index}_0.npy" for index in range(layer_count)}
+    expected_patch_names = {f"{index}_0.npy" for index in range(len(planned_patches))}
     if actual_patch_names != expected_patch_names:
         raise ValueError("patches directory does not contain the exact expected files")
 
-    previous_z: np.float32 | None = None
-    for index in range(layer_count):
+    for index, planned_patch in enumerate(planned_patches):
         try:
             patch = np.load(path / "patches" / f"{index}_0.npy", allow_pickle=False)
         except (OSError, ValueError) as exc:
@@ -251,17 +337,15 @@ def validate_machine_directory(
             raise ValueError(f"patch {index} must have shape (N, 6), N > 0")
         if not np.isfinite(patch).all():
             raise ValueError(f"patch {index} contains non-finite values")
-        expected_z = np.float32(-index * layer_step_um / 1000)
-        if not np.all(patch[:, 2] == patch[:, 5]) or not np.all(patch[:, 2] == expected_z):
-            raise ValueError(f"patch {index} has invalid Z values")
-        current_z = np.float32(patch[0, 2])
-        if previous_z is not None:
-            expected_previous_z = np.float32(-(index - 1) * layer_step_um / 1000)
-            actual_delta = np.float32(current_z - previous_z)
-            expected_delta = np.float32(expected_z - expected_previous_z)
-            if actual_delta != expected_delta:
-                raise ValueError(f"patch {index} has invalid adjacent Z step")
-        previous_z = current_z
+        expected_patch = make_patch(
+            planned_patch.lines,
+            planned_patch.placement.layer_index,
+            layer_step_um,
+            planned_patch.placement.center_x,
+            planned_patch.placement.center_y,
+        )
+        if not np.array_equal(patch, expected_patch):
+            raise ValueError(f"patch {index} does not match the expected plan")
 
     try:
         document = json.loads((path / "machine.json").read_text(encoding="utf-8"))
@@ -279,7 +363,11 @@ def validate_machine_directory(
         raise ValueError("immutable laser groups do not match defaults")
     if document["galvo_offset"] != DEFAULT_GALVO_OFFSET:
         raise ValueError("invalid galvo offset")
-    expected_cycles = build_machine_document(layer_count, layer_step_um, laser_params[0])["machine_cycle"]
+    expected_cycles = build_machine_document(
+        [planned_patch.placement for planned_patch in planned_patches],
+        layer_step_um,
+        laser_params[0],
+    )["machine_cycle"]
     if document["machine_cycle"] != expected_cycles:
         raise ValueError("invalid machine cycles")
 
@@ -328,17 +416,31 @@ def generate_machine_file(
         temp_identity = (temp_stat.st_dev, temp_stat.st_ino)
         (temp_path / "patches").mkdir()
         layer_files = discover_layer_dxf_files(dxf_dir)
-        for index, layer_file in enumerate(layer_files):
-            patch = make_patch(read_dxf_lines(layer_file), index, layer_step_um)
+        planned_patches = [
+            PlannedPatch(PatchPlacement(index, 0.0, 0.0), read_dxf_lines(layer_file))
+            for index, layer_file in enumerate(layer_files)
+        ]
+        for index, planned_patch in enumerate(planned_patches):
+            patch = make_patch(
+                planned_patch.lines,
+                planned_patch.placement.layer_index,
+                layer_step_um,
+                planned_patch.placement.center_x,
+                planned_patch.placement.center_y,
+            )
             np.save(temp_path / "patches" / f"{index}_0.npy", patch)
-        document = build_machine_document(len(layer_files), layer_step_um, first_laser_params)
+        document = build_machine_document(
+            [planned_patch.placement for planned_patch in planned_patches],
+            layer_step_um,
+            first_laser_params,
+        )
         (temp_path / "machine.json").write_text(
             json.dumps(document, ensure_ascii=False, allow_nan=False, indent=4),
             encoding="utf-8",
         )
         validate_machine_directory(
             temp_path,
-            len(layer_files),
+            planned_patches,
             layer_step_um,
             first_laser_params,
         )

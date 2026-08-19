@@ -18,6 +18,8 @@ import dxf_to_machine_file as machine
 from dxf_to_machine_file import (
     DEFAULT_GALVO_OFFSET,
     DEFAULT_LASER_PARAMS,
+    PatchPlacement,
+    PlannedPatch,
     build_machine_document,
     discover_layer_dxf_files,
     extract_layer_number,
@@ -125,27 +127,30 @@ class LayerDiscoveryTests(unittest.TestCase):
 
 
 class MakePatchTests(unittest.TestCase):
-    def test_writes_patch_z_in_millimeters_and_preserves_xy(self) -> None:
+    def test_writes_patch_z_in_millimeters_and_preserves_block_local_xy(self) -> None:
         lines = np.array([[1.25, 2.5, 99, 3.75, 4.5, 88]], dtype=np.float64)
 
-        patch = make_patch(lines, patch_index=2, layer_step_um=3)
+        patch = make_patch(lines, layer_index=2, layer_step_um=3, center_x=1, center_y=2)
 
         self.assertEqual(patch.dtype, np.dtype("<f4"))
         self.assertEqual(patch.shape, (1, 6))
-        np.testing.assert_array_equal(patch[:, [0, 1, 3, 4]], lines[:, [0, 1, 3, 4]].astype("<f4"))
+        np.testing.assert_array_equal(
+            patch[:, [0, 1, 3, 4]],
+            np.array([[0.25, 0.5, 2.75, 2.5]], dtype="<f4"),
+        )
         np.testing.assert_array_equal(patch[:, [2, 5]], np.array([[-0.006, -0.006]], dtype="<f4"))
         self.assertFalse(np.shares_memory(lines, patch))
 
     def test_rejects_invalid_line_shape(self) -> None:
         with self.assertRaises(ValueError):
-            make_patch(np.zeros((1, 5)), patch_index=0, layer_step_um=1)
+            make_patch(np.zeros((1, 5)), layer_index=0, layer_step_um=1)
 
-    def test_rejects_negative_patch_index(self) -> None:
+    def test_rejects_negative_layer_index(self) -> None:
         with self.assertRaises(ValueError):
-            make_patch(np.zeros((1, 6)), patch_index=-1, layer_step_um=1)
+            make_patch(np.zeros((1, 6)), layer_index=-1, layer_step_um=1)
 
-    def test_handles_unsigned_numpy_patch_index_without_overflow(self) -> None:
-        patch = make_patch(np.zeros((1, 6)), patch_index=np.uint64(2), layer_step_um=3)
+    def test_handles_unsigned_numpy_layer_index_without_overflow(self) -> None:
+        patch = make_patch(np.zeros((1, 6)), layer_index=np.uint64(2), layer_step_um=3)
 
         np.testing.assert_array_equal(patch[:, [2, 5]], np.array([[-0.006, -0.006]], dtype="<f4"))
 
@@ -154,11 +159,29 @@ class MakePatchTests(unittest.TestCase):
         for invalid_step in (0, -1, float("nan"), float("inf")):
             with self.subTest(layer_step_um=invalid_step):
                 with self.assertRaises(ValueError):
-                    make_patch(lines, patch_index=0, layer_step_um=invalid_step)
+                    make_patch(lines, layer_index=0, layer_step_um=invalid_step)
+
+    def test_make_patch_converts_xy_to_block_local_but_keeps_layer_z(self) -> None:
+        lines = np.array([[11.0, 7.0, 0.0, 14.0, 3.0, 0.0]])
+
+        patch = make_patch(lines, layer_index=2, layer_step_um=6, center_x=10, center_y=5)
+
+        np.testing.assert_array_equal(
+            patch,
+            np.array([[1.0, 2.0, -0.012, 4.0, -2.0, -0.012]], dtype="<f4"),
+        )
+
+    def test_rejects_nonfinite_transformed_patch(self) -> None:
+        with self.assertRaises(ValueError):
+            make_patch(
+                np.array([[float("inf"), 1, 0, 2, 3, 0]]),
+                layer_index=0,
+                layer_step_um=3,
+            )
 
 
 class MachineDocumentTests(unittest.TestCase):
-    def test_builds_exact_defaults_custom_first_group_and_cycles(self) -> None:
+    def test_builds_exact_defaults_and_custom_first_group(self) -> None:
         expected_first = {
             "power": 38, "frequency": 350, "pulseWidthIdx": 3,
             "scanSpeed": 2100, "jump_vel": 6000, "jump_delay": 50,
@@ -170,7 +193,11 @@ class MachineDocumentTests(unittest.TestCase):
         self.assertEqual(DEFAULT_GALVO_OFFSET, {"galvo_0": [0, 0, 0, 0]})
         custom = dict(expected_first, power=41)
 
-        document = build_machine_document(3, 3, custom)
+        document = build_machine_document(
+            [PatchPlacement(index, 0.0, 0.0) for index in range(3)],
+            3,
+            custom,
+        )
 
         self.assertEqual(list(document), ["laser_params", "galvo_offset", "machine_cycle"])
         self.assertEqual(len(document["laser_params"]), 3)
@@ -191,14 +218,14 @@ class MachineDocumentTests(unittest.TestCase):
         })
         self.assertEqual(document["galvo_offset"], {"galvo_0": [0, 0, 0, 0]})
         self.assertEqual(document["machine_cycle"], [
-            {"galvo_0": [0, "G00X0.000Y0.000Z0.000F40", [0, 0]]},
+            {"galvo_0": [0, "G91G00X0.000Y0.000Z0.000F40", [0, 0]]},
             {"galvo_0": [0, "G00X0.000Y0.000Z-0.003F40", [1, 0]]},
-            {"galvo_0": [0, "G00X0.000Y0.000Z-0.006F40", [2, 0]]},
+            {"galvo_0": [0, "G00X0.000Y0.000Z-0.003F40G90", [2, 0]]},
         ])
 
     def test_deep_copies_defaults_and_caller_data(self) -> None:
         caller = dict(DEFAULT_LASER_PARAMS[0])
-        document = build_machine_document(1, 3, caller)
+        document = build_machine_document([PatchPlacement(0, 0.0, 0.0)], 3, caller)
         document["laser_params"][0]["power"] = 999
         document["laser_params"][1]["power"] = 999
         document["galvo_offset"]["galvo_0"][0] = 999
@@ -210,12 +237,11 @@ class MachineDocumentTests(unittest.TestCase):
 
     def test_rejects_invalid_counts_steps_and_first_group_types(self) -> None:
         valid = dict(DEFAULT_LASER_PARAMS[0])
-        for count in (0, -1):
-            with self.subTest(count=count), self.assertRaises(ValueError):
-                build_machine_document(count, 3, valid)
+        with self.assertRaises(ValueError):
+            build_machine_document([], 3, valid)
         for step in (0, -1, float("nan"), float("inf"), float("-inf")):
             with self.subTest(step=step), self.assertRaises(ValueError):
-                build_machine_document(1, step, valid)
+                build_machine_document([PatchPlacement(0, 0.0, 0.0)], step, valid)
         invalid_groups = []
         missing = dict(valid); missing.pop("power"); invalid_groups.append(missing)
         extra = dict(valid, surprise=1); invalid_groups.append(extra)
@@ -224,7 +250,74 @@ class MachineDocumentTests(unittest.TestCase):
         integer_boolean = dict(valid, scan_ahead=1); invalid_groups.append(integer_boolean)
         for group in invalid_groups:
             with self.subTest(group=group), self.assertRaises(ValueError):
-                build_machine_document(1, 3, group)
+                build_machine_document([PatchPlacement(0, 0.0, 0.0)], 3, group)
+
+    def test_builds_relative_layer_cycles_with_mode_guards(self) -> None:
+        placements = [PatchPlacement(index, 0.0, 0.0) for index in range(3)]
+        document = build_machine_document(placements, 6, dict(DEFAULT_LASER_PARAMS[0]))
+        self.assertEqual(
+            [cycle["galvo_0"][1] for cycle in document["machine_cycle"]],
+            [
+                "G91G00X0.000Y0.000Z0.000F40",
+                "G00X0.000Y0.000Z-0.006F40",
+                "G00X0.000Y0.000Z-0.006F40G90",
+            ],
+        )
+
+    def test_moves_by_center_deltas_and_descends_only_on_layer_change(self) -> None:
+        placements = [
+            PatchPlacement(0, 10.0, 5.0),
+            PatchPlacement(0, 18.0, 2.0),
+            PatchPlacement(1, -4.0, 7.0),
+        ]
+        document = build_machine_document(placements, 6, dict(DEFAULT_LASER_PARAMS[0]))
+        self.assertEqual(
+            [cycle["galvo_0"][1] for cycle in document["machine_cycle"]],
+            [
+                "G91G00X10.000Y5.000Z0.000F40",
+                "G00X8.000Y-3.000Z0.000F40",
+                "G00X-22.000Y5.000Z-0.006F40G90",
+            ],
+        )
+
+    def test_single_patch_enters_and_leaves_relative_mode(self) -> None:
+        document = build_machine_document(
+            [PatchPlacement(0, 2.0, -3.0)], 6, dict(DEFAULT_LASER_PARAMS[0])
+        )
+        self.assertEqual(
+            document["machine_cycle"][0]["galvo_0"][1],
+            "G91G00X2.000Y-3.000Z0.000F40G90",
+        )
+
+    def test_relative_deltas_accumulate_to_each_three_decimal_target(self) -> None:
+        placements = [
+            PatchPlacement(0, 0.0004, -0.0),
+            PatchPlacement(0, 0.0008, -0.0001),
+        ]
+        document = build_machine_document(placements, 6, dict(DEFAULT_LASER_PARAMS[0]))
+        self.assertEqual(
+            [cycle["galvo_0"][1] for cycle in document["machine_cycle"]],
+            [
+                "G91G00X0.000Y0.000Z0.000F40",
+                "G00X0.001Y0.000Z0.000F40G90",
+            ],
+        )
+
+    def test_rejects_invalid_placement_sequences_and_values(self) -> None:
+        valid = dict(DEFAULT_LASER_PARAMS[0])
+        invalid_placements = [
+            [PatchPlacement(1, 0.0, 0.0)],
+            [PatchPlacement(0, 0.0, 0.0), PatchPlacement(2, 0.0, 0.0)],
+            [PatchPlacement(0, 0.0, 0.0), PatchPlacement(1, 0.0, 0.0), PatchPlacement(0, 0.0, 0.0)],
+            [PatchPlacement(True, 0.0, 0.0)],
+            [PatchPlacement(0, True, 0.0)],
+            [PatchPlacement(0, 0.0, False)],
+            [PatchPlacement(0, float("nan"), 0.0)],
+            [PatchPlacement(0, 0.0, float("inf"))],
+        ]
+        for placements in invalid_placements:
+            with self.subTest(placements=placements), self.assertRaises(ValueError):
+                build_machine_document(placements, 3, valid)
 
 
 class OutputNameTests(unittest.TestCase):
@@ -629,7 +722,14 @@ class GenerateMachineFileTests(unittest.TestCase):
 
             result = generate_machine_file(dxf_dir, "job", 3, dict(DEFAULT_LASER_PARAMS[0]))
 
-            validate_machine_directory(result, 40, 3, dict(DEFAULT_LASER_PARAMS[0]))
+            plan = [
+                PlannedPatch(
+                    PatchPlacement(index, 0.0, 0.0),
+                    read_dxf_lines(dxf_dir / f"layer_{index + 1}_a.dxf"),
+                )
+                for index in range(40)
+            ]
+            validate_machine_directory(result, plan, 3, dict(DEFAULT_LASER_PARAMS[0]))
             self.assertTrue(result.is_dir())
 
     def test_generates_custom_five_micrometer_patch_and_cycle_depths(self) -> None:
@@ -655,67 +755,73 @@ class GenerateMachineFileTests(unittest.TestCase):
             self.assertEqual(
                 [cycle["galvo_0"][1] for cycle in document["machine_cycle"]],
                 [
-                    "G00X0.000Y0.000Z0.000F40",
+                    "G91G00X0.000Y0.000Z0.000F40",
                     "G00X0.000Y0.000Z-0.005F40",
-                    "G00X0.000Y0.000Z-0.010F40",
+                    "G00X0.000Y0.000Z-0.005F40G90",
                 ],
             )
 
 
 class ValidateMachineDirectoryTests(unittest.TestCase):
-    def _make_package(self, root: Path) -> Path:
+    def _make_package(self, root: Path) -> tuple[Path, list[PlannedPatch]]:
         dxf_dir = root / "dxfs"; dxf_dir.mkdir()
-        write_dxf(dxf_dir / "layer_1_a.dxf", [(1, 2, 3, 4, 5, 6)])
-        write_dxf(dxf_dir / "layer_2_b.dxf", [(2, 3, 4, 5, 6, 7)])
-        return generate_machine_file(dxf_dir, "job", 3, dict(DEFAULT_LASER_PARAMS[0]))
+        first_lines = np.array([[1, 2, 3, 4, 5, 6]], dtype=np.float64)
+        second_lines = np.array([[2, 3, 4, 5, 6, 7]], dtype=np.float64)
+        write_dxf(dxf_dir / "layer_1_a.dxf", [tuple(first_lines[0])])
+        write_dxf(dxf_dir / "layer_2_b.dxf", [tuple(second_lines[0])])
+        package = generate_machine_file(dxf_dir, "job", 3, dict(DEFAULT_LASER_PARAMS[0]))
+        return package, [
+            PlannedPatch(PatchPlacement(0, 0.0, 0.0), first_lines),
+            PlannedPatch(PatchPlacement(1, 0.0, 0.0), second_lines),
+        ]
 
     def test_rejects_bad_patch_dtype(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
-            package = self._make_package(Path(directory))
+            package, plan = self._make_package(Path(directory))
             patch_path = package / "patches" / "0_0.npy"
             np.save(patch_path, np.zeros((1, 6), dtype=np.float64))
             with self.assertRaises(ValueError):
-                validate_machine_directory(package, 2, 3, dict(DEFAULT_LASER_PARAMS[0]))
+                validate_machine_directory(package, plan, 3, dict(DEFAULT_LASER_PARAMS[0]))
 
 
     def test_rejects_bad_patch_shape(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
-            package = self._make_package(Path(directory))
+            package, plan = self._make_package(Path(directory))
             np.save(package / "patches" / "0_0.npy", np.zeros((0, 6), dtype="<f4"))
             with self.assertRaises(ValueError):
-                validate_machine_directory(package, 2, 3, dict(DEFAULT_LASER_PARAMS[0]))
+                validate_machine_directory(package, plan, 3, dict(DEFAULT_LASER_PARAMS[0]))
 
 
     def test_rejects_bad_patch_z(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
-            package = self._make_package(Path(directory))
+            package, plan = self._make_package(Path(directory))
             patch_path = package / "patches" / "1_0.npy"
             patch = np.load(patch_path, allow_pickle=False)
             patch[:, 2] = -0.004
             patch[:, 5] = -0.004
             np.save(patch_path, patch)
             with self.assertRaises(ValueError):
-                validate_machine_directory(package, 2, 3, dict(DEFAULT_LASER_PARAMS[0]))
+                validate_machine_directory(package, plan, 3, dict(DEFAULT_LASER_PARAMS[0]))
 
     def test_rejects_bad_cycle_reference(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
-            package = self._make_package(Path(directory))
+            package, plan = self._make_package(Path(directory))
             json_path = package / "machine.json"
             document = json.loads(json_path.read_text(encoding="utf-8"))
             document["machine_cycle"][1]["galvo_0"][2] = [0, 0]
             json_path.write_text(json.dumps(document), encoding="utf-8")
             with self.assertRaises(ValueError):
-                validate_machine_directory(package, 2, 3, dict(DEFAULT_LASER_PARAMS[0]))
+                validate_machine_directory(package, plan, 3, dict(DEFAULT_LASER_PARAMS[0]))
 
     def test_rejects_bad_cycle_count(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
-            package = self._make_package(Path(directory))
+            package, plan = self._make_package(Path(directory))
             json_path = package / "machine.json"
             document = json.loads(json_path.read_text(encoding="utf-8"))
             document["machine_cycle"].pop()
             json_path.write_text(json.dumps(document), encoding="utf-8")
             with self.assertRaises(ValueError):
-                validate_machine_directory(package, 2, 3, dict(DEFAULT_LASER_PARAMS[0]))
+                validate_machine_directory(package, plan, 3, dict(DEFAULT_LASER_PARAMS[0]))
 
     def test_rejects_any_extra_file_or_directory_in_patches(self) -> None:
         self.assertIn(
@@ -725,7 +831,7 @@ class ValidateMachineDirectoryTests(unittest.TestCase):
         params = dict(DEFAULT_LASER_PARAMS[0])
         for extra_name, is_directory in (("extra.npy", False), ("foreign", True)):
             with self.subTest(extra_name=extra_name), tempfile.TemporaryDirectory() as directory:
-                package = self._make_package(Path(directory))
+                package, plan = self._make_package(Path(directory))
                 extra = package / "patches" / extra_name
                 if is_directory:
                     extra.mkdir()
@@ -733,7 +839,7 @@ class ValidateMachineDirectoryTests(unittest.TestCase):
                     extra.write_text("sentinel", encoding="utf-8")
 
                 with self.assertRaises(ValueError):
-                    validate_machine_directory(package, 2, 3, params)
+                    validate_machine_directory(package, plan, 3, params)
 
                 self.assertTrue(os.path.lexists(extra))
 
@@ -744,14 +850,14 @@ class ValidateMachineDirectoryTests(unittest.TestCase):
         )
         with tempfile.TemporaryDirectory() as directory:
             params = dict(DEFAULT_LASER_PARAMS[0])
-            package = self._make_package(Path(directory))
+            package, plan = self._make_package(Path(directory))
             json_path = package / "machine.json"
             document = json.loads(json_path.read_text(encoding="utf-8"))
             document["laser_params"][0]["power"] = 999
             json_path.write_text(json.dumps(document), encoding="utf-8")
 
             with self.assertRaises(ValueError):
-                validate_machine_directory(package, 2, 3, params)
+                validate_machine_directory(package, plan, 3, params)
 
 
 class CliTests(unittest.TestCase):
@@ -810,8 +916,8 @@ class CliTests(unittest.TestCase):
             self.assertEqual(
                 [cycle["galvo_0"][1] for cycle in document["machine_cycle"]],
                 [
-                    "G00X0.000Y0.000Z0.000F40",
-                    "G00X0.000Y0.000Z-0.005F40",
+                    "G91G00X0.000Y0.000Z0.000F40",
+                    "G00X0.000Y0.000Z-0.005F40G90",
                 ],
             )
             second_patch = np.load(root / "cli-job" / "patches" / "1_0.npy", allow_pickle=False)
