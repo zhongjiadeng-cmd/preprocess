@@ -76,6 +76,11 @@ def _validate_layer_step(layer_step_um: float) -> None:
         or layer_step_um <= 0
     ):
         raise ValueError("layer_step_um must be finite and positive")
+    step_mm = float(layer_step_um) / 1000
+    if not np.isfinite(step_mm) or float(f"{step_mm:.3f}") == 0.0:
+        raise ValueError(
+            "layer_step_um must produce a non-zero three-decimal millimeter step"
+        )
 
 
 def _validate_first_laser_params(params: dict[str, object]) -> None:
@@ -164,7 +169,11 @@ def build_machine_document(
         target_y = _rounded_machine_coordinate(float(placement.center_y))
         delta_x = _rounded_machine_coordinate(target_x - previous_commanded_x)
         delta_y = _rounded_machine_coordinate(target_y - previous_commanded_y)
-        delta_z = 0.0 if placement.layer_index == previous_layer else -step_mm
+        delta_z = (
+            0.0
+            if placement.layer_index == previous_layer
+            else _rounded_machine_coordinate(-step_mm)
+        )
         command = f"G00X{delta_x:.3f}Y{delta_y:.3f}Z{delta_z:.3f}F40"
         if patch_index == 0:
             command = "G91" + command

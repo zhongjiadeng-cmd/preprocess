@@ -156,7 +156,7 @@ class MakePatchTests(unittest.TestCase):
 
     def test_rejects_invalid_layer_steps(self) -> None:
         lines = np.zeros((1, 6))
-        for invalid_step in (0, -1, float("nan"), float("inf")):
+        for invalid_step in (0, -1, 0.1, float("nan"), float("inf")):
             with self.subTest(layer_step_um=invalid_step):
                 with self.assertRaises(ValueError):
                     make_patch(lines, layer_index=0, layer_step_um=invalid_step)
@@ -239,7 +239,7 @@ class MachineDocumentTests(unittest.TestCase):
         valid = dict(DEFAULT_LASER_PARAMS[0])
         with self.assertRaises(ValueError):
             build_machine_document([], 3, valid)
-        for step in (0, -1, float("nan"), float("inf"), float("-inf")):
+        for step in (0, -1, 0.1, float("nan"), float("inf"), float("-inf")):
             with self.subTest(step=step), self.assertRaises(ValueError):
                 build_machine_document([PatchPlacement(0, 0.0, 0.0)], step, valid)
         invalid_groups = []
@@ -692,7 +692,7 @@ class GenerateMachineFileTests(unittest.TestCase):
             self.assertFalse((root / ".job.building").exists())
 
     def test_rejects_invalid_steps_before_creating_output(self) -> None:
-        for step in (0, -1, float("nan"), float("inf"), float("-inf")):
+        for step in (0, -1, 0.1, float("nan"), float("inf"), float("-inf")):
             with self.subTest(step=step), tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
                 dxf_dir = root / "dxfs"; dxf_dir.mkdir()
@@ -774,6 +774,22 @@ class ValidateMachineDirectoryTests(unittest.TestCase):
             PlannedPatch(PatchPlacement(0, 0.0, 0.0), first_lines),
             PlannedPatch(PatchPlacement(1, 0.0, 0.0), second_lines),
         ]
+
+    def test_rejects_subresolution_step_before_reading_machine_directory(self) -> None:
+        plan = [
+            PlannedPatch(
+                PatchPlacement(0, 0.0, 0.0),
+                np.array([[1, 2, 3, 4, 5, 6]], dtype=np.float64),
+            )
+        ]
+
+        with self.assertRaises(ValueError):
+            validate_machine_directory(
+                Path("not-needed-for-layer-step-validation"),
+                plan,
+                0.1,
+                dict(DEFAULT_LASER_PARAMS[0]),
+            )
 
     def test_rejects_bad_patch_dtype(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
