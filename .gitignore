@@ -20,4 +20,5 @@ machine_file_*/
 
 # Local implementation-review artifacts
 .superpowers/
+.worktrees/
 design-evidence/
