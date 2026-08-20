@@ -266,6 +266,8 @@ public sealed class MainWindow : Window
                 update,
                 _pipelineWidthBox,
                 _pipelineHeightBox));
+        Styles.Add(UiTheme.CreateGlobalStyles());
+        UiTheme.ApplyFluentResourceOverrides(this);
         foreach (var primaryButton in new[] { _pipelineRunButton, _hatchRunButton, _runButton })
             UiTheme.ApplyPrimaryStyle(primaryButton);
         ConfigurePipelineDxfSelector();
@@ -312,18 +314,20 @@ public sealed class MainWindow : Window
             {
                 UiTheme.PageTitle("灰度图分层"),
                 UiTheme.PageSubtitle("将灰度纹理图按累计阈值生成多张黑白 TIFF 图像。"),
-                MakeField("输入图片", _inputBox, inputButton),
-                MakeField("输出目录", _outputBox, outputButton),
-                new Grid
-                {
-                    ColumnDefinitions = new ColumnDefinitions("180,*"),
-                    ColumnSpacing = 16,
-                    Children =
+                MakeInspectorSection(
+                    "输入与参数",
+                    MakeField("输入图片", _inputBox, inputButton),
+                    MakeField("输出目录", _outputBox, outputButton),
+                    new Grid
                     {
-                        MakeLabeledControl("分层数量（1–255）", _layersBox, 0),
-                        MakeLabeledControl("像素方向", _belowIsWhite, 1)
-                    }
-                },
+                        ColumnDefinitions = new ColumnDefinitions("180,*"),
+                        ColumnSpacing = 16,
+                        Children =
+                        {
+                            MakeLabeledControl("分层数量（1–255）", _layersBox, 0),
+                            MakeLabeledControl("像素方向", _belowIsWhite, 1)
+                        }
+                    }),
                 _progress,
                 new Grid
                 {
@@ -336,8 +340,7 @@ public sealed class MainWindow : Window
                         Place(_openOutputButton, 2)
                     }
                 },
-                UiTheme.PanelLabel("运行日志"),
-                _logBox
+                UiTheme.LogPanel(_logBox, "运行日志")
             }
         };
 
@@ -549,9 +552,9 @@ public sealed class MainWindow : Window
                         Header = new TextBlock
                         {
                             Text = "第一组激光参数",
-                            FontSize = 13,
+                            FontSize = 12.5,
                             FontWeight = FontWeight.SemiBold,
-                            Foreground = UiTheme.TextPrimaryBrush
+                            Foreground = UiTheme.TextSecondaryBrush
                         },
                         IsExpanded = true,
                         Background = Brushes.Transparent,
@@ -654,12 +657,15 @@ public sealed class MainWindow : Window
         foreach (var secondaryButton in new[]
         {
             inputButton, outputButton, cancelButton,
-            hatchInputButton, hatchOutputButton, hatchCancelButton, hatchImportDxfButton,
+            hatchInputButton, hatchOutputButton, hatchCancelButton,
             pipelineInputButton, pipelineLayerOutputButton, pipelineDxfOutputButton,
-            pipelineCancelButton, pipelineImportDxfButton,
+            pipelineCancelButton,
             _openOutputButton, _hatchOpenButton, _pipelineOpenButton
         })
             UiTheme.ApplyGhostStyle(secondaryButton);
+        UiTheme.MarkDanger(cancelButton);
+        UiTheme.MarkDanger(hatchCancelButton);
+        UiTheme.MarkDanger(pipelineCancelButton);
 
         var workflowTabs = new TabControl
         {
@@ -698,42 +704,63 @@ public sealed class MainWindow : Window
 
         var appHeader = new Border
         {
-            Padding = new Thickness(22, 10),
+            Padding = new Thickness(20, 8),
             BorderBrush = UiTheme.BorderSubtleBrush,
             BorderThickness = new Thickness(0, 0, 0, 1),
-            Background = UiTheme.HeaderBrush,
+            Background = new LinearGradientBrush
+            {
+                StartPoint = new RelativePoint(0, 0, RelativeUnit.Relative),
+                EndPoint = new RelativePoint(0, 1, RelativeUnit.Relative),
+                GradientStops =
+                {
+                    new GradientStop(Color.FromRgb(18, 22, 30), 0),
+                    new GradientStop(Color.FromRgb(13, 16, 21), 1)
+                }
+            },
             Child = new Grid
             {
                 ColumnDefinitions = new ColumnDefinitions("Auto,*,Auto"),
                 ColumnSpacing = 12,
                 Children =
                 {
-                    Place(new Image
+                    Place(new Border
                     {
-                        Source = new Bitmap(
-                            AssetLoader.Open(
-                                new Uri("avares://GrayscaleLayersMac/Assets/AppIcon.png"))),
-                        Width = 36,
-                        Height = 36
+                        Width = 44,
+                        Height = 44,
+                        Padding = new Thickness(7),
+                        CornerRadius = new CornerRadius(10),
+                        Background = UiTheme.CardBrush,
+                        BorderBrush = UiTheme.BorderSubtleBrush,
+                        BorderThickness = new Thickness(1),
+                        VerticalAlignment = VerticalAlignment.Center,
+                        Child = new Image
+                        {
+                            Source = new Bitmap(
+                                AssetLoader.Open(
+                                    new Uri("avares://GrayscaleLayersMac/Assets/AppIcon.png"))),
+                            Width = 28,
+                            Height = 28
+                        }
                     }, 0),
                     Place(new StackPanel
                     {
-                        Spacing = 1,
+                        Spacing = 2,
                         VerticalAlignment = VerticalAlignment.Center,
                         Children =
                         {
                             new TextBlock
                             {
                                 Text = "纹理预处理工作台",
-                                FontSize = 17,
-                                FontWeight = FontWeight.SemiBold
+                                FontSize = 16,
+                                FontWeight = FontWeight.SemiBold,
+                                LetterSpacing = 0.3
                             },
                             new TextBlock
                             {
                                 Text = "GRAYSCALE · HATCH · DXF",
-                                FontSize = 10,
+                                FontSize = 9.5,
                                 Foreground = UiTheme.TextFaintBrush,
-                                LetterSpacing = 1.5
+                                LetterSpacing = 2.2
                             }
                         }
                     }, 1)
@@ -766,6 +793,8 @@ public sealed class MainWindow : Window
         Increment = increment,
         FormatString = decimalPlaces == 0 ? "0" : $"0.{new string('#', decimalPlaces)}",
         ShowButtonSpinner = showButtons,
+        FontFamily = UiTheme.MonoFont,
+        FontSize = 13,
         HorizontalAlignment = HorizontalAlignment.Stretch
     };
 
@@ -941,6 +970,12 @@ public sealed class MainWindow : Window
         topButton.Click += (_, _) => preview.SetTopView();
         var isometricButton = new Button { Content = "等轴测" };
         isometricButton.Click += (_, _) => preview.SetIsometricView();
+        UiTheme.ApplyGhostStyle(importButton, small: true);
+        UiTheme.ApplyGhostStyle(topButton, small: true);
+        UiTheme.ApplyGhostStyle(isometricButton, small: true);
+        UiTheme.ApplyGhostStyle(fitButton, small: true);
+        status.FontFamily = UiTheme.MonoFont;
+        status.FontSize = 11;
         var arrowCheckBox = new CheckBox
         {
             Content = "显示方向箭头",
@@ -979,6 +1014,7 @@ public sealed class MainWindow : Window
                             {
                                 Text = "左键拖拽环视 · 滚轮缩放 · 中键平移 · Shift + 中键环视 · 双击中键适应窗口",
                                 Foreground = UiTheme.TextFaintBrush,
+                                FontSize = 11,
                                 VerticalAlignment = VerticalAlignment.Center
                             }, 0)
                             : Place(new StackPanel
@@ -1242,31 +1278,14 @@ public sealed class MainWindow : Window
         Grid.SetColumn(inspectorSurface, 1);
         Grid.SetRowSpan(inspectorSurface, 2);
 
-        var logSurface = new Border
-        {
-            Margin = new Thickness(0, 0, 12, 0),
-            Padding = new Thickness(14, 12),
-            BorderBrush = UiTheme.BorderSubtleBrush,
-            BorderThickness = new Thickness(1),
-            CornerRadius = UiTheme.CardRadius,
-            Background = UiTheme.PanelBrush,
-            Child = new Grid
-            {
-                RowDefinitions = new RowDefinitions("Auto,*"),
-                RowSpacing = 8,
-                Children =
-                {
-                    AtRow(UiTheme.PanelLabel(logTitle), 0),
-                    AtRow(log, 1)
-                }
-            }
-        };
+        var logSurface = UiTheme.LogPanel(log, logTitle);
+        logSurface.Margin = new Thickness(0, 0, 12, 0);
         Grid.SetRow(logSurface, 1);
 
         return new Grid
         {
             ColumnDefinitions = new ColumnDefinitions("*,510"),
-            RowDefinitions = new RowDefinitions("*,210"),
+            RowDefinitions = new RowDefinitions("*,224"),
             ColumnSpacing = 0,
             RowSpacing = 12,
             Children =

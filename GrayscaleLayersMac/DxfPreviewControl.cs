@@ -245,7 +245,7 @@ public sealed class DxfPreviewControl : Control, IDisposable
     public override void Render(DrawingContext context)
     {
         base.Render(context);
-        context.FillRectangle(new SolidColorBrush(Color.FromRgb(15, 18, 23)), Bounds);
+        context.FillRectangle(new SolidColorBrush(Color.FromRgb(7, 9, 13)), Bounds);
         if (_segments.Count == 0 && _textureBitmap is null)
         {
             var text = new FormattedText(
