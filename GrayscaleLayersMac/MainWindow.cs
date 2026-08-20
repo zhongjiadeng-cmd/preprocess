@@ -1167,7 +1167,10 @@ public sealed class MainWindow : Window
         var machineStageStarted = false;
         string? machineOwnerToken = null;
         _cancellation = new CancellationTokenSource();
+        var pipelineBlocksBoxWasEnabled = _pipelineBlocksBox.IsEnabled;
         _pipelineRunButton.IsEnabled = false;
+        _pipelineBlocksBox.IsEnabled = false;
+        _pipelineBlockCenterMotionBox.IsEnabled = false;
         _pipelineProgress.IsIndeterminate = true;
         _pipelineLogBox.Text = "";
         _pipelineDxfPreview.Clear();
@@ -1401,6 +1404,8 @@ public sealed class MainWindow : Window
             _cancellation.Dispose();
             _cancellation = null;
             _pipelineRunButton.IsEnabled = true;
+            _pipelineBlocksBox.IsEnabled = pipelineBlocksBoxWasEnabled;
+            UpdateBlockCenterMotionAvailability();
             _pipelineProgress.IsIndeterminate = false;
         }
     }
