@@ -59,20 +59,22 @@ def write_two_layer_block_fixture(dxf_dir: Path) -> list[Path]:
     first = dxf_dir / "layer_1_a.dxf"
     second = dxf_dir / "layer_2_b.dxf"
     write_dxf(first, [
-        (-1, -1, 0, 1, -1, 0),
+        (-1, -1, 0, 1, -1, 0), (1, -1, 0, 1, 1, 0),
+        (1, 1, 0, -1, 1, 0), (-1, 1, 0, -1, -1, 0),
         (11, 7, 0, 14, 3, 0),
         (19, 4, 0, 16, 0, 0),
     ])
-    write_block_metadata(first, 1, [
+    write_block_metadata(first, 4, [
         {"block_index": 4, "center_x": 10.0, "center_y": 5.0, "line_count": 1},
         {"block_index": 7, "center_x": 18.0, "center_y": 2.0, "line_count": 1},
     ])
     write_dxf(second, [
-        (-2, -2, 0, 2, -2, 0),
+        (-2, -2, 0, 2, -2, 0), (2, -2, 0, 2, 2, 0),
+        (2, 2, 0, -2, 2, 0), (-2, 2, 0, -2, -2, 0),
         (-3, 8, 0, -5, 6, 0),
         (0, 12, 0, -2, 10, 0),
     ])
-    write_block_metadata(second, 1, [
+    write_block_metadata(second, 4, [
         {"block_index": 2, "center_x": -4.0, "center_y": 7.0, "line_count": 1},
         {"block_index": 9, "center_x": -1.0, "center_y": 11.0, "line_count": 1},
     ])
@@ -339,6 +341,15 @@ class MachineDocumentTests(unittest.TestCase):
             ],
         )
 
+    def test_rejects_nonfinite_delta_between_individually_finite_centers(self) -> None:
+        placements = [
+            PatchPlacement(0, 1e308, 0.0),
+            PatchPlacement(0, -1e308, 0.0),
+        ]
+
+        with self.assertRaises(ValueError):
+            build_machine_document(placements, 6, dict(DEFAULT_LASER_PARAMS[0]))
+
     def test_rejects_invalid_placement_sequences_and_values(self) -> None:
         valid = dict(DEFAULT_LASER_PARAMS[0])
         invalid_placements = [
@@ -433,6 +444,60 @@ class BlockMetadataTests(unittest.TestCase):
                     with self.assertRaises(ValueError):
                         machine.read_block_metadata(dxf)
 
+    def test_rejects_unsupported_border_counts_and_empty_block_list(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            dxf = Path(directory) / "layer_1_a.dxf"
+            sidecar = dxf.with_suffix(".blocks.json")
+            invalid_documents = {
+                "border one": {"version": 1, "border_line_count": 1, "blocks": [{
+                    "block_index": 0,
+                    "center_x": 0.0,
+                    "center_y": 0.0,
+                    "line_count": 1,
+                }]},
+                "border two": {"version": 1, "border_line_count": 2, "blocks": [{
+                    "block_index": 0,
+                    "center_x": 0.0,
+                    "center_y": 0.0,
+                    "line_count": 1,
+                }]},
+                "border three": {"version": 1, "border_line_count": 3, "blocks": [{
+                    "block_index": 0,
+                    "center_x": 0.0,
+                    "center_y": 0.0,
+                    "line_count": 1,
+                }]},
+                "border five": {"version": 1, "border_line_count": 5, "blocks": [{
+                    "block_index": 0,
+                    "center_x": 0.0,
+                    "center_y": 0.0,
+                    "line_count": 1,
+                }]},
+                "empty blocks": {"version": 1, "border_line_count": 0, "blocks": []},
+            }
+            for case, document in invalid_documents.items():
+                with self.subTest(case=case):
+                    sidecar.write_text(json.dumps(document), encoding="utf-8")
+                    with self.assertRaises(ValueError):
+                        machine.read_block_metadata(dxf)
+
+    def test_fails_closed_when_no_follow_open_flag_is_unavailable(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            dxf = Path(directory) / "layer_1_a.dxf"
+            write_block_metadata(dxf, 0, [{
+                "block_index": 0,
+                "center_x": 0.0,
+                "center_y": 0.0,
+                "line_count": 1,
+            }])
+
+            with mock.patch.object(machine.os, "O_NOFOLLOW", None):
+                with mock.patch.object(machine.os, "open") as open_file:
+                    with self.assertRaisesRegex(ValueError, "O_NOFOLLOW"):
+                        machine.read_block_metadata(dxf)
+
+            open_file.assert_not_called()
+
     def test_rejects_invalid_block_schema_types_values_and_duplicates(self) -> None:
         valid_block = {
             "block_index": 0,
@@ -521,7 +586,7 @@ class PatchPlanTests(unittest.TestCase):
             write_dxf(dxf, [(1, 2, 0, 3, 4, 0), (5, 6, 0, 7, 8, 0)])
             for case, border, line_count in (
                 ("under-count", 0, 1),
-                ("over-count", 1, 2),
+                ("over-count", 4, 1),
             ):
                 with self.subTest(case=case):
                     write_block_metadata(dxf, border, [{
@@ -536,8 +601,11 @@ class PatchPlanTests(unittest.TestCase):
     def test_rejects_all_empty_block_plan_and_empty_layer_list(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             dxf = Path(directory) / "layer_1_a.dxf"
-            write_dxf(dxf, [(1, 2, 0, 3, 4, 0), (5, 6, 0, 7, 8, 0)])
-            write_block_metadata(dxf, 2, [{
+            write_dxf(dxf, [
+                (-1, -1, 0, 1, -1, 0), (1, -1, 0, 1, 1, 0),
+                (1, 1, 0, -1, 1, 0), (-1, 1, 0, -1, -1, 0),
+            ])
+            write_block_metadata(dxf, 4, [{
                 "block_index": 0,
                 "center_x": 0.0,
                 "center_y": 0.0,
@@ -563,8 +631,11 @@ class PatchPlanTests(unittest.TestCase):
                 "center_y": 2.0,
                 "line_count": 1,
             }])
-            write_dxf(second, [(5, 6, 0, 7, 8, 0)])
-            write_block_metadata(second, 1, [{
+            write_dxf(second, [
+                (-1, -1, 0, 1, -1, 0), (1, -1, 0, 1, 1, 0),
+                (1, 1, 0, -1, 1, 0), (-1, 1, 0, -1, -1, 0),
+            ])
+            write_block_metadata(second, 4, [{
                 "block_index": 1,
                 "center_x": 5.0,
                 "center_y": 6.0,
@@ -750,13 +821,123 @@ class GenerateMachineFileTests(unittest.TestCase):
             dxf_dir = root / "dxfs"
             dxf_dir.mkdir()
             dxf = dxf_dir / "layer_1_a.dxf"
-            write_dxf(dxf, [(1, 2, 0, 3, 4, 0)])
-            write_block_metadata(dxf, 1, [{
+            write_dxf(dxf, [
+                (-1, -1, 0, 1, -1, 0), (1, -1, 0, 1, 1, 0),
+                (1, 1, 0, -1, 1, 0), (-1, 1, 0, -1, -1, 0),
+            ])
+            write_block_metadata(dxf, 4, [{
                 "block_index": 0,
                 "center_x": 1.0,
                 "center_y": 2.0,
                 "line_count": 0,
             }])
+
+            with self.assertRaises(ValueError):
+                generate_machine_file(
+                    dxf_dir,
+                    "job",
+                    6,
+                    dict(DEFAULT_LASER_PARAMS[0]),
+                    block_center_positioning=True,
+                )
+
+            self.assertFalse(os.path.lexists(root / "job"))
+            self.assertFalse(os.path.lexists(root / ".job.building"))
+            self.assertFalse(os.path.lexists(root / ".job.lock"))
+
+    def test_block_mode_rejects_semantically_invalid_metadata_without_publishing(self) -> None:
+        invalid_metadata = (
+            (1, [{
+                "block_index": 0,
+                "center_x": 1.0,
+                "center_y": 2.0,
+                "line_count": 1,
+            }]),
+            (0, []),
+        )
+        for border, blocks in invalid_metadata:
+            with self.subTest(border=border, blocks=blocks), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                dxf_dir = root / "dxfs"
+                dxf_dir.mkdir()
+                dxf = dxf_dir / "layer_1_a.dxf"
+                rows = (
+                    [(0, 0, 0, 0, 0, 0), (1, 2, 0, 3, 4, 0)]
+                    if border == 1
+                    else [(1, 2, 0, 3, 4, 0)]
+                )
+                write_dxf(dxf, rows)
+                write_block_metadata(dxf, border, blocks)
+
+                with self.assertRaises(ValueError):
+                    generate_machine_file(
+                        dxf_dir,
+                        "job",
+                        6,
+                        dict(DEFAULT_LASER_PARAMS[0]),
+                        block_center_positioning=True,
+                    )
+
+                self.assertFalse(os.path.lexists(root / "job"))
+                self.assertFalse(os.path.lexists(root / ".job.building"))
+                self.assertFalse(os.path.lexists(root / ".job.lock"))
+
+    @unittest.skipUnless(hasattr(os, "mkfifo"), "FIFO creation is unavailable")
+    def test_fifo_sidecar_fails_within_timeout_without_publishing(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            dxf_dir = root / "dxfs"
+            dxf_dir.mkdir()
+            dxf = dxf_dir / "layer_1_a.dxf"
+            write_dxf(dxf, [(1, 2, 0, 3, 4, 0)])
+            os.mkfifo(dxf.with_suffix(".blocks.json"))
+
+            try:
+                completed = subprocess.run(
+                    [
+                        sys.executable,
+                        str(Path(__file__).parents[1] / "dxf_to_machine_file.py"),
+                        str(dxf_dir),
+                        "fifo-job",
+                        "--block-center-positioning",
+                    ],
+                    text=True,
+                    capture_output=True,
+                    check=False,
+                    timeout=2,
+                )
+            except subprocess.TimeoutExpired:
+                self.fail("FIFO sidecar open blocked past the external two-second timeout")
+
+            self.assertNotEqual(completed.returncode, 0)
+            self.assertFalse(os.path.lexists(root / "fifo-job"))
+            self.assertFalse(os.path.lexists(root / ".fifo-job.building"))
+            self.assertFalse(os.path.lexists(root / ".fifo-job.lock"))
+
+    def test_extreme_block_centers_cannot_publish_nonfinite_motion_delta(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            dxf_dir = root / "dxfs"
+            dxf_dir.mkdir()
+            dxf = dxf_dir / "layer_1_a.dxf"
+            write_dxf(dxf, [
+                (1e308, 0, 0, 1e308, 0, 0),
+                (-1e308, 0, 0, -1e308, 0, 0),
+            ])
+            write_block_metadata(dxf, 0, [
+                {
+                    "block_index": 0,
+                    "center_x": 1e308,
+                    "center_y": 0.0,
+                    "line_count": 1,
+                },
+                {
+                    "block_index": 1,
+                    "center_x": -1e308,
+                    "center_y": 0.0,
+                    "line_count": 1,
+                },
+            ])
 
             with self.assertRaises(ValueError):
                 generate_machine_file(

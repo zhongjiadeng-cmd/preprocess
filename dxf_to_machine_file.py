@@ -143,7 +143,11 @@ def _validate_placements(placements: list[PatchPlacement]) -> None:
 
 
 def _rounded_machine_coordinate(value: float) -> float:
+    if not np.isfinite(value):
+        raise ValueError("machine coordinates and deltas must be finite")
     rounded = float(f"{value:.3f}")
+    if not np.isfinite(rounded):
+        raise ValueError("rounded machine coordinates and deltas must be finite")
     return 0.0 if rounded == 0.0 else rounded
 
 
@@ -299,13 +303,15 @@ def _reject_duplicate_json_keys(pairs: list[tuple[str, object]]) -> dict[str, ob
 def read_block_metadata(dxf_path: Path) -> BlockMetadata:
     """Read and strictly validate the v1 sidecar for one DXF."""
     sidecar_path = dxf_path.with_suffix(".blocks.json")
-    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    no_follow_flag = getattr(os, "O_NOFOLLOW", None)
+    nonblock_flag = getattr(os, "O_NONBLOCK", None)
+    if type(no_follow_flag) is not int or no_follow_flag == 0:
+        raise ValueError("secure metadata opening requires O_NOFOLLOW")
+    if type(nonblock_flag) is not int or nonblock_flag == 0:
+        raise ValueError("secure metadata opening requires O_NONBLOCK")
+    flags = os.O_RDONLY | no_follow_flag | nonblock_flag
     fd: int | None = None
     try:
-        if not hasattr(os, "O_NOFOLLOW"):
-            path_stat = os.lstat(sidecar_path)
-            if stat.S_ISLNK(path_stat.st_mode):
-                raise ValueError("block metadata must not be a symlink")
         fd = os.open(sidecar_path, flags)
         opened_stat = os.fstat(fd)
         if not stat.S_ISREG(opened_stat.st_mode):
@@ -329,11 +335,11 @@ def read_block_metadata(dxf_path: Path) -> BlockMetadata:
     if type(document["version"]) is not int or document["version"] != 1:
         raise ValueError("block metadata version must be integer 1")
     border_line_count = document["border_line_count"]
-    if type(border_line_count) is not int or border_line_count < 0:
-        raise ValueError("border_line_count must be a non-negative integer")
+    if type(border_line_count) is not int or border_line_count not in {0, 4}:
+        raise ValueError("border_line_count must be integer 0 or 4")
     block_values = document["blocks"]
-    if type(block_values) is not list:
-        raise ValueError("blocks must be a list")
+    if type(block_values) is not list or not block_values:
+        raise ValueError("blocks must be a non-empty list")
 
     blocks: list[BlockDefinition] = []
     block_indices: set[int] = set()
