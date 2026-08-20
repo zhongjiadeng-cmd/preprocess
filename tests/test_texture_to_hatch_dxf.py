@@ -1286,6 +1286,194 @@ class BlockMetadataTests(unittest.TestCase):
             self.assertEqual(output.read_bytes(), sentinel)
             self.assertTrue(displaced_owned.is_file())
 
+    def test_failed_publication_does_not_promote_unproven_foreign_quarantine(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            output = root / "layer_01.dxf"
+            metadata = block_metadata_path(output)
+            foreign = root / "foreign-sentinel.dxf"
+            sentinel = b"unproven foreign quarantine sentinel"
+            foreign.write_bytes(sentinel)
+            foreign_identity = (os.stat(foreign).st_dev, os.stat(foreign).st_ino)
+            quarantine_name = f".{output.name}.published-rollback"
+            real_lock = hatch._lock_owned_staging_directory
+            real_link = os.link
+            seeded = False
+
+            def seed_quarantine_then_lock(staging_directory: object) -> None:
+                nonlocal seeded
+                real_link(
+                    foreign,
+                    quarantine_name,
+                    dst_dir_fd=staging_directory.descriptor,  # type: ignore[attr-defined]
+                    follow_symlinks=False,
+                )
+                seeded = True
+                real_lock(staging_directory)  # type: ignore[arg-type]
+
+            with (
+                mock.patch.object(
+                    hatch,
+                    "_lock_owned_staging_directory",
+                    side_effect=seed_quarantine_then_lock,
+                ),
+                mock.patch.object(
+                    hatch.os,
+                    "link",
+                    side_effect=OSError("injected pre-publication link failure"),
+                ),
+            ):
+                with self.assertRaisesRegex(
+                    OSError,
+                    "injected pre-publication link failure",
+                ):
+                    self.export_blocked_pair(root)
+
+            self.assertTrue(seeded)
+            self.assertFalse(os.path.lexists(output))
+            self.assertFalse(os.path.lexists(metadata))
+            self.assertEqual(foreign.read_bytes(), sentinel)
+            staging_directory = next(path for path in root.iterdir() if path.is_dir())
+            quarantined = staging_directory / quarantine_name
+            self.assertEqual(quarantined.read_bytes(), sentinel)
+            self.assertEqual(
+                (os.stat(quarantined).st_dev, os.stat(quarantined).st_ino),
+                foreign_identity,
+            )
+            self.assertLessEqual(len(list(staging_directory.iterdir())), 4)
+
+    def test_interrupt_during_foreign_restore_retries_without_losing_replacement(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            output = root / "layer_01.dxf"
+            metadata = block_metadata_path(output)
+            foreign = root / "foreign-sentinel.dxf"
+            sentinel = b"foreign restore-interrupt sentinel"
+            foreign.write_bytes(sentinel)
+            foreign_identity = (os.stat(foreign).st_dev, os.stat(foreign).st_ino)
+            displaced_owned = root / "owned-output-displaced-by-injection"
+            quarantine_name = f".{output.name}.published-rollback"
+            publication_count = 0
+            swapped = False
+            interrupted = False
+            captured_descriptors: list[int] = []
+            real_create_directory = hatch._create_owned_staging_directory
+            real_create_file = hatch._create_owned_temporary_file
+            real_publish = hatch._publish_file_no_replace
+            real_atomic_rename = hatch._atomic_rename_no_replace
+
+            def record_directory(*args: object, **kwargs: object) -> object:
+                created = real_create_directory(*args, **kwargs)
+                captured_descriptors.extend(
+                    [created.descriptor, created.publication_directory_descriptor]
+                )
+                return created
+
+            def record_file(*args: object, **kwargs: object) -> object:
+                created = real_create_file(*args, **kwargs)
+                captured_descriptors.append(created.descriptor)
+                return created
+
+            def publish_then_fail(source: object, destination: Path) -> object:
+                nonlocal publication_count
+                publication_count += 1
+                if publication_count == 2:
+                    raise OSError("injected metadata publication failure")
+                published = real_publish(source, destination)  # type: ignore[arg-type]
+                captured_descriptors.append(published.directory_descriptor)
+                return published
+
+            def swap_then_interrupt_restore(
+                source_directory_descriptor: int,
+                source_name: str,
+                destination_directory_descriptor: int,
+                destination_name: str,
+            ) -> None:
+                nonlocal swapped, interrupted
+                if (
+                    not swapped
+                    and source_name == output.name
+                    and destination_name == quarantine_name
+                ):
+                    swapped = True
+                    output.rename(displaced_owned)
+                    foreign.rename(output)
+                    real_atomic_rename(
+                        source_directory_descriptor,
+                        source_name,
+                        destination_directory_descriptor,
+                        destination_name,
+                    )
+                    return
+                if (
+                    swapped
+                    and not interrupted
+                    and source_name == quarantine_name
+                    and destination_name == output.name
+                ):
+                    interrupted = True
+                    raise KeyboardInterrupt("injected foreign-restore interruption")
+                real_atomic_rename(
+                    source_directory_descriptor,
+                    source_name,
+                    destination_directory_descriptor,
+                    destination_name,
+                )
+
+            with (
+                mock.patch.object(
+                    hatch,
+                    "_create_owned_staging_directory",
+                    side_effect=record_directory,
+                ),
+                mock.patch.object(
+                    hatch,
+                    "_create_owned_temporary_file",
+                    side_effect=record_file,
+                ),
+                mock.patch.object(
+                    hatch,
+                    "_publish_file_no_replace",
+                    side_effect=publish_then_fail,
+                ),
+                mock.patch.object(
+                    hatch,
+                    "_atomic_rename_no_replace",
+                    side_effect=swap_then_interrupt_restore,
+                ),
+            ):
+                with self.assertRaisesRegex(
+                    OSError,
+                    "injected metadata publication failure",
+                ):
+                    self.export_blocked_pair(root)
+
+            self.assertEqual(publication_count, 2)
+            self.assertTrue(swapped)
+            self.assertTrue(interrupted)
+            self.assertFalse(os.path.lexists(foreign))
+            self.assertTrue(output.is_file())
+            self.assertEqual(output.read_bytes(), sentinel)
+            self.assertEqual(
+                (os.stat(output).st_dev, os.stat(output).st_ino),
+                foreign_identity,
+            )
+            self.assertFalse(os.path.lexists(metadata))
+            self.assertTrue(displaced_owned.is_file())
+
+            staging_directories = [path for path in root.iterdir() if path.is_dir()]
+            self.assertEqual(len(staging_directories), 1)
+            staged_entries = list(staging_directories[0].iterdir())
+            self.assertEqual(len(staged_entries), 2)
+            self.assertNotIn(
+                foreign_identity,
+                {(os.stat(path).st_dev, os.stat(path).st_ino) for path in staged_entries},
+            )
+            self.assertEqual(len(captured_descriptors), 5)
+            for descriptor in captured_descriptors:
+                with self.subTest(descriptor=descriptor), self.assertRaises(OSError):
+                    os.fstat(descriptor)
+
     def test_one_shot_interrupt_before_rollback_move_is_retried(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

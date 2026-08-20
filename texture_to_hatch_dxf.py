@@ -700,32 +700,48 @@ def _atomic_rename_no_replace(
 def _restore_foreign_rollback_entry(
     published_file: _OwnedPublishedFile,
     quarantine_name: str,
+    expected_identity: tuple[int, int] | None = None,
 ) -> None:
-    """Best-effort restore of a non-owned entry moved during a rollback race."""
-    try:
-        quarantine_identity = _entry_identity(
+    """Boundedly restore only the foreign identity captured by this rollback."""
+    if expected_identity is None:
+        expected_identity = _entry_identity(
             published_file.staging_directory.descriptor,
             quarantine_name,
         )
-        if (
-            quarantine_identity is None
-            or quarantine_identity == published_file.identity
-            or _entry_identity(
+    if expected_identity is None or expected_identity == published_file.identity:
+        return
+
+    for attempt in range(2):
+        try:
+            quarantine_identity = _entry_identity(
+                published_file.staging_directory.descriptor,
+                quarantine_name,
+            )
+            public_identity = _entry_identity(
                 published_file.directory_descriptor,
                 published_file.name,
-            ) is not None
-        ):
+            )
+            if public_identity == expected_identity:
+                return
+            if public_identity is not None or quarantine_identity != expected_identity:
+                return
+            _atomic_rename_no_replace(
+                published_file.staging_directory.descriptor,
+                quarantine_name,
+                published_file.directory_descriptor,
+                published_file.name,
+            )
+            if _entry_identity(
+                published_file.directory_descriptor,
+                published_file.name,
+            ) != expected_identity:
+                raise ValueError(
+                    "foreign rollback replacement identity changed during restore"
+                )
             return
-        _atomic_rename_no_replace(
-            published_file.staging_directory.descriptor,
-            quarantine_name,
-            published_file.directory_descriptor,
-            published_file.name,
-        )
-    except BaseException:
-        # Cleanup must preserve the primary failure and never replace a newer
-        # public entry. A no-replace restore is the only bounded safe attempt.
-        pass
+        except BaseException:
+            if attempt == 1:
+                raise
 
 
 def _rollback_published_file(
@@ -770,7 +786,11 @@ def _rollback_published_file(
     if moved_identity != published_file.identity:
         # The public entry changed in the rename window. Restore that
         # replacement instead of deleting or consuming it.
-        _restore_foreign_rollback_entry(published_file, quarantine_name)
+        _restore_foreign_rollback_entry(
+            published_file,
+            quarantine_name,
+            moved_identity,
+        )
         return
     # POSIX has no conditional unlink-by-inode primitive. Leave this proven
     # owned quarantine in the private directory instead of reopening a final
