@@ -42,6 +42,7 @@ public sealed class MainWindow : Window
     private readonly NumericUpDown _layersBox = new()
     {
         Minimum = 1, Maximum = 255, Value = 10, Increment = 1,
+        ShowButtonSpinner = false,
         HorizontalAlignment = HorizontalAlignment.Stretch
     };
     private readonly CheckBox _belowIsWhite = new()
@@ -97,7 +98,7 @@ public sealed class MainWindow : Window
     private readonly TextBox _pipelineInputBox = new() { Watermark = "请选择一张灰度纹理图", IsReadOnly = true };
     private readonly TextBox _pipelineLayerOutputBox = new() { Watermark = "请选择分层 TIFF 保存目录", IsReadOnly = true };
     private readonly TextBox _pipelineDxfOutputBox = new() { Watermark = "请选择 DXF 保存目录", IsReadOnly = true };
-    private readonly NumericUpDown _pipelineLayersBox = MakeNumberBox(10, 1, 255, 0);
+    private readonly NumericUpDown _pipelineLayersBox = MakeNumberBox(10, 1, 255, 0, showButtons: false);
     private readonly CheckBox _pipelineBelowIsWhite = new() { Content = "低于阈值的区域设为白色（默认设为黑色）" };
     private readonly NumericUpDown _pipelineWidthBox = MakeNumberBox(100, 0.01m, 100000, showButtons: false);
     private readonly NumericUpDown _pipelineHeightBox = MakeNumberBox(100, 0.01m, 100000, showButtons: false);
