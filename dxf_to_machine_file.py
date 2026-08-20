@@ -7,8 +7,10 @@ from copy import deepcopy
 import ctypes
 from dataclasses import dataclass
 from datetime import datetime
+from decimal import Decimal, InvalidOperation
 import errno
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -23,6 +25,8 @@ import numpy as np
 _LINE_COORDINATE_CODES = (10, 20, 30, 11, 21, 31)
 _LAYER_FILENAME_RE = re.compile(r"layer_(\d+)_.*\.dxf", re.IGNORECASE)
 _OWNER_TOKEN_RE = re.compile(r"[A-Za-z0-9_-]{1,128}")
+_VENDOR_DECIMAL_RE = re.compile(r"-?(?:0|[1-9][0-9]*)\.[0-9]{3}")
+MAX_LAYER_STEP_UM = 100_000
 
 DEFAULT_LASER_PARAMS: tuple[dict[str, object], ...] = (
     {
@@ -86,19 +90,46 @@ class BlockMetadata:
     blocks: tuple[BlockDefinition, ...]
 
 
-def _validate_layer_step(layer_step_um: float) -> None:
-    if (
-        isinstance(layer_step_um, bool)
-        or not isinstance(layer_step_um, (int, float, np.integer, np.floating))
-        or not np.isfinite(layer_step_um)
-        or layer_step_um <= 0
-    ):
-        raise ValueError("layer_step_um must be finite and positive")
-    step_mm = float(layer_step_um) / 1000
-    if not np.isfinite(step_mm) or float(f"{step_mm:.3f}") == 0.0:
+def _validate_layer_step(layer_step_um: float) -> int:
+    if isinstance(layer_step_um, bool):
+        raise ValueError("layer_step_um must be a whole number of micrometres")
+    if isinstance(layer_step_um, (int, np.integer)):
+        step_um = int(layer_step_um)
+    elif isinstance(layer_step_um, (float, np.floating)):
+        numeric_step = float(layer_step_um)
+        if not math.isfinite(numeric_step) or not numeric_step.is_integer():
+            raise ValueError("layer_step_um must be a whole number of micrometres")
+        step_um = int(numeric_step)
+    else:
+        raise ValueError("layer_step_um must be a whole number of micrometres")
+    if not 1 <= step_um <= MAX_LAYER_STEP_UM:
         raise ValueError(
-            "layer_step_um must produce a non-zero three-decimal millimeter step"
+            f"layer_step_um must be between 1 and {MAX_LAYER_STEP_UM} micrometres"
         )
+    return step_um
+
+
+def _parse_layer_step_argument(value: str) -> int:
+    """Parse the CLI step losslessly before applying the shared range contract."""
+    try:
+        parsed = Decimal(value)
+    except InvalidOperation as exc:
+        raise argparse.ArgumentTypeError(
+            "layer step must be a whole number from 1 to 100000 micrometres"
+        ) from exc
+    if (
+        not parsed.is_finite()
+        or parsed != parsed.to_integral_value()
+        or parsed < Decimal(1)
+        or parsed > Decimal(MAX_LAYER_STEP_UM)
+    ):
+        raise argparse.ArgumentTypeError(
+            "layer step must be a whole number from 1 to 100000 micrometres"
+        )
+    try:
+        return _validate_layer_step(int(parsed))
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(str(exc)) from exc
 
 
 def _validate_first_laser_params(params: dict[str, object]) -> None:
@@ -180,9 +211,9 @@ def build_machine_document(
 ) -> dict[str, object]:
     """Build the complete machine.json object in its required insertion order."""
     _validate_placements(placements)
-    _validate_layer_step(layer_step_um)
+    step_um = _validate_layer_step(layer_step_um)
     _validate_first_laser_params(first_laser_params)
-    step_mm = layer_step_um / 1000
+    step_mm = step_um / 1000
     previous_commanded_x = previous_commanded_y = 0.0
     previous_layer = 0
     cycles = []
@@ -200,6 +231,8 @@ def build_machine_document(
         if patch_index == 0:
             command = "G91" + command
         if patch_index == len(placements) - 1:
+            # Target-controller contract: F40 completes this relative motion
+            # before the lexically trailing G90 restores absolute mode.
             command += "G90"
         cycles.append({"galvo_0": [0, command, [patch_index, 0]]})
         previous_commanded_x = target_x
@@ -210,6 +243,104 @@ def build_machine_document(
         "galvo_offset": deepcopy(DEFAULT_GALVO_OFFSET),
         "machine_cycle": cycles,
     }
+
+
+def _consume_vendor_literal(command: str, cursor: int, literal: str) -> int:
+    if not command.startswith(literal, cursor):
+        raise ValueError(f"vendor command expected {literal!r} at offset {cursor}")
+    return cursor + len(literal)
+
+
+def _consume_vendor_axis(
+    command: str,
+    cursor: int,
+    axis: str,
+) -> tuple[int, int]:
+    cursor = _consume_vendor_literal(command, cursor, axis)
+    match = _VENDOR_DECIMAL_RE.match(command, cursor)
+    if match is None:
+        raise ValueError(f"vendor command has an invalid {axis} coordinate")
+    token = match.group(0)
+    negative = token.startswith("-")
+    unsigned = token[1:] if negative else token
+    whole, fraction = unsigned.split(".")
+    thousandths = int(whole) * 1000 + int(fraction)
+    return (-thousandths if negative else thousandths), match.end()
+
+
+def _decimal_from_thousandths(value: int) -> Decimal:
+    """Construct an exact Decimal without applying the ambient context."""
+    digits = tuple(int(character) for character in str(abs(value)))
+    return Decimal((1 if value < 0 else 0, digits, -3))
+
+
+def _simulate_vendor_machine_cycles(
+    machine_cycles: object,
+) -> list[tuple[Decimal, Decimal, Decimal]]:
+    """Strictly simulate the target controller's supported lexical command grammar.
+
+    This controller executes the pending G00 motion when the lexical ``F40`` token
+    completes, then applies a trailing ``G90``. Consequently the approved final
+    ``...F40G90`` command finishes its G91-relative move before restoring G90.
+    """
+    if type(machine_cycles) is not list or not machine_cycles:
+        raise ValueError("machine_cycle must be a non-empty list")
+
+    absolute_mode = True
+    x = y = z = 0
+    states: list[tuple[Decimal, Decimal, Decimal]] = []
+    final_index = len(machine_cycles) - 1
+    for cycle_index, cycle in enumerate(machine_cycles):
+        if type(cycle) is not dict or set(cycle) != {"galvo_0"}:
+            raise ValueError("each vendor cycle must contain exactly galvo_0")
+        payload = cycle["galvo_0"]
+        if type(payload) is not list or len(payload) != 3:
+            raise ValueError("galvo_0 must contain mode, command, and patch reference")
+        if type(payload[0]) is not int or payload[0] != 0:
+            raise ValueError("galvo_0 mode must be integer zero")
+        command = payload[1]
+        reference = payload[2]
+        if type(command) is not str:
+            raise ValueError("vendor command must be a string")
+        if (
+            type(reference) is not list
+            or len(reference) != 2
+            or type(reference[0]) is not int
+            or type(reference[1]) is not int
+            or reference != [cycle_index, 0]
+        ):
+            raise ValueError("vendor cycle patch references must be sequential")
+
+        cursor = 0
+        if cycle_index == 0:
+            cursor = _consume_vendor_literal(command, cursor, "G91")
+            absolute_mode = False
+        cursor = _consume_vendor_literal(command, cursor, "G00")
+        delta_x, cursor = _consume_vendor_axis(command, cursor, "X")
+        delta_y, cursor = _consume_vendor_axis(command, cursor, "Y")
+        delta_z, cursor = _consume_vendor_axis(command, cursor, "Z")
+        cursor = _consume_vendor_literal(command, cursor, "F40")
+
+        # Vendor contract: reaching F40 completes motion with the mode active now.
+        if absolute_mode:
+            raise ValueError("vendor motion must execute in G91 relative mode")
+        x += delta_x
+        y += delta_y
+        z += delta_z
+        states.append(tuple(
+            _decimal_from_thousandths(coordinate)
+            for coordinate in (x, y, z)
+        ))
+
+        if cycle_index == final_index:
+            cursor = _consume_vendor_literal(command, cursor, "G90")
+            absolute_mode = True
+        if cursor != len(command):
+            raise ValueError("vendor command contains unsupported or misplaced tokens")
+
+    if not absolute_mode:
+        raise ValueError("vendor command sequence must restore G90 after final motion")
+    return states
 
 
 def extract_layer_number(path: Path) -> int:
@@ -426,7 +557,7 @@ def make_patch(
         raise ValueError("lines must be a 2-D array with exactly six columns")
     if isinstance(layer_index, bool) or not isinstance(layer_index, (int, np.integer)) or layer_index < 0:
         raise ValueError("layer_index must be a non-negative integer")
-    _validate_layer_step(layer_step_um)
+    step_um = _validate_layer_step(layer_step_um)
     for center in (center_x, center_y):
         if (
             isinstance(center, bool)
@@ -443,7 +574,7 @@ def make_patch(
     patch[:, 3] -= center_x
     patch[:, 1] -= center_y
     patch[:, 4] -= center_y
-    z_depth_mm = -int(layer_index) * layer_step_um / 1000.0
+    z_depth_mm = -int(layer_index) * step_um / 1000.0
     patch[:, 2] = z_depth_mm
     patch[:, 5] = z_depth_mm
     if not np.isfinite(patch).all():
@@ -452,6 +583,100 @@ def make_patch(
     if not np.isfinite(patch).all():
         raise ValueError("transformed patch contains non-finite values")
     return patch
+
+
+def _independently_validate_patch_geometry(
+    patch_index: int,
+    patch: np.ndarray,
+    planned_patch: PlannedPatch,
+    step_um: int,
+) -> None:
+    """Cross-check patch coordinates without calling the generation helper."""
+    try:
+        source_lines = np.asarray(planned_patch.lines, dtype=np.float64)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"invalid source lines for patch {patch_index}") from exc
+    if source_lines.shape != patch.shape or not np.isfinite(source_lines).all():
+        raise ValueError(f"invalid source geometry for patch {patch_index}")
+
+    xy_columns = [0, 1, 3, 4]
+    offsets = np.array(
+        [
+            planned_patch.placement.center_x,
+            planned_patch.placement.center_y,
+            planned_patch.placement.center_x,
+            planned_patch.placement.center_y,
+        ],
+        dtype=np.float64,
+    )
+    source_xy = source_lines[:, xy_columns]
+    unquantized_local_xy = source_xy - offsets
+    expected_local_xy = unquantized_local_xy.astype("<f4")
+    if not np.array_equal(patch[:, xy_columns], expected_local_xy):
+        raise ValueError(
+            f"patch {patch_index} local XY does not independently match source geometry"
+        )
+
+    reconstructed_xy = patch[:, xy_columns].astype(np.float64) + offsets
+    quantization_allowance = (
+        np.abs(expected_local_xy.astype(np.float64) - unquantized_local_xy)
+        + np.finfo(np.float64).eps * np.maximum(1.0, np.abs(source_xy)) * 4
+    )
+    if (
+        not np.isfinite(reconstructed_xy).all()
+        or np.any(np.abs(reconstructed_xy - source_xy) > quantization_allowance)
+    ):
+        raise ValueError(
+            f"patch {patch_index} local XY plus center does not recover source XY"
+        )
+
+    expected_z = Decimal(-int(planned_patch.placement.layer_index) * step_um) / Decimal(1000)
+    expected_patch_z = np.float32(float(expected_z))
+    if not np.array_equal(
+        patch[:, [2, 5]],
+        np.full((patch.shape[0], 2), expected_patch_z, dtype="<f4"),
+    ):
+        raise ValueError(
+            f"patch {patch_index} does not independently match layer-absolute Z"
+        )
+
+
+def _independently_validate_machine_motion(
+    machine_cycles: object,
+    planned_patches: list[PlannedPatch],
+    actual_patches: list[np.ndarray],
+    step_um: int,
+) -> None:
+    """Cross-check vendor-command state without generation helper reuse."""
+    simulated_states = _simulate_vendor_machine_cycles(machine_cycles)
+    if len(simulated_states) != len(planned_patches):
+        raise ValueError("vendor command count does not match the patch plan")
+
+    for patch_index, (state, planned_patch, patch) in enumerate(
+        zip(simulated_states, planned_patches, actual_patches)
+    ):
+        placement = planned_patch.placement
+        target_x = Decimal(f"{float(placement.center_x):.3f}")
+        target_y = Decimal(f"{float(placement.center_y):.3f}")
+        target_z = Decimal(-int(placement.layer_index) * step_um) / Decimal(1000)
+        if not all(value.is_finite() for value in (*state, target_x, target_y, target_z)):
+            raise ValueError("independent machine validation found non-finite state")
+        if state[:2] != (target_x, target_y):
+            raise ValueError(
+                f"vendor cumulative XY does not reach patch {patch_index} center"
+            )
+        if state[2] != target_z:
+            raise ValueError(
+                f"vendor cumulative Z does not reach patch {patch_index} layer Z"
+            )
+        expected_patch_z = np.float32(float(state[2]))
+        if not np.array_equal(
+            patch[:, [2, 5]],
+            np.full((patch.shape[0], 2), expected_patch_z, dtype="<f4"),
+        ):
+            raise ValueError(
+                f"vendor cumulative Z does not match patch {patch_index} absolute Z"
+            )
 
 
 def validate_machine_directory(
@@ -466,7 +691,7 @@ def validate_machine_directory(
     if any(not isinstance(planned_patch, PlannedPatch) for planned_patch in planned_patches):
         raise ValueError("planned_patches must contain PlannedPatch values")
     _validate_placements([planned_patch.placement for planned_patch in planned_patches])
-    _validate_layer_step(layer_step_um)
+    step_um = _validate_layer_step(layer_step_um)
     _validate_first_laser_params(expected_first_laser_params)
     if not path.is_dir():
         raise ValueError("machine directory does not exist")
@@ -480,6 +705,7 @@ def validate_machine_directory(
     if actual_patch_names != expected_patch_names:
         raise ValueError("patches directory does not contain the exact expected files")
 
+    actual_patches: list[np.ndarray] = []
     for index, planned_patch in enumerate(planned_patches):
         try:
             patch = np.load(path / "patches" / f"{index}_0.npy", allow_pickle=False)
@@ -500,6 +726,8 @@ def validate_machine_directory(
         )
         if not np.array_equal(patch, expected_patch):
             raise ValueError(f"patch {index} does not match the expected plan")
+        _independently_validate_patch_geometry(index, patch, planned_patch, step_um)
+        actual_patches.append(patch)
 
     try:
         document = json.loads((path / "machine.json").read_text(encoding="utf-8"))
@@ -517,6 +745,12 @@ def validate_machine_directory(
         raise ValueError("immutable laser groups do not match defaults")
     if document["galvo_offset"] != DEFAULT_GALVO_OFFSET:
         raise ValueError("invalid galvo offset")
+    _independently_validate_machine_motion(
+        document["machine_cycle"],
+        planned_patches,
+        actual_patches,
+        step_um,
+    )
     expected_cycles = build_machine_document(
         [planned_patch.placement for planned_patch in planned_patches],
         layer_step_um,
@@ -535,7 +769,7 @@ def generate_machine_file(
     block_center_positioning: bool = False,
 ) -> Path:
     """Generate, validate, and atomically publish a machine-file directory."""
-    _validate_layer_step(layer_step_um)
+    step_um = _validate_layer_step(layer_step_um)
     _validate_first_laser_params(first_laser_params)
     resolved_owner_token = uuid.uuid4().hex if owner_token is None else owner_token
     _validate_owner_token(resolved_owner_token)
@@ -576,14 +810,14 @@ def generate_machine_file(
             patch = make_patch(
                 planned_patch.lines,
                 planned_patch.placement.layer_index,
-                layer_step_um,
+                step_um,
                 planned_patch.placement.center_x,
                 planned_patch.placement.center_y,
             )
             np.save(temp_path / "patches" / f"{index}_0.npy", patch)
         document = build_machine_document(
             [planned_patch.placement for planned_patch in planned_patches],
-            layer_step_um,
+            step_um,
             first_laser_params,
         )
         (temp_path / "machine.json").write_text(
@@ -593,7 +827,7 @@ def generate_machine_file(
         validate_machine_directory(
             temp_path,
             planned_patches,
-            layer_step_um,
+            step_um,
             first_laser_params,
         )
         _clear_finder_hidden_flags(temp_path)
@@ -696,7 +930,7 @@ def _build_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument("dxf_dir", type=Path)
     parser.add_argument("output_name", nargs="?")
     parser.add_argument("--owner-token")
-    parser.add_argument("--layer-step-um", type=float, default=3)
+    parser.add_argument("--layer-step-um", type=_parse_layer_step_argument, default=3)
     parser.add_argument(
         "--block-center-positioning",
         action=argparse.BooleanOptionalAction,

@@ -94,7 +94,7 @@ public sealed class MainWindow : Window
     private readonly NumericUpDown _pipelineBoundaryCorrelationBox = MakeNumberBox(1, 0.1m, 100);
     private readonly NumericUpDown _pipelineVoronoiSeedBox = MakeNumberBox(12345, 1, int.MaxValue, 0);
     private readonly NumericUpDown _pipelineLayerStepBox =
-        MakeNumberBox(3, 0.5m, 100000, minimum: 0.5m);
+        MakeNumberBox(3, 1, 100000, 0, minimum: 1);
     private readonly CheckBox _pipelineBlockCenterMotionBox = new()
     {
         Content = "按加工块中心移动 XY",
@@ -1056,10 +1056,14 @@ public sealed class MainWindow : Window
         }
 
         var layerStep = _pipelineLayerStepBox.Value;
-        if (!layerStep.HasValue || layerStep.Value < 0.5m)
+        if (
+            !layerStep.HasValue ||
+            layerStep.Value < 1m ||
+            layerStep.Value > 100000m ||
+            layerStep.Value != decimal.Truncate(layerStep.Value))
         {
             await ShowMessageAsync(
-                "每层下降深度必须至少为 0.5 μm，才能在 0.001 mm 的机器坐标中产生非零移动。");
+                "每层下降深度必须是 1–100000 μm 的整数，才能与 0.001 mm 的机器坐标精度一致。");
             return;
         }
 
@@ -1164,8 +1168,6 @@ public sealed class MainWindow : Window
             }
         }
 
-        var machineStageStarted = false;
-        string? machineOwnerToken = null;
         _cancellation = new CancellationTokenSource();
         var pipelineBlocksBoxWasEnabled = _pipelineBlocksBox.IsEnabled;
         _pipelineRunButton.IsEnabled = false;
@@ -1340,8 +1342,6 @@ public sealed class MainWindow : Window
             AppendPipelineLog(
                 $"加工块中心 XY 定位：{(useBlockCenterMotion ? "已启用" : "未启用")}。");
             var ownerToken = Guid.NewGuid().ToString("N");
-            machineOwnerToken = ownerToken;
-            machineStageStarted = true;
             var machineInfo = CreatePythonProcess(python);
             foreach (var argument in new[]
             {
@@ -1390,12 +1390,12 @@ public sealed class MainWindow : Window
         }
         catch (OperationCanceledException)
         {
-            if (machineStageStarted)
-                CleanupMachineArtifactsAfterCancellation(
-                    machineTempPath,
-                    machineLockPath,
-                    machineOwnerToken!);
             AppendPipelineLog("\n操作已取消。");
+            AppendPipelineLog(
+                "为避免路径替换竞态误删其他任务的数据，程序不会自动删除第三步残留；" +
+                "请确认没有生成进程仍在运行后再手动检查以下路径：");
+            AppendPipelineLog($"临时目录：{machineTempPath}");
+            AppendPipelineLog($"锁文件：{machineLockPath}");
         }
         catch (Exception ex)
         {
@@ -1464,71 +1464,6 @@ public sealed class MainWindow : Window
         value = decimal.ToInt32(candidate.Value);
         error = "";
         return true;
-    }
-
-    private void CleanupMachineArtifactsAfterCancellation(
-        string tempPath,
-        string lockPath,
-        string ownerToken)
-    {
-        string actualOwnerToken;
-        if (!File.Exists(lockPath))
-        {
-            AppendPipelineLog($"取消后未清理加工临时文件：锁文件不存在，无法确认本次所有权（{lockPath}）。");
-            return;
-        }
-
-        try
-        {
-            if ((File.GetAttributes(lockPath) & FileAttributes.ReparsePoint) != 0)
-            {
-                AppendPipelineLog($"取消后未清理加工临时文件：锁路径不是普通文件（{lockPath}）。");
-                return;
-            }
-            actualOwnerToken = File.ReadAllText(lockPath).Trim();
-        }
-        catch (Exception ex)
-        {
-            AppendPipelineLog($"取消后未清理加工临时文件：无法读取锁文件确认所有权（{ex.Message}）。");
-            return;
-        }
-
-        if (actualOwnerToken.Length == 0)
-        {
-            AppendPipelineLog($"取消后未清理加工临时文件：锁文件为空，无法确认本次所有权（{lockPath}）。");
-            return;
-        }
-        if (!string.Equals(actualOwnerToken, ownerToken, StringComparison.Ordinal))
-        {
-            AppendPipelineLog($"取消后未清理加工临时文件：锁令牌不匹配，文件可能属于其他任务（{lockPath}）。");
-            return;
-        }
-
-        if (Directory.Exists(tempPath))
-        {
-            try
-            {
-                Directory.Delete(tempPath, recursive: true);
-                AppendPipelineLog($"已清理取消后临时目录：{tempPath}");
-            }
-            catch (Exception ex)
-            {
-                AppendPipelineLog($"清理临时目录失败：{ex.Message}");
-            }
-        }
-
-        if (File.Exists(lockPath))
-        {
-            try
-            {
-                File.Delete(lockPath);
-                AppendPipelineLog($"已清理取消后锁文件：{lockPath}");
-            }
-            catch (Exception ex)
-            {
-                AppendPipelineLog($"清理锁文件失败：{ex.Message}");
-            }
-        }
     }
 
     private static ProcessStartInfo CreatePythonProcess(string python) => new()

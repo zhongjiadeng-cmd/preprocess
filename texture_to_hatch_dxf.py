@@ -11,12 +11,16 @@
 from __future__ import annotations
 
 import argparse
+import ctypes
+import errno
+import hashlib
 import json
 import math
 import os
 import stat
+import sys
 import tempfile
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TextIO
 
@@ -49,6 +53,54 @@ class VoronoiBlock:
     area: float
 
 
+@dataclass(frozen=True)
+class _OwnedStagingDirectory:
+    """A private staging directory retained by an open descriptor."""
+
+    path: Path
+    descriptor: int
+    identity: tuple[int, int]
+    publication_directory_descriptor: int
+    publication_directory_identity: tuple[int, int]
+    resources: _OwnedHatchResources
+
+
+@dataclass(frozen=True)
+class _OwnedStagedFile:
+    """A staged regular file retained by its originally-created descriptor."""
+
+    path: Path
+    name: str
+    descriptor: int
+    identity: tuple[int, int]
+    staging_directory: _OwnedStagingDirectory
+    digest: bytes | None = None
+    expected_size: int | None = None
+
+
+@dataclass(frozen=True)
+class _OwnedPublishedFile:
+    """A no-replace destination retained through pair publication/rollback."""
+
+    path: Path
+    name: str
+    descriptor: int
+    identity: tuple[int, int]
+    expected_size: int
+    digest: bytes
+    directory_descriptor: int
+    staging_directory: _OwnedStagingDirectory
+
+
+@dataclass
+class _OwnedHatchResources:
+    """Caller-owned registry that closes assignment-window acquisition gaps."""
+
+    staging_directory: _OwnedStagingDirectory | None = None
+    staged_files: list[_OwnedStagedFile] = field(default_factory=list)
+    published_files: list[_OwnedPublishedFile] = field(default_factory=list)
+
+
 def block_metadata_path(dxf_path: Path) -> Path:
     return dxf_path.with_suffix(".blocks.json")
 
@@ -76,7 +128,32 @@ def build_block_metadata(
     }
 
 
-def write_block_metadata(path: Path, document: dict[str, object]) -> None:
+def _write_block_metadata_stream(
+    stream: TextIO,
+    document: dict[str, object],
+) -> None:
+    json.dump(
+        document,
+        stream,
+        ensure_ascii=False,
+        allow_nan=False,
+        indent=4,
+    )
+    stream.flush()
+    os.fsync(stream.fileno())
+
+
+def write_block_metadata(
+    path: Path,
+    document: dict[str, object],
+    *,
+    owned_file: _OwnedStagedFile | None = None,
+) -> None:
+    if owned_file is not None:
+        with _open_owned_text_writer(owned_file, encoding="utf-8") as stream:
+            _write_block_metadata_stream(stream, document)
+        return
+
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary_path: Path | None = None
     try:
@@ -92,15 +169,7 @@ def write_block_metadata(path: Path, document: dict[str, object]) -> None:
             encoding="utf-8",
             newline="",
         ) as stream:
-            json.dump(
-                document,
-                stream,
-                ensure_ascii=False,
-                allow_nan=False,
-                indent=4,
-            )
-            stream.flush()
-            os.fsync(stream.fileno())
+            _write_block_metadata_stream(stream, document)
         os.replace(temporary_path, path)
         temporary_path = None
     finally:
@@ -108,55 +177,735 @@ def write_block_metadata(path: Path, document: dict[str, object]) -> None:
             temporary_path.unlink(missing_ok=True)
 
 
-def _create_owned_temporary_file(final_path: Path) -> tuple[Path, tuple[int, int]]:
-    file_descriptor, temporary_name = tempfile.mkstemp(
-        prefix=f".{final_path.name}.",
-        suffix=".tmp",
-        dir=final_path.parent,
+def _create_owned_staging_directory(
+    final_path: Path,
+    resources: _OwnedHatchResources,
+) -> _OwnedStagingDirectory:
+    publication_directory_descriptor = _open_directory_no_follow(final_path.parent)
+    staging_path: Path | None = None
+    descriptor: int | None = None
+    staging_directory: _OwnedStagingDirectory | None = None
+    try:
+        publication_directory_stat = os.fstat(publication_directory_descriptor)
+        publication_directory_identity = (
+            publication_directory_stat.st_dev,
+            publication_directory_stat.st_ino,
+        )
+        staging_path = Path(tempfile.mkdtemp(
+            prefix=f".{final_path.name}.",
+            suffix=".staging",
+            dir=final_path.parent,
+        ))
+        path_stat = os.lstat(staging_path)
+        path_identity = (path_stat.st_dev, path_stat.st_ino)
+        if (
+            not stat.S_ISDIR(path_stat.st_mode)
+            or stat.S_IMODE(path_stat.st_mode) != 0o700
+        ):
+            raise ValueError("staging directory must be a private mode-0700 directory")
+        flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+        no_follow = getattr(os, "O_NOFOLLOW", 0)
+        if not no_follow:
+            raise OSError(errno.ENOTSUP, "O_NOFOLLOW is required for safe staging")
+        flags |= no_follow
+        descriptor = os.open(staging_path, flags)
+        directory_stat = os.fstat(descriptor)
+        if (
+            not stat.S_ISDIR(directory_stat.st_mode)
+            or stat.S_IMODE(directory_stat.st_mode) != 0o700
+            or (directory_stat.st_dev, directory_stat.st_ino) != path_identity
+        ):
+            raise ValueError("staging directory must be a private mode-0700 directory")
+        current_path_stat = os.lstat(staging_path)
+        if (current_path_stat.st_dev, current_path_stat.st_ino) != path_identity:
+            raise ValueError("staging directory identity changed during creation")
+        staging_directory = _OwnedStagingDirectory(
+            staging_path,
+            descriptor,
+            path_identity,
+            publication_directory_descriptor,
+            publication_directory_identity,
+            resources,
+        )
+        _verify_owned_publication_directory(staging_directory)
+        resources.staging_directory = staging_directory
+        return staging_directory
+    except BaseException:
+        caller_owns_descriptors = resources.staging_directory is staging_directory
+        if descriptor is not None and not caller_owns_descriptors:
+            try:
+                os.close(descriptor)
+            except BaseException:
+                pass
+        if not caller_owns_descriptors:
+            try:
+                os.close(publication_directory_descriptor)
+            except BaseException:
+                pass
+        # Do not mutate a pathname whose identity could have changed. At worst a
+        # single private empty staging directory is left for manual inspection.
+        raise
+
+
+def _verify_owned_staging_directory(
+    staging_directory: _OwnedStagingDirectory,
+) -> os.stat_result:
+    descriptor_stat = os.fstat(staging_directory.descriptor)
+    if (
+        (descriptor_stat.st_dev, descriptor_stat.st_ino)
+        != staging_directory.identity
+        or not stat.S_ISDIR(descriptor_stat.st_mode)
+        or stat.S_IMODE(descriptor_stat.st_mode) not in {0o500, 0o700}
+    ):
+        raise ValueError("invalid owned staging directory descriptor")
+    try:
+        path_stat = os.lstat(staging_directory.path)
+    except OSError as exc:
+        raise ValueError("owned staging directory path is missing") from exc
+    if (
+        (path_stat.st_dev, path_stat.st_ino) != staging_directory.identity
+        or not stat.S_ISDIR(path_stat.st_mode)
+        or stat.S_IMODE(path_stat.st_mode) != stat.S_IMODE(descriptor_stat.st_mode)
+    ):
+        raise ValueError("owned staging directory identity changed")
+    _verify_owned_publication_directory(staging_directory)
+    return descriptor_stat
+
+
+def _create_owned_temporary_file(
+    final_path: Path,
+    staging_directory: _OwnedStagingDirectory,
+) -> _OwnedStagedFile:
+    _verify_owned_staging_directory(staging_directory)
+    flags = os.O_RDWR | os.O_CREAT | os.O_EXCL
+    no_follow = getattr(os, "O_NOFOLLOW", 0)
+    if not no_follow:
+        raise OSError(errno.ENOTSUP, "O_NOFOLLOW is required for safe staging")
+    flags |= no_follow
+    file_descriptor = os.open(
+        final_path.name,
+        flags,
+        0o600,
+        dir_fd=staging_directory.descriptor,
     )
+    owned_file: _OwnedStagedFile | None = None
     try:
         file_stat = os.fstat(file_descriptor)
+        if not stat.S_ISREG(file_stat.st_mode):
+            raise ValueError("staged artifact must be a regular file")
+        relative_stat = os.stat(
+            final_path.name,
+            dir_fd=staging_directory.descriptor,
+            follow_symlinks=False,
+        )
         identity = (file_stat.st_dev, file_stat.st_ino)
-    finally:
-        os.close(file_descriptor)
-    return Path(temporary_name), identity
+        if (
+            (relative_stat.st_dev, relative_stat.st_ino) != identity
+            or not stat.S_ISREG(relative_stat.st_mode)
+        ):
+            raise ValueError("staged artifact identity changed during creation")
+        owned_file = _OwnedStagedFile(
+            staging_directory.path / final_path.name,
+            final_path.name,
+            file_descriptor,
+            identity,
+            staging_directory,
+        )
+        staging_directory.resources.staged_files.append(owned_file)
+        return owned_file
+    except BaseException:
+        caller_owns_descriptor = any(
+            staged_file is owned_file
+            for staged_file in staging_directory.resources.staged_files
+        )
+        if not caller_owns_descriptor:
+            try:
+                os.close(file_descriptor)
+            except BaseException:
+                pass
+        raise
 
 
-def _path_has_identity(path: Path, identity: tuple[int, int]) -> bool:
+def _verify_owned_staged_file(
+    staged_file: _OwnedStagedFile,
+    *,
+    require_nonempty: bool = False,
+) -> os.stat_result:
+    _verify_owned_staging_directory(staged_file.staging_directory)
+    descriptor_stat = os.fstat(staged_file.descriptor)
+    descriptor_identity = (descriptor_stat.st_dev, descriptor_stat.st_ino)
+    if (
+        descriptor_identity != staged_file.identity
+        or not stat.S_ISREG(descriptor_stat.st_mode)
+        or stat.S_IMODE(descriptor_stat.st_mode) not in {0o400, 0o600}
+        or (require_nonempty and descriptor_stat.st_size <= 0)
+    ):
+        raise ValueError(f"invalid owned staged artifact: {staged_file.path}")
     try:
-        path_stat = os.lstat(path)
+        path_stat = os.stat(
+            staged_file.name,
+            dir_fd=staged_file.staging_directory.descriptor,
+            follow_symlinks=False,
+        )
+    except OSError as exc:
+        raise ValueError(f"missing owned staged artifact: {staged_file.path}") from exc
+    if (
+        (path_stat.st_dev, path_stat.st_ino) != staged_file.identity
+        or not stat.S_ISREG(path_stat.st_mode)
+        or stat.S_IMODE(path_stat.st_mode) != stat.S_IMODE(descriptor_stat.st_mode)
+        or path_stat.st_size != descriptor_stat.st_size
+    ):
+        raise ValueError(f"staged artifact identity changed: {staged_file.path}")
+    return descriptor_stat
+
+
+def _digest_owned_descriptor(descriptor: int, expected_size: int) -> bytes:
+    """Hash exactly one retained descriptor without changing its file offset."""
+    digest = hashlib.sha256()
+    offset = 0
+    while offset < expected_size:
+        chunk = os.pread(descriptor, min(1024 * 1024, expected_size - offset), offset)
+        if not chunk:
+            raise ValueError("owned artifact became shorter while hashing")
+        digest.update(chunk)
+        offset += len(chunk)
+    if os.fstat(descriptor).st_size != expected_size:
+        raise ValueError("owned artifact size changed while hashing")
+    return digest.digest()
+
+
+def _bind_owned_staged_file_content(
+    staged_file: _OwnedStagedFile,
+) -> _OwnedStagedFile:
+    """Bind the bytes just authored by a completed owned writer."""
+    file_stat = _verify_owned_staged_file(staged_file, require_nonempty=True)
+    if stat.S_IMODE(file_stat.st_mode) != 0o600:
+        raise ValueError("completed staged artifact must still be owner-writable")
+    os.fsync(staged_file.descriptor)
+    digest = _digest_owned_descriptor(staged_file.descriptor, file_stat.st_size)
+    return _OwnedStagedFile(
+        staged_file.path,
+        staged_file.name,
+        staged_file.descriptor,
+        staged_file.identity,
+        staged_file.staging_directory,
+        digest,
+        file_stat.st_size,
+    )
+
+
+def _seal_owned_staged_file(staged_file: _OwnedStagedFile) -> _OwnedStagedFile:
+    """Make a completed staged inode read-only and bind it to a content digest."""
+    file_stat = _verify_owned_staged_file(staged_file, require_nonempty=True)
+    if staged_file.digest is None or staged_file.expected_size is None:
+        raise ValueError("staged artifact content was not bound after writing")
+    if (
+        file_stat.st_size != staged_file.expected_size
+        or _digest_owned_descriptor(staged_file.descriptor, file_stat.st_size)
+        != staged_file.digest
+    ):
+        raise ValueError("staged artifact content changed after writing")
+    os.fsync(staged_file.descriptor)
+    os.fchmod(staged_file.descriptor, 0o400)
+    sealed_stat = _verify_owned_staged_file(staged_file, require_nonempty=True)
+    if (
+        (sealed_stat.st_dev, sealed_stat.st_ino) != staged_file.identity
+        or sealed_stat.st_size != staged_file.expected_size
+        or stat.S_IMODE(sealed_stat.st_mode) != 0o400
+        or _digest_owned_descriptor(
+            staged_file.descriptor,
+            staged_file.expected_size,
+        ) != staged_file.digest
+    ):
+        raise ValueError("staged artifact could not be sealed for publication")
+    return _OwnedStagedFile(
+        staged_file.path,
+        staged_file.name,
+        staged_file.descriptor,
+        staged_file.identity,
+        staged_file.staging_directory,
+        staged_file.digest,
+        staged_file.expected_size,
+    )
+
+
+def _restore_owned_staged_file_mode(staged_file: _OwnedStagedFile) -> None:
+    """Restore the published inode's owner-write bit after final verification."""
+    if staged_file.digest is None or staged_file.expected_size is None:
+        raise ValueError("staged artifact was not sealed")
+    file_stat = os.fstat(staged_file.descriptor)
+    if (
+        not stat.S_ISREG(file_stat.st_mode)
+        or (file_stat.st_dev, file_stat.st_ino) != staged_file.identity
+        or file_stat.st_size != staged_file.expected_size
+        or _digest_owned_descriptor(
+            staged_file.descriptor,
+            staged_file.expected_size,
+        )
+        != staged_file.digest
+    ):
+        raise ValueError("sealed staged artifact identity or content changed")
+    os.fchmod(staged_file.descriptor, 0o600)
+    restored_stat = _verify_owned_staged_file(staged_file, require_nonempty=True)
+    if stat.S_IMODE(restored_stat.st_mode) != 0o600:
+        raise ValueError("published artifact mode could not be restored")
+    if (
+        restored_stat.st_size != staged_file.expected_size
+        or _digest_owned_descriptor(
+            staged_file.descriptor,
+            staged_file.expected_size,
+        )
+        != staged_file.digest
+    ):
+        raise ValueError("published artifact content changed while restoring mode")
+
+
+def _open_owned_text_writer(
+    staged_file: _OwnedStagedFile,
+    *,
+    encoding: str,
+) -> TextIO:
+    _verify_owned_staged_file(staged_file)
+    os.lseek(staged_file.descriptor, 0, os.SEEK_SET)
+    os.ftruncate(staged_file.descriptor, 0)
+    descriptor = os.dup(staged_file.descriptor)
+    try:
+        return os.fdopen(
+            descriptor,
+            "w",
+            encoding=encoding,
+            newline="",
+        )
+    except BaseException:
+        try:
+            os.close(descriptor)
+        except BaseException:
+            pass
+        raise
+
+
+def _open_owned_text_reader(
+    staged_file: _OwnedStagedFile,
+    *,
+    label: str,
+    encoding: str,
+) -> TextIO:
+    """Wrap a verified duplicate, closing it even if stream creation is interrupted."""
+    if not isinstance(staged_file, _OwnedStagedFile):
+        raise ValueError(f"staged {label} must be an originally-owned artifact")
+    _verify_owned_staged_file(staged_file, require_nonempty=True)
+    descriptor = os.dup(staged_file.descriptor)
+    try:
+        os.lseek(descriptor, 0, os.SEEK_SET)
+        return os.fdopen(descriptor, "r", encoding=encoding)
+    except BaseException:
+        try:
+            os.close(descriptor)
+        except BaseException:
+            pass
+        raise
+
+
+def _entry_identity(
+    directory_descriptor: int,
+    name: str,
+) -> tuple[int, int] | None:
+    try:
+        path_stat = os.stat(
+            name,
+            dir_fd=directory_descriptor,
+            follow_symlinks=False,
+        )
     except FileNotFoundError:
-        return False
-    return (path_stat.st_dev, path_stat.st_ino) == identity
+        return None
+    return (path_stat.st_dev, path_stat.st_ino)
 
 
-def _unlink_owned_file(path: Path | None, identity: tuple[int, int] | None) -> None:
-    if path is not None and identity is not None and _path_has_identity(path, identity):
-        path.unlink()
+def _open_directory_no_follow(path: Path) -> int:
+    path_stat = os.lstat(path)
+    if not stat.S_ISDIR(path_stat.st_mode):
+        raise ValueError(f"publication parent must be a directory: {path}")
+    identity = (path_stat.st_dev, path_stat.st_ino)
+    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+    no_follow = getattr(os, "O_NOFOLLOW", 0)
+    if not no_follow:
+        raise OSError(errno.ENOTSUP, "O_NOFOLLOW is required for safe publication")
+    descriptor = os.open(path, flags | no_follow)
+    try:
+        descriptor_stat = os.fstat(descriptor)
+        if (
+            not stat.S_ISDIR(descriptor_stat.st_mode)
+            or (descriptor_stat.st_dev, descriptor_stat.st_ino) != identity
+        ):
+            raise ValueError(f"publication parent identity changed: {path}")
+        return descriptor
+    except BaseException:
+        try:
+            os.close(descriptor)
+        except BaseException:
+            pass
+        raise
 
 
-def _publish_file_no_replace(source: Path, destination: Path) -> None:
-    """Publish one staged regular file without replacing an existing path."""
-    os.link(source, destination, follow_symlinks=False)
-    source.unlink()
+def _verify_owned_publication_directory(
+    staging_directory: _OwnedStagingDirectory,
+) -> os.stat_result:
+    """Verify the pinned parent, staging relationship, and current parent path."""
+    descriptor_stat = os.fstat(
+        staging_directory.publication_directory_descriptor
+    )
+    if (
+        not stat.S_ISDIR(descriptor_stat.st_mode)
+        or (descriptor_stat.st_dev, descriptor_stat.st_ino)
+        != staging_directory.publication_directory_identity
+    ):
+        raise ValueError("invalid pinned publication directory descriptor")
+    actual_parent_stat = os.stat(
+        "..",
+        dir_fd=staging_directory.descriptor,
+        follow_symlinks=False,
+    )
+    if (
+        not stat.S_ISDIR(actual_parent_stat.st_mode)
+        or (actual_parent_stat.st_dev, actual_parent_stat.st_ino)
+        != staging_directory.publication_directory_identity
+    ):
+        raise ValueError("staging directory left its pinned publication parent")
+
+    current_descriptor = _open_directory_no_follow(staging_directory.path.parent)
+    try:
+        current_stat = os.fstat(current_descriptor)
+        if (
+            not stat.S_ISDIR(current_stat.st_mode)
+            or (current_stat.st_dev, current_stat.st_ino)
+            != staging_directory.publication_directory_identity
+        ):
+            raise ValueError("publication directory path identity changed")
+    finally:
+        os.close(current_descriptor)
+    return descriptor_stat
+
+
+def _lock_owned_staging_directory(
+    staging_directory: _OwnedStagingDirectory,
+) -> None:
+    """Freeze staged entry names before descriptor-relative hard-link publication."""
+    directory_stat = _verify_owned_staging_directory(staging_directory)
+    if stat.S_IMODE(directory_stat.st_mode) == 0o500:
+        return
+    os.fchmod(staging_directory.descriptor, 0o500)
+    locked_stat = _verify_owned_staging_directory(staging_directory)
+    if stat.S_IMODE(locked_stat.st_mode) != 0o500:
+        raise ValueError("owned staging directory could not be locked for publication")
+
+
+def _make_owned_staging_directory_writable(
+    staging_directory: _OwnedStagingDirectory,
+) -> None:
+    """Restore owner write permission through the retained directory descriptor."""
+    directory_stat = os.fstat(staging_directory.descriptor)
+    if (
+        not stat.S_ISDIR(directory_stat.st_mode)
+        or (directory_stat.st_dev, directory_stat.st_ino)
+        != staging_directory.identity
+    ):
+        raise ValueError("invalid owned staging directory descriptor")
+    if stat.S_IMODE(directory_stat.st_mode) != 0o700:
+        os.fchmod(staging_directory.descriptor, 0o700)
+    writable_stat = os.fstat(staging_directory.descriptor)
+    if (
+        not stat.S_ISDIR(writable_stat.st_mode)
+        or (writable_stat.st_dev, writable_stat.st_ino)
+        != staging_directory.identity
+        or stat.S_IMODE(writable_stat.st_mode) != 0o700
+    ):
+        raise ValueError("owned staging directory could not be made writable")
+
+
+def _atomic_rename_no_replace(
+    source_directory_descriptor: int,
+    source_name: str,
+    destination_directory_descriptor: int,
+    destination_name: str,
+) -> None:
+    """Atomically rename one directory entry without replacing another."""
+    libc = ctypes.CDLL(None, use_errno=True)
+    source_bytes = os.fsencode(source_name)
+    destination_bytes = os.fsencode(destination_name)
+    if sys.platform == "darwin":
+        try:
+            rename_function = libc.renameatx_np
+        except AttributeError as exc:
+            raise OSError(
+                errno.ENOSYS,
+                "atomic descriptor-relative no-replace rename is unavailable",
+            ) from exc
+        rename_function.argtypes = [
+            ctypes.c_int,
+            ctypes.c_char_p,
+            ctypes.c_int,
+            ctypes.c_char_p,
+            ctypes.c_uint,
+        ]
+        rename_function.restype = ctypes.c_int
+        arguments = (
+            source_directory_descriptor,
+            source_bytes,
+            destination_directory_descriptor,
+            destination_bytes,
+            0x00000004,
+        )
+    elif sys.platform.startswith("linux"):
+        try:
+            rename_function = libc.renameat2
+        except AttributeError as exc:
+            raise OSError(
+                errno.ENOSYS,
+                "atomic descriptor-relative no-replace rename is unavailable",
+            ) from exc
+        rename_function.argtypes = [
+            ctypes.c_int,
+            ctypes.c_char_p,
+            ctypes.c_int,
+            ctypes.c_char_p,
+            ctypes.c_uint,
+        ]
+        rename_function.restype = ctypes.c_int
+        arguments = (
+            source_directory_descriptor,
+            source_bytes,
+            destination_directory_descriptor,
+            destination_bytes,
+            1,
+        )
+    else:
+        raise OSError(
+            errno.ENOTSUP,
+            f"atomic descriptor-relative rename is unsupported on {sys.platform}",
+        )
+
+    ctypes.set_errno(0)
+    if rename_function(*arguments) == 0:
+        return
+    error_number = ctypes.get_errno() or errno.EIO
+    if error_number in {errno.EEXIST, errno.ENOTEMPTY}:
+        raise FileExistsError(
+            error_number,
+            os.strerror(error_number),
+            destination_name,
+        )
+    raise OSError(error_number, os.strerror(error_number), destination_name)
+
+
+def _restore_foreign_rollback_entry(
+    published_file: _OwnedPublishedFile,
+    quarantine_name: str,
+) -> None:
+    """Best-effort restore of a non-owned entry moved during a rollback race."""
+    try:
+        quarantine_identity = _entry_identity(
+            published_file.staging_directory.descriptor,
+            quarantine_name,
+        )
+        if (
+            quarantine_identity is None
+            or quarantine_identity == published_file.identity
+            or _entry_identity(
+                published_file.directory_descriptor,
+                published_file.name,
+            ) is not None
+        ):
+            return
+        _atomic_rename_no_replace(
+            published_file.staging_directory.descriptor,
+            quarantine_name,
+            published_file.directory_descriptor,
+            published_file.name,
+        )
+    except BaseException:
+        # Cleanup must preserve the primary failure and never replace a newer
+        # public entry. A no-replace restore is the only bounded safe attempt.
+        pass
+
+
+def _rollback_published_file(
+    published_file: _OwnedPublishedFile | None,
+) -> None:
+    """Quarantine only an identity-proven owned public entry."""
+    if published_file is None:
+        return
+    _make_owned_staging_directory_writable(published_file.staging_directory)
+    descriptor_stat = os.fstat(published_file.descriptor)
+    if (
+        (descriptor_stat.st_dev, descriptor_stat.st_ino)
+        != published_file.identity
+        or not stat.S_ISREG(descriptor_stat.st_mode)
+    ):
+        return
+    if _entry_identity(
+        published_file.directory_descriptor,
+        published_file.name,
+    ) != published_file.identity:
+        return
+    quarantine_name = f".{published_file.name}.published-rollback"
+    if _entry_identity(
+        published_file.staging_directory.descriptor,
+        quarantine_name,
+    ) is not None:
+        return
+    try:
+        _atomic_rename_no_replace(
+            published_file.directory_descriptor,
+            published_file.name,
+            published_file.staging_directory.descriptor,
+            quarantine_name,
+        )
+        moved_identity = _entry_identity(
+            published_file.staging_directory.descriptor,
+            quarantine_name,
+        )
+    except BaseException:
+        _restore_foreign_rollback_entry(published_file, quarantine_name)
+        raise
+    if moved_identity != published_file.identity:
+        # The public entry changed in the rename window. Restore that
+        # replacement instead of deleting or consuming it.
+        _restore_foreign_rollback_entry(published_file, quarantine_name)
+        return
+    # POSIX has no conditional unlink-by-inode primitive. Leave this proven
+    # owned quarantine in the private directory instead of reopening a final
+    # check-to-unlink race that could delete a swapped-in foreign file.
+
+
+def _close_published_file(published_file: _OwnedPublishedFile | None) -> None:
+    if published_file is None:
+        return
+    os.close(published_file.directory_descriptor)
+
+
+def _verify_owned_published_file(
+    published_file: _OwnedPublishedFile,
+    *,
+    expected_mode: int,
+) -> os.stat_result:
+    """Revalidate one public entry against immutable identity/size/content state."""
+    source_stat = os.fstat(published_file.descriptor)
+    if (
+        not stat.S_ISREG(source_stat.st_mode)
+        or (source_stat.st_dev, source_stat.st_ino) != published_file.identity
+        or stat.S_IMODE(source_stat.st_mode) != expected_mode
+        or source_stat.st_size != published_file.expected_size
+        or _digest_owned_descriptor(
+            published_file.descriptor,
+            published_file.expected_size,
+        ) != published_file.digest
+    ):
+        raise ValueError(f"published source content changed: {published_file.path}")
+
+    no_follow = getattr(os, "O_NOFOLLOW", 0)
+    if not no_follow:
+        raise OSError(errno.ENOTSUP, "O_NOFOLLOW is required for safe publication")
+    verification_descriptor = os.open(
+        published_file.name,
+        os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | no_follow,
+        dir_fd=published_file.directory_descriptor,
+    )
+    try:
+        public_stat = os.fstat(verification_descriptor)
+        if (
+            not stat.S_ISREG(public_stat.st_mode)
+            or (public_stat.st_dev, public_stat.st_ino) != published_file.identity
+            or stat.S_IMODE(public_stat.st_mode) != expected_mode
+            or public_stat.st_size != published_file.expected_size
+            or _digest_owned_descriptor(
+                verification_descriptor,
+                published_file.expected_size,
+            ) != published_file.digest
+        ):
+            raise ValueError(f"published artifact changed: {published_file.path}")
+    finally:
+        os.close(verification_descriptor)
+    if _entry_identity(
+        published_file.directory_descriptor,
+        published_file.name,
+    ) != published_file.identity:
+        raise ValueError(f"published artifact path changed: {published_file.path}")
+    return public_stat
+
+
+def _publish_file_no_replace(
+    source: _OwnedStagedFile,
+    destination: Path,
+) -> _OwnedPublishedFile:
+    """Atomically hard-link a locked, completed private artifact into place."""
+    source_stat = _verify_owned_staged_file(source, require_nonempty=True)
+    if source.digest is None:
+        raise ValueError("staged artifact must be content-sealed before publication")
+    if (
+        stat.S_IMODE(source_stat.st_mode) != 0o400
+        or _digest_owned_descriptor(source.descriptor, source_stat.st_size)
+        != source.digest
+    ):
+        raise ValueError("staged artifact content changed before publication")
+    destination_directory_descriptor = os.dup(
+        source.staging_directory.publication_directory_descriptor
+    )
+    published_file: _OwnedPublishedFile | None = None
+    try:
+        published_file = _OwnedPublishedFile(
+            destination,
+            destination.name,
+            source.descriptor,
+            source.identity,
+            source_stat.st_size,
+            source.digest,
+            destination_directory_descriptor,
+            source.staging_directory,
+        )
+        source.staging_directory.resources.published_files.append(published_file)
+        no_follow = getattr(os, "O_NOFOLLOW", 0)
+        if not no_follow:
+            raise OSError(errno.ENOTSUP, "O_NOFOLLOW is required for safe publication")
+        _verify_owned_publication_directory(source.staging_directory)
+        _verify_owned_staged_file(source, require_nonempty=True)
+        if stat.S_IMODE(os.fstat(source.staging_directory.descriptor).st_mode) != 0o500:
+            raise ValueError("staging directory must be locked before publication")
+        os.link(
+            source.name,
+            destination.name,
+            src_dir_fd=source.staging_directory.descriptor,
+            dst_dir_fd=destination_directory_descriptor,
+            follow_symlinks=False,
+        )
+        _verify_owned_published_file(published_file, expected_mode=0o400)
+        return published_file
+    except BaseException:
+        caller_owns_descriptor = any(
+            registered is published_file
+            for registered in source.staging_directory.resources.published_files
+        )
+        if not caller_owns_descriptor:
+            try:
+                os.close(destination_directory_descriptor)
+            except BaseException:
+                pass
+        raise
 
 
 def validate_hatch_output_pair(
-    dxf_path: Path,
-    metadata_path: Path,
+    dxf_path: _OwnedStagedFile,
+    metadata_path: _OwnedStagedFile,
     expected_metadata: dict[str, object],
 ) -> None:
-    """Reload and content-validate a staged DXF/metadata pair."""
-    for path, label in ((dxf_path, "DXF"), (metadata_path, "block metadata")):
-        try:
-            path_stat = os.lstat(path)
-        except OSError as exc:
-            raise ValueError(f"missing staged {label}: {path}") from exc
-        if not stat.S_ISREG(path_stat.st_mode) or path_stat.st_size <= 0:
-            raise ValueError(f"staged {label} must be a nonempty regular file: {path}")
+    """Descriptor-read and content-validate a staged DXF/metadata pair."""
 
     try:
-        dxf_pairs = dxf_path.read_text(encoding="ascii").splitlines()
+        with _open_owned_text_reader(
+            dxf_path,
+            label="DXF",
+            encoding="ascii",
+        ) as stream:
+            dxf_pairs = stream.read().splitlines()
     except (OSError, UnicodeError) as exc:
         raise ValueError(f"invalid staged DXF: {dxf_path}") from exc
     if len(dxf_pairs) % 2 != 0 or dxf_pairs[-2:] != ["0", "EOF"]:
@@ -167,7 +916,12 @@ def validate_hatch_output_pair(
     )
 
     try:
-        actual_metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        with _open_owned_text_reader(
+            metadata_path,
+            label="block metadata",
+            encoding="utf-8",
+        ) as stream:
+            actual_metadata = json.load(stream)
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:
         raise ValueError(f"invalid staged block metadata: {metadata_path}") from exc
     if actual_metadata != expected_metadata:
@@ -958,24 +1712,32 @@ def export_horizontal_hatch_dxf(
 
     line_count = sum(len(segments) for segments in grouped_segments)
     ordered_block_counts: list[int] = []
-    temporary_dxf: Path | None = None
-    temporary_metadata: Path | None = None
-    temporary_dxf_identity: tuple[int, int] | None = None
-    temporary_metadata_identity: tuple[int, int] | None = None
+    resources = _OwnedHatchResources()
+    staging_directory: _OwnedStagingDirectory | None = None
+    temporary_dxf: _OwnedStagedFile | None = None
+    temporary_metadata: _OwnedStagedFile | None = None
+    published_dxf: _OwnedPublishedFile | None = None
+    published_metadata: _OwnedPublishedFile | None = None
     try:
         if publish_pair:
             assert block_metadata_output is not None
-            temporary_dxf, temporary_dxf_identity = _create_owned_temporary_file(
-                output_path
+            staging_directory = _create_owned_staging_directory(
+                output_path,
+                resources,
             )
-            temporary_metadata, temporary_metadata_identity = (
-                _create_owned_temporary_file(block_metadata_output)
+            temporary_dxf = _create_owned_temporary_file(
+                output_path,
+                staging_directory,
             )
-            dxf_write_path = temporary_dxf
+            temporary_metadata = _create_owned_temporary_file(
+                block_metadata_output,
+                staging_directory,
+            )
+            dxf_stream = _open_owned_text_writer(temporary_dxf, encoding="ascii")
         else:
-            dxf_write_path = output_path
+            dxf_stream = output_path.open("w", encoding="ascii", newline="")
 
-        with dxf_write_path.open("w", encoding="ascii", newline="") as stream:
+        with dxf_stream as stream:
             write_dxf_header(stream, target_width_mm, target_height_mm)
             handle = 0x100
 
@@ -1007,43 +1769,98 @@ def export_horizontal_hatch_dxf(
             assert block_metadata_output is not None
             assert temporary_dxf is not None
             assert temporary_metadata is not None
+            temporary_dxf = _bind_owned_staged_file_content(temporary_dxf)
             metadata_document = build_block_metadata(
                 voronoi_blocks,
                 block_order,
                 ordered_block_counts,
                 4 if include_border else 0,
             )
-            write_block_metadata(temporary_metadata, metadata_document)
-            temporary_metadata_stat = os.lstat(temporary_metadata)
-            temporary_metadata_identity = (
-                temporary_metadata_stat.st_dev,
-                temporary_metadata_stat.st_ino,
+            write_block_metadata(
+                temporary_metadata.path,
+                metadata_document,
+                owned_file=temporary_metadata,
             )
+            temporary_metadata = _bind_owned_staged_file_content(temporary_metadata)
+            _lock_owned_staging_directory(staging_directory)
+            _verify_owned_staged_file(temporary_dxf, require_nonempty=True)
+            _verify_owned_staged_file(temporary_metadata, require_nonempty=True)
+            temporary_dxf = _seal_owned_staged_file(temporary_dxf)
+            temporary_metadata = _seal_owned_staged_file(temporary_metadata)
             validate_hatch_output_pair(
                 temporary_dxf,
                 temporary_metadata,
                 metadata_document,
             )
-            temporary_dxf_stat = os.lstat(temporary_dxf)
-            temporary_dxf_identity = (
-                temporary_dxf_stat.st_dev,
-                temporary_dxf_stat.st_ino,
+            published_dxf = _publish_file_no_replace(temporary_dxf, output_path)
+            published_metadata = _publish_file_no_replace(
+                temporary_metadata,
+                block_metadata_output,
             )
-
-            _publish_file_no_replace(temporary_dxf, output_path)
-            _publish_file_no_replace(temporary_metadata, block_metadata_output)
-    except Exception:
+            _verify_owned_published_file(published_dxf, expected_mode=0o400)
+            _verify_owned_published_file(published_metadata, expected_mode=0o400)
+            _verify_owned_publication_directory(staging_directory)
+            _make_owned_staging_directory_writable(staging_directory)
+            _restore_owned_staged_file_mode(temporary_dxf)
+            _restore_owned_staged_file_mode(temporary_metadata)
+            _verify_owned_published_file(published_dxf, expected_mode=0o600)
+            _verify_owned_published_file(published_metadata, expected_mode=0o600)
+            _verify_owned_publication_directory(staging_directory)
+    except BaseException:
         if publish_pair:
             assert block_metadata_output is not None
-            # Publication is two explicit no-replace operations, not an atomic pair.
-            # Remove only paths whose inode proves this invocation created them.
-            _unlink_owned_file(block_metadata_output, temporary_metadata_identity)
-            _unlink_owned_file(output_path, temporary_dxf_identity)
+            owned_staging_directory = resources.staging_directory
+            if owned_staging_directory is not None:
+                try:
+                    _make_owned_staging_directory_writable(owned_staging_directory)
+                except BaseException:
+                    pass
+            # Publication is two explicit no-replace hard links, not an atomic
+            # pair. Roll back only entries still proven to be this invocation's
+            # inode; quarantine them under the retained private directory rather
+            # than unlinking a public pathname.
+            for published_file in reversed(resources.published_files):
+                for _attempt in range(2):
+                    try:
+                        _rollback_published_file(published_file)
+                        break
+                    except BaseException:
+                        # One retry closes the async-exception window before a
+                        # namespace move. Persistent cleanup failure remains
+                        # bounded and cannot mask the primary generation error.
+                        pass
         raise
     finally:
         if publish_pair:
-            _unlink_owned_file(temporary_metadata, temporary_metadata_identity)
-            _unlink_owned_file(temporary_dxf, temporary_dxf_identity)
+            for published_file in reversed(resources.published_files):
+                try:
+                    _close_published_file(published_file)
+                except BaseException:
+                    pass
+            for staged_file in reversed(resources.staged_files):
+                # POSIX has no conditional unlink-by-inode primitive. Close the
+                # retained descriptor and leave any failed staged entry in the
+                # bounded private directory rather than risk deleting a
+                # replacement introduced after an identity check.
+                try:
+                    os.close(staged_file.descriptor)
+                except BaseException:
+                    pass
+            owned_staging_directory = resources.staging_directory
+            if owned_staging_directory is not None:
+                # There is no POSIX rmdir-by-open-descriptor primitive. Keep one
+                # bounded private directory instead of risking a lstat-to-rmdir
+                # swap that removes a foreign empty directory.
+                try:
+                    os.close(owned_staging_directory.descriptor)
+                except BaseException:
+                    pass
+                try:
+                    os.close(
+                        owned_staging_directory.publication_directory_descriptor
+                    )
+                except BaseException:
+                    pass
 
     return line_count, ordered_block_counts
 

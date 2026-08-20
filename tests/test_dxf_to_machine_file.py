@@ -1,6 +1,7 @@
 from pathlib import Path
 from datetime import datetime
 from dataclasses import FrozenInstanceError
+from decimal import Decimal
 import inspect
 import json
 import os
@@ -194,10 +195,33 @@ class MakePatchTests(unittest.TestCase):
 
     def test_rejects_invalid_layer_steps(self) -> None:
         lines = np.zeros((1, 6))
-        for invalid_step in (0, -1, 0.1, float("nan"), float("inf")):
+        for invalid_step in (
+            True,
+            0,
+            -1,
+            0.1,
+            0.5,
+            1.5,
+            100001,
+            9007199254740993,
+            float("nan"),
+            float("inf"),
+        ):
             with self.subTest(layer_step_um=invalid_step):
                 with self.assertRaises(ValueError):
                     make_patch(lines, layer_index=0, layer_step_um=invalid_step)
+
+    def test_accepts_positive_integer_valued_layer_steps(self) -> None:
+        lines = np.zeros((1, 6))
+        for layer_step_um in (1, 3, 6, 3.0, np.float64(3.0), 100000):
+            with self.subTest(layer_step_um=layer_step_um):
+                patch = make_patch(
+                    lines,
+                    layer_index=2,
+                    layer_step_um=layer_step_um,
+                )
+                expected_z = np.float32(-2 * float(layer_step_um) / 1000)
+                self.assertEqual(patch[0, 2], expected_z)
 
     def test_make_patch_converts_xy_to_block_local_but_keeps_layer_z(self) -> None:
         lines = np.array([[11.0, 7.0, 0.0, 14.0, 3.0, 0.0]])
@@ -277,7 +301,16 @@ class MachineDocumentTests(unittest.TestCase):
         valid = dict(DEFAULT_LASER_PARAMS[0])
         with self.assertRaises(ValueError):
             build_machine_document([], 3, valid)
-        for step in (0, -1, 0.1, float("nan"), float("inf"), float("-inf")):
+        for step in (
+            0,
+            -1,
+            0.1,
+            0.5,
+            1.5,
+            float("nan"),
+            float("inf"),
+            float("-inf"),
+        ):
             with self.subTest(step=step), self.assertRaises(ValueError):
                 build_machine_document([PatchPlacement(0, 0.0, 0.0)], step, valid)
         invalid_groups = []
@@ -365,6 +398,87 @@ class MachineDocumentTests(unittest.TestCase):
         for placements in invalid_placements:
             with self.subTest(placements=placements), self.assertRaises(ValueError):
                 build_machine_document(placements, 3, valid)
+
+
+class VendorCommandSimulatorTests(unittest.TestCase):
+    def test_executes_final_motion_before_trailing_g90_in_vendor_lexical_order(self) -> None:
+        cycles = [
+            {"galvo_0": [0, "G91G00X10.000Y5.000Z0.000F40", [0, 0]]},
+            {"galvo_0": [0, "G00X-2.000Y3.000Z-0.006F40G90", [1, 0]]},
+        ]
+
+        states = machine._simulate_vendor_machine_cycles(cycles)
+
+        self.assertEqual(
+            states,
+            [
+                (Decimal("10.000"), Decimal("5.000"), Decimal("0.000")),
+                (Decimal("8.000"), Decimal("8.000"), Decimal("-0.006")),
+            ],
+        )
+
+    def test_single_command_moves_relatively_then_restores_absolute_mode(self) -> None:
+        states = machine._simulate_vendor_machine_cycles([
+            {"galvo_0": [0, "G91G00X2.000Y-3.000Z-0.001F40G90", [0, 0]]}
+        ])
+
+        self.assertEqual(
+            states,
+            [(Decimal("2.000"), Decimal("-3.000"), Decimal("-0.001"))],
+        )
+
+    def test_accumulates_large_thousandth_coordinates_without_decimal_rounding(self) -> None:
+        large = "1000000000000000019884624838656.000"
+        states = machine._simulate_vendor_machine_cycles([
+            {"galvo_0": [0, f"G91G00X{large}Y0.000Z0.000F40", [0, 0]]},
+            {"galvo_0": [0, f"G00X-{large}Y0.000Z-0.001F40G90", [1, 0]]},
+        ])
+
+        self.assertEqual(
+            states,
+            [
+                (Decimal(large), Decimal("0.000"), Decimal("0.000")),
+                (Decimal("0.000"), Decimal("0.000"), Decimal("-0.001")),
+            ],
+        )
+
+    def test_rejects_commands_outside_the_restricted_vendor_grammar(self) -> None:
+        invalid_cycle_lists = [
+            [{"galvo_0": [0, "G00X1.000Y2.000Z0.000F40G90", [0, 0]]}],
+            [{"galvo_0": [0, "G91G00X1.000Y2.000Z0.000G90F40", [0, 0]]}],
+            [{"galvo_0": [0, "G91G00X1.000Y2.000Z0.000F40", [0, 0]]}],
+            [{"galvo_0": [0, "G91G00XnanY2.000Z0.000F40G90", [0, 0]]}],
+            [{"galvo_0": [0, "G91G00X1.00١Y2.000Z0.000F40G90", [0, 0]]}],
+            [{"galvo_0": [0, "G91G00X1.000Y2.000Z0.000F40G90X0.000", [0, 0]]}],
+            [{"galvo_0": [0, "G91G00X1.000Y2.000Z0.000F40G90", [1, 0]]}],
+            [
+                {"galvo_0": [0, "G91G00X1.000Y2.000Z0.000F40G90", [0, 0]]},
+                {"galvo_0": [0, "G00X1.000Y2.000Z0.000F40", [1, 0]]},
+            ],
+        ]
+        for cycles in invalid_cycle_lists:
+            with self.subTest(cycles=cycles), self.assertRaises(ValueError):
+                machine._simulate_vendor_machine_cycles(cycles)
+
+    def test_simulator_is_independent_of_generation_helpers(self) -> None:
+        cycles = [
+            {"galvo_0": [0, "G91G00X1.000Y2.000Z-0.003F40G90", [0, 0]]}
+        ]
+        with (
+            mock.patch.object(
+                machine,
+                "build_machine_document",
+                side_effect=AssertionError("builder must not be reused"),
+            ),
+            mock.patch.object(
+                machine,
+                "make_patch",
+                side_effect=AssertionError("patch helper must not be reused"),
+            ),
+        ):
+            states = machine._simulate_vendor_machine_cycles(cycles)
+
+        self.assertEqual(states[0][2], Decimal("-0.003"))
 
 
 class BlockMetadataTests(unittest.TestCase):
@@ -814,6 +928,128 @@ class GenerateMachineFileTests(unittest.TestCase):
                 "G00X-22.000Y5.000Z-0.006F40",
                 "G00X3.000Y4.000Z0.000F40G90",
             ])
+            simulated_states = machine._simulate_vendor_machine_cycles(
+                document["machine_cycle"]
+            )
+            self.assertEqual(
+                [state[2] for state in simulated_states],
+                [
+                    Decimal("0.000"),
+                    Decimal("0.000"),
+                    Decimal("-0.006"),
+                    Decimal("-0.006"),
+                ],
+            )
+            for index, state in enumerate(simulated_states):
+                patch = np.load(patches / f"{index}_0.npy", allow_pickle=False)
+                self.assertEqual(patch[0, 2], np.float32(float(state[2])))
+
+    def test_multilayer_machine_z_equals_every_patch_z_without_drift(self) -> None:
+        for layer_step_um in (1, 3, 6, 3.0):
+            with self.subTest(layer_step_um=layer_step_um), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                dxf_dir = root / "dxfs"
+                dxf_dir.mkdir()
+                for layer_number in range(1, 9):
+                    write_dxf(
+                        dxf_dir / f"layer_{layer_number}_a.dxf",
+                        [(1, 2, 0, 3, 4, 0)],
+                    )
+
+                result = generate_machine_file(
+                    dxf_dir,
+                    "job",
+                    layer_step_um,
+                    dict(DEFAULT_LASER_PARAMS[0]),
+                )
+                document = json.loads(
+                    (result / "machine.json").read_text(encoding="utf-8")
+                )
+                states = machine._simulate_vendor_machine_cycles(
+                    document["machine_cycle"]
+                )
+
+                for patch_index, state in enumerate(states):
+                    expected_z = Decimal(-patch_index * int(layer_step_um)) / Decimal(1000)
+                    patch = np.load(
+                        result / "patches" / f"{patch_index}_0.npy",
+                        allow_pickle=False,
+                    )
+                    self.assertEqual(state[2], expected_z)
+                    np.testing.assert_array_equal(
+                        patch[:, [2, 5]],
+                        np.full(
+                            (patch.shape[0], 2),
+                            np.float32(float(expected_z)),
+                            dtype="<f4",
+                        ),
+                    )
+
+    def test_independent_validation_rejects_systematically_wrong_builder_motion(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            dxf_dir = root / "dxfs"
+            dxf_dir.mkdir()
+            write_dxf(dxf_dir / "layer_1_a.dxf", [(1, 2, 0, 3, 4, 0)])
+            write_dxf(dxf_dir / "layer_2_a.dxf", [(1, 2, 0, 3, 4, 0)])
+            real_builder = machine.build_machine_document
+
+            def systematically_wrong_builder(*args: object, **kwargs: object) -> dict[str, object]:
+                document = real_builder(*args, **kwargs)
+                command = document["machine_cycle"][1]["galvo_0"][1]
+                document["machine_cycle"][1]["galvo_0"][1] = command.replace(
+                    "X0.000",
+                    "X1.000",
+                    1,
+                )
+                return document
+
+            with mock.patch.object(
+                machine,
+                "build_machine_document",
+                side_effect=systematically_wrong_builder,
+            ):
+                with self.assertRaises(ValueError):
+                    generate_machine_file(
+                        dxf_dir,
+                        "job",
+                        3,
+                        dict(DEFAULT_LASER_PARAMS[0]),
+                    )
+
+            self.assertFalse(os.path.lexists(root / "job"))
+            self.assertFalse(os.path.lexists(root / ".job.building"))
+            self.assertFalse(os.path.lexists(root / ".job.lock"))
+
+    def test_independent_validation_rejects_systematically_wrong_patch_helper(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            dxf_dir = root / "dxfs"
+            dxf_dir.mkdir()
+            write_dxf(dxf_dir / "layer_1_a.dxf", [(1, 2, 0, 3, 4, 0)])
+            real_make_patch = machine.make_patch
+
+            def systematically_wrong_patch(*args: object, **kwargs: object) -> np.ndarray:
+                patch = real_make_patch(*args, **kwargs)
+                patch[:, [0, 3]] += np.float32(1.0)
+                return patch
+
+            with mock.patch.object(
+                machine,
+                "make_patch",
+                side_effect=systematically_wrong_patch,
+            ):
+                with self.assertRaises(ValueError):
+                    generate_machine_file(
+                        dxf_dir,
+                        "job",
+                        3,
+                        dict(DEFAULT_LASER_PARAMS[0]),
+                    )
+
+            self.assertFalse(os.path.lexists(root / "job"))
+            self.assertFalse(os.path.lexists(root / ".job.building"))
+            self.assertFalse(os.path.lexists(root / ".job.lock"))
 
     def test_block_mode_rejects_all_empty_layer_without_publishing(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -1202,7 +1438,19 @@ class GenerateMachineFileTests(unittest.TestCase):
             self.assertFalse((root / ".job.building").exists())
 
     def test_rejects_invalid_steps_before_creating_output(self) -> None:
-        for step in (0, -1, 0.1, float("nan"), float("inf"), float("-inf")):
+        for step in (
+            True,
+            0,
+            -1,
+            0.1,
+            0.5,
+            1.5,
+            100001,
+            9007199254740993,
+            float("nan"),
+            float("inf"),
+            float("-inf"),
+        ):
             with self.subTest(step=step), tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
                 dxf_dir = root / "dxfs"; dxf_dir.mkdir()
@@ -1211,6 +1459,7 @@ class GenerateMachineFileTests(unittest.TestCase):
                     generate_machine_file(dxf_dir, "job", step, dict(DEFAULT_LASER_PARAMS[0]))
                 self.assertFalse((root / "job").exists())
                 self.assertFalse((root / ".job.building").exists())
+                self.assertFalse((root / ".job.lock").exists())
 
     def test_validates_float32_adjacent_steps_across_four_layers(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -1416,6 +1665,47 @@ class ValidateMachineDirectoryTests(unittest.TestCase):
                 validate_machine_directory(package, plan, 3, params)
 
 
+class AvaloniaLayerStepSourceContractTests(unittest.TestCase):
+    def test_layer_step_control_and_preflight_require_whole_micrometres(self) -> None:
+        source = (
+            Path(__file__).resolve().parents[1]
+            / "GrayscaleLayersMac"
+            / "MainWindow.cs"
+        ).read_text(encoding="utf-8")
+        field_start = source.index("private readonly NumericUpDown _pipelineLayerStepBox")
+        field_end = source.index(
+            "private readonly CheckBox _pipelineBlockCenterMotionBox",
+            field_start,
+        )
+        field = source[field_start:field_end]
+        self.assertIn("MakeNumberBox(3, 1, 100000, 0, minimum: 1)", field)
+
+        preflight_start = source.index("var layerStep = _pipelineLayerStepBox.Value;")
+        preflight_end = source.index("var layerScript =", preflight_start)
+        preflight = source[preflight_start:preflight_end]
+        self.assertIn("layerStep.Value < 1m", preflight)
+        self.assertIn("layerStep.Value > 100000m", preflight)
+        self.assertIn(
+            "layerStep.Value != decimal.Truncate(layerStep.Value)",
+            preflight,
+        )
+
+    def test_cancellation_leaves_machine_artifacts_for_owner_safe_recovery(self) -> None:
+        source = (
+            Path(__file__).resolve().parents[1]
+            / "GrayscaleLayersMac"
+            / "MainWindow.cs"
+        ).read_text(encoding="utf-8")
+        catch_start = source.index("catch (OperationCanceledException)")
+        catch_end = source.index("catch (Exception ex)", catch_start)
+        cancellation_handler = source[catch_start:catch_end]
+
+        self.assertNotIn("CleanupMachineArtifactsAfterCancellation", cancellation_handler)
+        self.assertIn("不会自动删除", cancellation_handler)
+        self.assertNotIn("Directory.Delete(tempPath, recursive: true)", source)
+        self.assertNotIn("File.Delete(lockPath)", source)
+
+
 class CliTests(unittest.TestCase):
     def test_cli_maps_all_first_group_flags_booleans_and_custom_step(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -1427,7 +1717,7 @@ class CliTests(unittest.TestCase):
                 [sys.executable, str(Path(__file__).parents[1] / "dxf_to_machine_file.py"),
                  str(dxf_dir), "cli-job",
                  "--owner-token", "cli_owner-01",
-                 "--layer-step-um", "5",
+                 "--layer-step-um", "5.0",
                  "--power", "41",
                  "--frequency", "351",
                  "--pulse-width-idx", "4",
@@ -1482,6 +1772,68 @@ class CliTests(unittest.TestCase):
                 second_patch[:, [2, 5]],
                 np.array([[-0.005, -0.005], [-0.005, -0.005]], dtype="<f4"),
             )
+
+    def test_cli_rejects_out_of_range_or_fractional_step_losslessly(self) -> None:
+        for requested_step in (
+            "100001",
+            "9007199254740993",
+            "3.0000000000000001",
+            "1e1000000",
+        ):
+            with self.subTest(requested_step=requested_step), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                dxf_dir = root / "dxfs"
+                dxf_dir.mkdir()
+                write_dxf(dxf_dir / "layer_1_a.dxf", [(1, 2, 3, 4, 5, 6)])
+
+                completed = subprocess.run(
+                    [
+                        sys.executable,
+                        str(Path(__file__).parents[1] / "dxf_to_machine_file.py"),
+                        str(dxf_dir),
+                        "cli-invalid-step",
+                        "--layer-step-um",
+                        requested_step,
+                    ],
+                    text=True,
+                    capture_output=True,
+                    check=False,
+                    timeout=2,
+                )
+
+                self.assertNotEqual(completed.returncode, 0)
+                self.assertFalse(os.path.lexists(root / "cli-invalid-step"))
+                self.assertFalse(os.path.lexists(root / ".cli-invalid-step.building"))
+                self.assertFalse(os.path.lexists(root / ".cli-invalid-step.lock"))
+
+    def test_cli_accepts_maximum_whole_micrometre_step(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            dxf_dir = root / "dxfs"
+            dxf_dir.mkdir()
+            write_dxf(dxf_dir / "layer_1_a.dxf", [(1, 2, 3, 4, 5, 6)])
+            write_dxf(dxf_dir / "layer_2_a.dxf", [(1, 2, 3, 4, 5, 6)])
+
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    str(Path(__file__).parents[1] / "dxf_to_machine_file.py"),
+                    str(dxf_dir),
+                    "cli-max-step",
+                    "--layer-step-um",
+                    "100000",
+                ],
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            patch = np.load(
+                root / "cli-max-step" / "patches" / "1_0.npy",
+                allow_pickle=False,
+            )
+            self.assertEqual(patch[0, 2], np.float32(-100.0))
 
     def test_cli_generates_block_local_package_and_reports_layer_and_patch_counts(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
