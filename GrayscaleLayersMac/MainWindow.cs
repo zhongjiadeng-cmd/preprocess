@@ -1274,6 +1274,9 @@ public sealed class MainWindow : Window
                 if (hatchExitCode != 0)
                     throw new InvalidOperationException(
                         $"{Path.GetFileName(layerFile)} 转换失败，退出代码：{hatchExitCode}");
+                ValidateGeneratedLayerPair(
+                    outputFile,
+                    (_pipelineBlocksBox.Value ?? 0) > 0);
                 currentRunDxfFiles.Add(Path.GetFullPath(outputFile));
                 var previewItem = new DxfPreviewItem(
                     $"第 {index + 1:D2} 层 · {Path.GetFileName(outputFile)}",
@@ -1407,6 +1410,32 @@ public sealed class MainWindow : Window
             _pipelineBlocksBox.IsEnabled = pipelineBlocksBoxWasEnabled;
             UpdateBlockCenterMotionAvailability();
             _pipelineProgress.IsIndeterminate = false;
+        }
+    }
+
+    private static void ValidateGeneratedLayerPair(
+        string dxfPath,
+        bool expectBlockMetadata)
+    {
+        static void ValidateRegularNonEmptyFile(string path, string label)
+        {
+            var file = new FileInfo(path);
+            file.Refresh();
+            if (!file.Exists ||
+                (file.Attributes & (FileAttributes.Directory | FileAttributes.ReparsePoint)) != 0 ||
+                file.Length <= 0)
+            {
+                throw new InvalidOperationException(
+                    $"Hatch 生成结束，但未找到非空普通{label}文件：{path}");
+            }
+        }
+
+        ValidateRegularNonEmptyFile(dxfPath, " DXF ");
+        if (expectBlockMetadata)
+        {
+            ValidateRegularNonEmptyFile(
+                Path.ChangeExtension(dxfPath, ".blocks.json"),
+                "块元数据");
         }
     }
 

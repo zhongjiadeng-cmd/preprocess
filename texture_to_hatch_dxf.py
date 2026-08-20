@@ -14,6 +14,7 @@ import argparse
 import json
 import math
 import os
+import stat
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -105,6 +106,80 @@ def write_block_metadata(path: Path, document: dict[str, object]) -> None:
     finally:
         if temporary_path is not None:
             temporary_path.unlink(missing_ok=True)
+
+
+def _create_owned_temporary_file(final_path: Path) -> tuple[Path, tuple[int, int]]:
+    file_descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{final_path.name}.",
+        suffix=".tmp",
+        dir=final_path.parent,
+    )
+    try:
+        file_stat = os.fstat(file_descriptor)
+        identity = (file_stat.st_dev, file_stat.st_ino)
+    finally:
+        os.close(file_descriptor)
+    return Path(temporary_name), identity
+
+
+def _path_has_identity(path: Path, identity: tuple[int, int]) -> bool:
+    try:
+        path_stat = os.lstat(path)
+    except FileNotFoundError:
+        return False
+    return (path_stat.st_dev, path_stat.st_ino) == identity
+
+
+def _unlink_owned_file(path: Path | None, identity: tuple[int, int] | None) -> None:
+    if path is not None and identity is not None and _path_has_identity(path, identity):
+        path.unlink()
+
+
+def _publish_file_no_replace(source: Path, destination: Path) -> None:
+    """Publish one staged regular file without replacing an existing path."""
+    os.link(source, destination, follow_symlinks=False)
+    source.unlink()
+
+
+def validate_hatch_output_pair(
+    dxf_path: Path,
+    metadata_path: Path,
+    expected_metadata: dict[str, object],
+) -> None:
+    """Reload and content-validate a staged DXF/metadata pair."""
+    for path, label in ((dxf_path, "DXF"), (metadata_path, "block metadata")):
+        try:
+            path_stat = os.lstat(path)
+        except OSError as exc:
+            raise ValueError(f"missing staged {label}: {path}") from exc
+        if not stat.S_ISREG(path_stat.st_mode) or path_stat.st_size <= 0:
+            raise ValueError(f"staged {label} must be a nonempty regular file: {path}")
+
+    try:
+        dxf_pairs = dxf_path.read_text(encoding="ascii").splitlines()
+    except (OSError, UnicodeError) as exc:
+        raise ValueError(f"invalid staged DXF: {dxf_path}") from exc
+    if len(dxf_pairs) % 2 != 0 or dxf_pairs[-2:] != ["0", "EOF"]:
+        raise ValueError(f"invalid staged DXF structure: {dxf_path}")
+    dxf_line_count = sum(
+        dxf_pairs[index] == "0" and dxf_pairs[index + 1] == "LINE"
+        for index in range(0, len(dxf_pairs), 2)
+    )
+
+    try:
+        actual_metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise ValueError(f"invalid staged block metadata: {metadata_path}") from exc
+    if actual_metadata != expected_metadata:
+        raise ValueError("staged block metadata does not match the generated document")
+    blocks = actual_metadata["blocks"]
+    expected_line_count = actual_metadata["border_line_count"] + sum(
+        block["line_count"] for block in blocks
+    )
+    if dxf_line_count != expected_line_count:
+        raise ValueError(
+            "staged DXF LINE count does not match the staged block metadata"
+        )
 
 
 def read_binary_texture(
@@ -701,6 +776,16 @@ def export_horizontal_hatch_dxf(
 
     height_px, width_px = black_mask.shape
     output_path.parent.mkdir(parents=True, exist_ok=True)
+    publish_pair = block_metadata_output is not None and bool(voronoi_blocks)
+    if publish_pair:
+        assert block_metadata_output is not None
+        output_parent = os.path.abspath(output_path.parent)
+        metadata_parent = os.path.abspath(block_metadata_output.parent)
+        if output_parent != metadata_parent:
+            raise ValueError("DXF and block metadata must use the same output directory")
+        for final_path in (output_path, block_metadata_output):
+            if os.path.lexists(final_path):
+                raise FileExistsError(f"output path already exists: {final_path}")
     normalized_angle = float(hatch_angle_deg) % 180.0
     angle_radians = math.radians(normalized_angle)
     cosine = math.cos(angle_radians)
@@ -873,44 +958,92 @@ def export_horizontal_hatch_dxf(
 
     line_count = sum(len(segments) for segments in grouped_segments)
     ordered_block_counts: list[int] = []
-    with output_path.open("w", encoding="ascii", newline="") as stream:
-        write_dxf_header(stream, target_width_mm, target_height_mm)
-        handle = 0x100
-
-        if include_border:
-            handle = write_border(
-                stream,
-                handle,
-                target_width_mm,
-                target_height_mm,
+    temporary_dxf: Path | None = None
+    temporary_metadata: Path | None = None
+    temporary_dxf_identity: tuple[int, int] | None = None
+    temporary_metadata_identity: tuple[int, int] | None = None
+    try:
+        if publish_pair:
+            assert block_metadata_output is not None
+            temporary_dxf, temporary_dxf_identity = _create_owned_temporary_file(
+                output_path
             )
+            temporary_metadata, temporary_metadata_identity = (
+                _create_owned_temporary_file(block_metadata_output)
+            )
+            dxf_write_path = temporary_dxf
+        else:
+            dxf_write_path = output_path
 
-        for block_index in block_order:
-            ordered_block_counts.append(len(grouped_segments[block_index]))
-            for segment in grouped_segments[block_index]:
-                write_line(
+        with dxf_write_path.open("w", encoding="ascii", newline="") as stream:
+            write_dxf_header(stream, target_width_mm, target_height_mm)
+            handle = 0x100
+
+            if include_border:
+                handle = write_border(
                     stream,
                     handle,
-                    segment.x1,
-                    segment.y1,
-                    segment.x2,
-                    segment.y2,
+                    target_width_mm,
+                    target_height_mm,
                 )
-                handle += 1
 
-        dxf_pair(stream, 0, "ENDSEC")
-        dxf_pair(stream, 0, "EOF")
+            for block_index in block_order:
+                ordered_block_counts.append(len(grouped_segments[block_index]))
+                for segment in grouped_segments[block_index]:
+                    write_line(
+                        stream,
+                        handle,
+                        segment.x1,
+                        segment.y1,
+                        segment.x2,
+                        segment.y2,
+                    )
+                    handle += 1
 
-    if block_metadata_output is not None and scan_blocks:
-        write_block_metadata(
-            block_metadata_output,
-            build_block_metadata(
+            dxf_pair(stream, 0, "ENDSEC")
+            dxf_pair(stream, 0, "EOF")
+
+        if publish_pair:
+            assert block_metadata_output is not None
+            assert temporary_dxf is not None
+            assert temporary_metadata is not None
+            metadata_document = build_block_metadata(
                 voronoi_blocks,
                 block_order,
                 ordered_block_counts,
                 4 if include_border else 0,
-            ),
-        )
+            )
+            write_block_metadata(temporary_metadata, metadata_document)
+            temporary_metadata_stat = os.lstat(temporary_metadata)
+            temporary_metadata_identity = (
+                temporary_metadata_stat.st_dev,
+                temporary_metadata_stat.st_ino,
+            )
+            validate_hatch_output_pair(
+                temporary_dxf,
+                temporary_metadata,
+                metadata_document,
+            )
+            temporary_dxf_stat = os.lstat(temporary_dxf)
+            temporary_dxf_identity = (
+                temporary_dxf_stat.st_dev,
+                temporary_dxf_stat.st_ino,
+            )
+
+            _publish_file_no_replace(temporary_dxf, output_path)
+            _publish_file_no_replace(temporary_metadata, block_metadata_output)
+    except Exception:
+        if publish_pair:
+            assert block_metadata_output is not None
+            # Publication is two explicit no-replace operations, not an atomic pair.
+            # Remove only paths whose inode proves this invocation created them.
+            _unlink_owned_file(block_metadata_output, temporary_metadata_identity)
+            _unlink_owned_file(output_path, temporary_dxf_identity)
+        raise
+    finally:
+        if publish_pair:
+            _unlink_owned_file(temporary_metadata, temporary_metadata_identity)
+            _unlink_owned_file(temporary_dxf, temporary_dxf_identity)
 
     return line_count, ordered_block_counts
 
@@ -1065,6 +1198,9 @@ def convert_texture_to_dxf(
             "各块 LINE 数量（按输出顺序）: "
             + ", ".join(str(count) for count in block_line_counts)
         )
+        effective_block_count = sum(count > 0 for count in block_line_counts)
+        print(f"有效加工块: {effective_block_count}")
+        print(f"空加工块: {len(block_line_counts) - effective_block_count}")
         print(f"块元数据: {metadata_output}")
     else:
         print("Voronoi 分块: 关闭")
