@@ -1302,13 +1302,14 @@ class BlockMetadataTests(unittest.TestCase):
 
             def seed_quarantine_then_lock(staging_directory: object) -> None:
                 nonlocal seeded
-                real_link(
-                    foreign,
-                    quarantine_name,
-                    dst_dir_fd=staging_directory.descriptor,  # type: ignore[attr-defined]
-                    follow_symlinks=False,
-                )
-                seeded = True
+                if not seeded:
+                    real_link(
+                        foreign,
+                        quarantine_name,
+                        dst_dir_fd=staging_directory.descriptor,  # type: ignore[attr-defined]
+                        follow_symlinks=False,
+                    )
+                    seeded = True
                 real_lock(staging_directory)  # type: ignore[arg-type]
 
             with (
@@ -1341,6 +1342,34 @@ class BlockMetadataTests(unittest.TestCase):
                 foreign_identity,
             )
             self.assertLessEqual(len(list(staging_directory.iterdir())), 4)
+
+    def test_relocks_staging_directory_if_file_provider_restores_write_mode(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            real_verify = hatch._verify_owned_publication_directory
+            restored_write_mode = False
+
+            def restore_write_mode_after_lock(staging_directory: object) -> object:
+                nonlocal restored_write_mode
+                result = real_verify(staging_directory)  # type: ignore[arg-type]
+                mode = stat.S_IMODE(
+                    os.fstat(staging_directory.descriptor).st_mode  # type: ignore[attr-defined]
+                )
+                if not restored_write_mode and mode == 0o500:
+                    os.fchmod(staging_directory.descriptor, 0o700)  # type: ignore[attr-defined]
+                    restored_write_mode = True
+                return result
+
+            with mock.patch.object(
+                hatch,
+                "_verify_owned_publication_directory",
+                side_effect=restore_write_mode_after_lock,
+            ):
+                output, metadata = self.export_blocked_pair(root)
+
+            self.assertTrue(restored_write_mode)
+            self.assertTrue(output.is_file())
+            self.assertTrue(metadata.is_file())
 
     def test_interrupt_during_foreign_restore_retries_without_losing_replacement(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -1696,6 +1725,25 @@ class AvaloniaPairValidationSourceContractTests(unittest.TestCase):
         self.assertIn("FileAttributes.Directory", helper)
         self.assertIn("FileAttributes.ReparsePoint", helper)
         self.assertIn("Length <= 0", helper)
+
+    def test_manifest_missing_check_revalidates_expected_paths_directly(self) -> None:
+        source = (
+            Path(__file__).resolve().parents[1] / "GrayscaleLayersMac" / "MainWindow.cs"
+        ).read_text(encoding="utf-8")
+        manifest_start = source.index("var pathComparer = StringComparer.OrdinalIgnoreCase")
+        manifest_end = source.index(
+            'AppendPipelineLog($"已验证本次 DXF 清单', manifest_start
+        )
+        manifest = source[manifest_start:manifest_end]
+
+        self.assertRegex(
+            manifest,
+            r"expectedDxfFiles\s+\.Where\(path => !IsRegularNonEmptyFile\(path\)\)",
+        )
+        self.assertNotIn(
+            "expectedDxfFiles\n                .Except(actualDxfFiles",
+            manifest,
+        )
 
 
 class AngledHatchTests(unittest.TestCase):

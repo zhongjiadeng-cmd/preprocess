@@ -530,7 +530,11 @@ def build_patch_plan(
             next_cursor = cursor + block.line_count
             if block.line_count:
                 layer_plan.append(PlannedPatch(
-                    PatchPlacement(layer_index, block.center_x, block.center_y),
+                    PatchPlacement(
+                        layer_index,
+                        _rounded_machine_coordinate(block.center_x),
+                        _rounded_machine_coordinate(block.center_y),
+                    ),
                     lines[cursor:next_cursor],
                 ))
             cursor = next_cursor
@@ -618,9 +622,14 @@ def _independently_validate_patch_geometry(
         )
 
     reconstructed_xy = patch[:, xy_columns].astype(np.float64) + offsets
+    arithmetic_scale = (
+        np.abs(expected_local_xy.astype(np.float64))
+        + np.abs(offsets)
+        + np.abs(source_xy)
+    )
     quantization_allowance = (
         np.abs(expected_local_xy.astype(np.float64) - unquantized_local_xy)
-        + np.finfo(np.float64).eps * np.maximum(1.0, np.abs(source_xy)) * 4
+        + np.finfo(np.float64).eps * np.maximum(1.0, arithmetic_scale) * 4
     )
     if (
         not np.isfinite(reconstructed_xy).all()
