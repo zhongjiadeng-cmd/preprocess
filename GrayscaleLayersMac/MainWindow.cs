@@ -32,15 +32,10 @@ public sealed class MainWindow : Window
     {
         Content = "低于阈值的区域设为白色（默认设为黑色）"
     };
-    private readonly TextBox _logBox = new()
-    {
-        AcceptsReturn = true, IsReadOnly = true, TextWrapping = TextWrapping.Wrap,
-        MinHeight = 190, FontFamily = FontFamily.Parse("Menlo, monospace"),
-        FontSize = 12
-    };
+    private readonly TextBox _logBox = UiTheme.CreateLogBox(190);
     private readonly Button _runButton = new() { Content = "开始处理", HorizontalAlignment = HorizontalAlignment.Stretch };
     private readonly Button _openOutputButton = new() { Content = "打开输出目录", IsEnabled = false };
-    private readonly ProgressBar _progress = new() { IsIndeterminate = false, Height = 5 };
+    private readonly ProgressBar _progress = UiTheme.CreateProgress();
     private readonly TextBox _hatchInputBox = new() { Watermark = "请选择一张黑白纹理图", IsReadOnly = true };
     private readonly TextBox _hatchOutputBox = new() { Watermark = "请选择 DXF 保存位置", IsReadOnly = true };
     private readonly NumericUpDown _widthBox = MakeNumberBox(100, 0.01m, 100000);
@@ -63,11 +58,11 @@ public sealed class MainWindow : Window
     private readonly NumericUpDown _boundaryCorrelationBox = MakeNumberBox(1, 0.1m, 100);
     private readonly NumericUpDown _voronoiSeedBox = MakeNumberBox(12345, 1, int.MaxValue, 0);
     private readonly DxfPreviewControl _hatchDxfPreview = new();
-    private readonly TextBlock _hatchDxfPreviewStatus = new() { Opacity = 0.68 };
+    private readonly TextBlock _hatchDxfPreviewStatus = new() { Foreground = UiTheme.TextSecondaryBrush };
     private readonly TextBox _hatchLogBox = MakeLogBox();
     private readonly Button _hatchRunButton = new() { Content = "生成 DXF", HorizontalAlignment = HorizontalAlignment.Stretch };
     private readonly Button _hatchOpenButton = new() { Content = "打开输出位置", IsEnabled = false };
-    private readonly ProgressBar _hatchProgress = new() { IsIndeterminate = false, Height = 5 };
+    private readonly ProgressBar _hatchProgress = UiTheme.CreateProgress();
     private readonly TextBox _pipelineInputBox = new() { Watermark = "请选择一张灰度纹理图", IsReadOnly = true };
     private readonly TextBox _pipelineLayerOutputBox = new() { Watermark = "请选择分层 TIFF 保存目录", IsReadOnly = true };
     private readonly TextBox _pipelineDxfOutputBox = new() { Watermark = "请选择 DXF 保存目录", IsReadOnly = true };
@@ -128,7 +123,7 @@ public sealed class MainWindow : Window
     private readonly NumericUpDown _pipelineDelayLaserOffBox = MakeNumberBox(32, 1, int.MaxValue, 0);
     private readonly NumericUpDown _pipelineDelayLaserOnBox = MakeNumberBox(0, 1, int.MaxValue, 0);
     private readonly DxfPreviewControl _pipelineDxfPreview = new();
-    private readonly TextBlock _pipelineDxfPreviewStatus = new() { Opacity = 0.68 };
+    private readonly TextBlock _pipelineDxfPreviewStatus = new() { Foreground = UiTheme.TextSecondaryBrush };
     private readonly ObservableCollection<DxfPreviewItem> _pipelineDxfFiles = [];
     private readonly ComboBox _pipelineDxfSelector = new()
     {
@@ -139,7 +134,7 @@ public sealed class MainWindow : Window
     private readonly TextBox _pipelineLogBox = MakeLogBox();
     private readonly Button _pipelineRunButton = new() { Content = "开始三步处理", HorizontalAlignment = HorizontalAlignment.Stretch };
     private readonly Button _pipelineOpenButton = new() { Content = "打开加工文件目录", IsEnabled = false };
-    private readonly ProgressBar _pipelineProgress = new() { IsIndeterminate = false, Height = 5 };
+    private readonly ProgressBar _pipelineProgress = UiTheme.CreateProgress();
     private string? _lastMachineOutputPath;
     private CancellationTokenSource? _cancellation;
 
@@ -153,15 +148,10 @@ public sealed class MainWindow : Window
         Height = 940;
         MinWidth = 1080;
         MinHeight = 720;
-        Background = new SolidColorBrush(Color.FromRgb(20, 23, 27));
+        Background = UiTheme.RootBrush;
         WindowStartupLocation = WindowStartupLocation.CenterScreen;
         foreach (var primaryButton in new[] { _pipelineRunButton, _hatchRunButton, _runButton })
-        {
-            primaryButton.Height = 44;
-            primaryButton.FontWeight = FontWeight.SemiBold;
-            primaryButton.Background = new SolidColorBrush(Color.FromRgb(245, 166, 35));
-            primaryButton.Foreground = new SolidColorBrush(Color.FromRgb(24, 24, 24));
-        }
+            UiTheme.ApplyPrimaryStyle(primaryButton);
         _pipelineDxfSelector.ItemsSource = _pipelineDxfFiles;
         _pipelineDxfSelector.SelectionChanged += (_, _) =>
         {
@@ -195,17 +185,8 @@ public sealed class MainWindow : Window
             Spacing = 18,
             Children =
             {
-                new TextBlock
-                {
-                    Text = "灰度图分层",
-                    FontSize = 24,
-                    FontWeight = FontWeight.SemiBold
-                },
-                new TextBlock
-                {
-                    Text = "将灰度纹理图按累计阈值生成多张黑白 TIFF 图像。",
-                    Opacity = 0.68
-                },
+                UiTheme.PageTitle("灰度图分层"),
+                UiTheme.PageSubtitle("将灰度纹理图按累计阈值生成多张黑白 TIFF 图像。"),
                 MakeField("输入图片", _inputBox, inputButton),
                 MakeField("输出目录", _outputBox, outputButton),
                 new Grid
@@ -230,7 +211,7 @@ public sealed class MainWindow : Window
                         Place(_openOutputButton, 2)
                     }
                 },
-                new TextBlock { Text = "运行日志", FontWeight = FontWeight.SemiBold },
+                UiTheme.PanelLabel("运行日志"),
                 _logBox
             }
         };
@@ -263,17 +244,8 @@ public sealed class MainWindow : Window
             Spacing = 18,
             Children =
             {
-                new TextBlock
-                {
-                    Text = "Texture to Hatch",
-                    FontSize = 24,
-                    FontWeight = FontWeight.SemiBold
-                },
-                new TextBlock
-                {
-                    Text = "自动识别最小重复单元，只排列完整单元，再把黑色区域转换为 DXF 水平阴影线。",
-                    Opacity = 0.68
-                },
+                UiTheme.PageTitle("Texture to Hatch"),
+                UiTheme.PageSubtitle("自动识别最小重复单元，只排列完整单元，再把黑色区域转换为 DXF 水平阴影线。"),
                 MakeInspectorSection(
                     "输入输出",
                     MakeField("输入纹理图", _hatchInputBox, hatchInputButton),
@@ -372,17 +344,8 @@ public sealed class MainWindow : Window
             Spacing = 18,
             Children =
             {
-                new TextBlock
-                {
-                    Text = "灰度分层 → Hatch DXF → 加工文件",
-                    FontSize = 24,
-                    FontWeight = FontWeight.SemiBold
-                },
-                new TextBlock
-                {
-                    Text = "先输出灰度分层 TIFF，再逐层生成 DXF，最后打包为机器加工文件。",
-                    Opacity = 0.68
-                },
+                UiTheme.PageTitle("灰度分层 → Hatch DXF → 加工文件"),
+                UiTheme.PageSubtitle("先输出灰度分层 TIFF，再逐层生成 DXF，最后打包为机器加工文件。"),
                 MakeInspectorSection(
                     "输入与分层",
                     MakeField("原始灰度图", _pipelineInputBox, pipelineInputButton),
@@ -451,8 +414,15 @@ public sealed class MainWindow : Window
                     _pipelineBlockCenterMotionBox,
                     new Expander
                     {
-                        Header = "第一组激光参数",
+                        Header = new TextBlock
+                        {
+                            Text = "第一组激光参数",
+                            FontSize = 13,
+                            FontWeight = FontWeight.SemiBold,
+                            Foreground = UiTheme.TextPrimaryBrush
+                        },
                         IsExpanded = true,
+                        Background = Brushes.Transparent,
                         Content = new StackPanel
                         {
                             Margin = new Thickness(0, 10, 0, 0),
@@ -545,6 +515,16 @@ public sealed class MainWindow : Window
             _pipelineLogBox,
             "流程日志");
 
+        foreach (var secondaryButton in new[]
+        {
+            inputButton, outputButton, cancelButton,
+            hatchInputButton, hatchOutputButton, hatchCancelButton, hatchImportDxfButton,
+            pipelineInputButton, pipelineLayerOutputButton, pipelineDxfOutputButton,
+            pipelineCancelButton, pipelineImportDxfButton,
+            _openOutputButton, _hatchOpenButton, _pipelineOpenButton
+        })
+            UiTheme.ApplyGhostStyle(secondaryButton);
+
         var workflowTabs = new TabControl
         {
             SelectedIndex = 0,
@@ -583,9 +563,9 @@ public sealed class MainWindow : Window
         var appHeader = new Border
         {
             Padding = new Thickness(22, 10),
-            BorderBrush = new SolidColorBrush(Color.FromArgb(70, 255, 255, 255)),
+            BorderBrush = UiTheme.BorderSubtleBrush,
             BorderThickness = new Thickness(0, 0, 0, 1),
-            Background = new SolidColorBrush(Color.FromRgb(28, 32, 37)),
+            Background = UiTheme.HeaderBrush,
             Child = new Grid
             {
                 ColumnDefinitions = new ColumnDefinitions("Auto,*,Auto"),
@@ -616,17 +596,12 @@ public sealed class MainWindow : Window
                             {
                                 Text = "GRAYSCALE · HATCH · DXF",
                                 FontSize = 10,
-                                Opacity = 0.55,
-                                LetterSpacing = 1.2
+                                Foreground = UiTheme.TextFaintBrush,
+                                LetterSpacing = 1.5
                             }
                         }
                     }, 1),
-                    Place(new TextBlock
-                    {
-                        Text = "工程模式",
-                        Opacity = 0.6,
-                        VerticalAlignment = VerticalAlignment.Center
-                    }, 2)
+                    Place(UiTheme.Badge("工程模式"), 2)
                 }
             }
         };
@@ -657,15 +632,7 @@ public sealed class MainWindow : Window
         HorizontalAlignment = HorizontalAlignment.Stretch
     };
 
-    private static TextBox MakeLogBox() => new()
-    {
-        AcceptsReturn = true,
-        IsReadOnly = true,
-        TextWrapping = TextWrapping.Wrap,
-        MinHeight = 170,
-        FontFamily = FontFamily.Parse("Menlo, monospace"),
-        FontSize = 12
-    };
+    private static TextBox MakeLogBox() => UiTheme.CreateLogBox();
 
     private static Control MakeVoronoiPanel(
         NumericUpDown blocks,
@@ -675,20 +642,18 @@ public sealed class MainWindow : Window
         NumericUpDown correlation,
         NumericUpDown seed)
     {
-        return new Expander
-        {
-            Header = "Voronoi 分块与边界扩散",
-            IsExpanded = true,
-            Content = new StackPanel
+        return UiTheme.CardExpander(
+            "Voronoi 分块与边界扩散",
+            new StackPanel
             {
-                Margin = new Thickness(0, 10, 0, 0),
                 Spacing = 12,
                 Children =
                 {
                     new TextBlock
                     {
                         Text = "设置为 0 块可关闭分块。面积使用整个加工幅面的百分比；最外层边界保持不变。",
-                        Opacity = 0.68,
+                        FontSize = 12,
+                        Foreground = UiTheme.TextSecondaryBrush,
                         TextWrapping = TextWrapping.Wrap
                     },
                     new Grid
@@ -714,25 +679,15 @@ public sealed class MainWindow : Window
                         }
                     }
                 }
-            }
-        };
+            });
     }
 
     private static Control MakeInspectorSection(string title, params Control[] controls)
     {
-        var content = new StackPanel
-        {
-            Margin = new Thickness(0, 10, 0, 0),
-            Spacing = 14
-        };
+        var content = new StackPanel { Spacing = 14 };
         foreach (var control in controls)
             content.Children.Add(control);
-        return new Expander
-        {
-            Header = title,
-            IsExpanded = true,
-            Content = content
-        };
+        return UiTheme.CardExpander(title, content);
     }
 
     private static Control MakeDxfPreviewPanel(
@@ -769,12 +724,23 @@ public sealed class MainWindow : Window
                     ColumnSpacing = 10,
                     Children =
                     {
-                        Place(new TextBlock
+                        Place(new StackPanel
                         {
-                            Text = " DXF 预览",
-                            FontSize = 18,
-                            FontWeight = FontWeight.SemiBold,
-                            VerticalAlignment = VerticalAlignment.Center
+                            Orientation = Orientation.Horizontal,
+                            Spacing = 8,
+                            VerticalAlignment = VerticalAlignment.Center,
+                            Children =
+                            {
+                                UiTheme.AccentBar(),
+                                new TextBlock
+                                {
+                                    Text = "DXF 预览",
+                                    FontSize = 16,
+                                    FontWeight = FontWeight.SemiBold,
+                                    Foreground = UiTheme.TextPrimaryBrush,
+                                    VerticalAlignment = VerticalAlignment.Center
+                                }
+                            }
                         }, 0),
                         Place(importButton, 1),
                         Place(topButton, 2),
@@ -792,7 +758,7 @@ public sealed class MainWindow : Window
                             ? Place(new TextBlock
                             {
                                 Text = "左键拖拽环视 · 滚轮缩放 · 中键平移 · Shift + 中键环视 · 双击中键适应窗口",
-                                Opacity = 0.55,
+                                Foreground = UiTheme.TextFaintBrush,
                                 VerticalAlignment = VerticalAlignment.Center
                             }, 0)
                             : Place(new StackPanel
@@ -804,7 +770,7 @@ public sealed class MainWindow : Window
                                     new TextBlock
                                     {
                                         Text = "左键拖拽环视 · 滚轮缩放 · 中键平移 · Shift + 中键环视 · 双击中键适应窗口",
-                                        Opacity = 0.55,
+                                        Foreground = UiTheme.TextFaintBrush,
                                         FontSize = 11
                                     }
                                 }
@@ -812,14 +778,7 @@ public sealed class MainWindow : Window
                         Place(arrowCheckBox, 1)
                     }
                 }, 1),
-                AtRow(new Border
-                {
-                    BorderBrush = new SolidColorBrush(Color.FromArgb(80, 255, 255, 255)),
-                    BorderThickness = new Thickness(1),
-                    CornerRadius = new CornerRadius(10),
-                    ClipToBounds = true,
-                    Child = preview
-                }, 2),
+                AtRow(UiTheme.CanvasCard(preview), 2),
                 AtRow(status, 3)
             }
         };
@@ -835,13 +794,14 @@ public sealed class MainWindow : Window
         inspector.Children.RemoveAt(inspector.Children.Count - 1);
         var progress = inspector.Children[^1];
         inspector.Children.RemoveAt(inspector.Children.Count - 1);
-        inspector.Margin = new Thickness(22);
+        inspector.Margin = new Thickness(18, 16, 18, 16);
+        inspector.Spacing = 14;
         var inspectorSurface = new Border
         {
             Padding = new Thickness(0),
-            BorderBrush = new SolidColorBrush(Color.FromArgb(70, 255, 255, 255)),
+            BorderBrush = UiTheme.BorderSubtleBrush,
             BorderThickness = new Thickness(1, 0, 0, 0),
-            Background = new SolidColorBrush(Color.FromRgb(31, 35, 40)),
+            Background = UiTheme.PanelBrush,
             Child = new Grid
             {
                 RowDefinitions = new RowDefinitions("*,Auto"),
@@ -855,10 +815,10 @@ public sealed class MainWindow : Window
                     }, 0),
                     AtRow(new Border
                     {
-                        Padding = new Thickness(18, 12, 18, 18),
-                        BorderBrush = new SolidColorBrush(Color.FromArgb(65, 255, 255, 255)),
+                        Padding = new Thickness(18, 14, 18, 18),
+                        BorderBrush = UiTheme.BorderSubtleBrush,
                         BorderThickness = new Thickness(0, 1, 0, 0),
-                        Background = new SolidColorBrush(Color.FromRgb(27, 31, 36)),
+                        Background = UiTheme.BarBrush,
                         Child = new StackPanel
                         {
                             Spacing = 10,
@@ -874,23 +834,18 @@ public sealed class MainWindow : Window
         var logSurface = new Border
         {
             Margin = new Thickness(0, 0, 12, 0),
-            Padding = new Thickness(14, 10),
-            BorderBrush = new SolidColorBrush(Color.FromArgb(65, 255, 255, 255)),
+            Padding = new Thickness(14, 12),
+            BorderBrush = UiTheme.BorderSubtleBrush,
             BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(10),
-            Background = new SolidColorBrush(Color.FromRgb(25, 29, 34)),
+            CornerRadius = UiTheme.CardRadius,
+            Background = UiTheme.PanelBrush,
             Child = new Grid
             {
                 RowDefinitions = new RowDefinitions("Auto,*"),
                 RowSpacing = 8,
                 Children =
                 {
-                    AtRow(new TextBlock
-                    {
-                        Text = logTitle,
-                        FontWeight = FontWeight.SemiBold,
-                        Opacity = 0.8
-                    }, 0),
+                    AtRow(UiTheme.PanelLabel(logTitle), 0),
                     AtRow(log, 1)
                 }
             }
@@ -924,7 +879,7 @@ public sealed class MainWindow : Window
         return new StackPanel
         {
             Spacing = 7,
-            Children = { new TextBlock { Text = label, FontWeight = FontWeight.SemiBold }, grid }
+            Children = { UiTheme.FieldLabel(label), grid }
         };
     }
 
@@ -933,7 +888,7 @@ public sealed class MainWindow : Window
         var panel = new StackPanel
         {
             Spacing = 7,
-            Children = { new TextBlock { Text = label, FontWeight = FontWeight.SemiBold }, control }
+            Children = { UiTheme.FieldLabel(label), control }
         };
         Grid.SetColumn(panel, column);
         return panel;

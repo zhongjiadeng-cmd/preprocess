@@ -131,7 +131,7 @@ public sealed class DxfPreviewControl : Control
     public override void Render(DrawingContext context)
     {
         base.Render(context);
-        context.FillRectangle(new SolidColorBrush(Color.FromRgb(24, 27, 32)), Bounds);
+        context.FillRectangle(new SolidColorBrush(Color.FromRgb(15, 18, 23)), Bounds);
         if (_segments.Count == 0)
         {
             var text = new FormattedText(
