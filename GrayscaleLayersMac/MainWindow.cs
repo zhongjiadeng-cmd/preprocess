@@ -93,7 +93,13 @@ public sealed class MainWindow : Window
     private readonly NumericUpDown _pipelineBoundaryBlurBox = MakeNumberBox(3, 0.1m, 100);
     private readonly NumericUpDown _pipelineBoundaryCorrelationBox = MakeNumberBox(1, 0.1m, 100);
     private readonly NumericUpDown _pipelineVoronoiSeedBox = MakeNumberBox(12345, 1, int.MaxValue, 0);
-    private readonly NumericUpDown _pipelineLayerStepBox = MakeNumberBox(3, 0.001m, 100000);
+    private readonly NumericUpDown _pipelineLayerStepBox =
+        MakeNumberBox(3, 0.5m, 100000, minimum: 0.5m);
+    private readonly CheckBox _pipelineBlockCenterMotionBox = new()
+    {
+        Content = "按加工块中心移动 XY",
+        IsChecked = true
+    };
     private readonly TextBox _pipelineMachineNameBox = new()
     {
         Watermark = "留空则自动生成 machine_file_时间戳"
@@ -358,6 +364,8 @@ public sealed class MainWindow : Window
                 _pipelineDxfPreview,
                 _pipelineDxfPreviewStatus,
                 addToPipelineSelector: true);
+        _pipelineBlocksBox.ValueChanged += (_, _) => UpdateBlockCenterMotionAvailability();
+        UpdateBlockCenterMotionAvailability();
 
         var pipelineInspector = new StackPanel
         {
@@ -440,6 +448,7 @@ public sealed class MainWindow : Window
                             MakeLabeledControl("加工文件名", _pipelineMachineNameBox, 1)
                         }
                     },
+                    _pipelineBlockCenterMotionBox,
                     new Expander
                     {
                         Header = "第一组激光参数",
@@ -637,9 +646,10 @@ public sealed class MainWindow : Window
         decimal value,
         decimal increment,
         decimal maximum,
-        int decimalPlaces = 3) => new()
+        int decimalPlaces = 3,
+        decimal minimum = 0) => new()
     {
-        Minimum = 0,
+        Minimum = minimum,
         Maximum = maximum,
         Value = value,
         Increment = increment,
@@ -1046,9 +1056,10 @@ public sealed class MainWindow : Window
         }
 
         var layerStep = _pipelineLayerStepBox.Value;
-        if (!layerStep.HasValue || layerStep.Value <= 0)
+        if (!layerStep.HasValue || layerStep.Value < 0.5m)
         {
-            await ShowMessageAsync("每层下降深度必须大于 0 μm。");
+            await ShowMessageAsync(
+                "每层下降深度必须至少为 0.5 μm，才能在 0.001 mm 的机器坐标中产生非零移动。");
             return;
         }
 
@@ -1317,6 +1328,11 @@ public sealed class MainWindow : Window
             AppendPipelineLog($"已验证本次 DXF 清单：{expectedDxfFiles.Count} 个文件。");
 
             AppendPipelineLog("\n步骤 3/3：开始生成机器加工文件…");
+            var useBlockCenterMotion =
+                (_pipelineBlocksBox.Value ?? 0) > 0 &&
+                _pipelineBlockCenterMotionBox.IsChecked == true;
+            AppendPipelineLog(
+                $"加工块中心 XY 定位：{(useBlockCenterMotion ? "已启用" : "未启用")}。");
             var ownerToken = Guid.NewGuid().ToString("N");
             machineOwnerToken = ownerToken;
             machineStageStarted = true;
@@ -1345,6 +1361,10 @@ public sealed class MainWindow : Window
                 _pipelineScanAheadBox.IsChecked == true ? "--scan-ahead" : "--no-scan-ahead");
             machineInfo.ArgumentList.Add(
                 _pipelineSkyWritingBox.IsChecked == true ? "--sky-writing" : "--no-sky-writing");
+            machineInfo.ArgumentList.Add(
+                useBlockCenterMotion
+                    ? "--block-center-positioning"
+                    : "--no-block-center-positioning");
 
             var machineExitCode = await RunProcessAsync(
                 machineInfo,
@@ -1383,6 +1403,11 @@ public sealed class MainWindow : Window
             _pipelineRunButton.IsEnabled = true;
             _pipelineProgress.IsIndeterminate = false;
         }
+    }
+
+    private void UpdateBlockCenterMotionAvailability()
+    {
+        _pipelineBlockCenterMotionBox.IsEnabled = (_pipelineBlocksBox.Value ?? 0) > 0;
     }
 
     private static bool TryGetNonNegativeInt(
