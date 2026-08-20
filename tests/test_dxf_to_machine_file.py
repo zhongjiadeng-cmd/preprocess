@@ -679,6 +679,21 @@ class PatchPlanTests(unittest.TestCase):
             )
             np.testing.assert_array_equal(patch[0, [0, 1, 3, 4]], [1, 2, 4, -2])
 
+    def test_block_plan_quantizes_centers_to_machine_command_precision(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            dxf = Path(directory) / "layer_1_a.dxf"
+            write_dxf(dxf, [(0.1, 0.545484, 0, 0.2, 0.552109, 0)])
+            write_block_metadata(dxf, 0, [{
+                "block_index": 0,
+                "center_x": -2.27263749,
+                "center_y": 16.62577553,
+                "line_count": 1,
+            }])
+
+            plan = machine.build_patch_plan([dxf], block_center_positioning=True)
+
+            self.assertEqual(plan[0].placement, PatchPlacement(0, -2.273, 16.626))
+
     def test_unblocked_plan_retains_all_lines_without_opening_sidecar(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             dxf = Path(directory) / "layer_1_a.dxf"
@@ -1563,6 +1578,24 @@ class ValidateMachineDirectoryTests(unittest.TestCase):
                 0.1,
                 dict(DEFAULT_LASER_PARAMS[0]),
             )
+
+    def test_accepts_float32_local_xy_reconstruction_with_large_cancellation(self) -> None:
+        source_lines = np.array(
+            [[0.1, 0.545484, 0, 0.2, 0.552109, 0]],
+            dtype=np.float64,
+        )
+        planned_patch = PlannedPatch(
+            PatchPlacement(0, -2.273, 16.626),
+            source_lines,
+        )
+        patch = make_patch(source_lines, 0, 3, -2.273, 16.626)
+
+        machine._independently_validate_patch_geometry(
+            0,
+            patch,
+            planned_patch,
+            3,
+        )
 
     def test_rejects_bad_patch_dtype(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

@@ -888,6 +888,7 @@ def _publish_file_no_replace(
             raise OSError(errno.ENOTSUP, "O_NOFOLLOW is required for safe publication")
         _verify_owned_publication_directory(source.staging_directory)
         _verify_owned_staged_file(source, require_nonempty=True)
+        _lock_owned_staging_directory(source.staging_directory)
         if stat.S_IMODE(os.fstat(source.staging_directory.descriptor).st_mode) != 0o500:
             raise ValueError("staging directory must be locked before publication")
         os.link(

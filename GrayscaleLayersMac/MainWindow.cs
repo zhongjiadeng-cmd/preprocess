@@ -1309,7 +1309,7 @@ public sealed class MainWindow : Window
                 .OrderBy(path => path, pathComparer)
                 .ToArray();
             var missingDxfFiles = expectedDxfFiles
-                .Except(actualDxfFiles, pathComparer)
+                .Where(path => !IsRegularNonEmptyFile(path))
                 .OrderBy(path => path, pathComparer)
                 .ToArray();
             if (unexpectedDxfFiles.Length > 0 || missingDxfFiles.Length > 0)
@@ -1437,6 +1437,16 @@ public sealed class MainWindow : Window
                 Path.ChangeExtension(dxfPath, ".blocks.json"),
                 "块元数据");
         }
+    }
+
+    private static bool IsRegularNonEmptyFile(string path)
+    {
+        var file = new FileInfo(path);
+        file.Refresh();
+        return file.Exists &&
+               (file.Attributes &
+                   (FileAttributes.Directory | FileAttributes.ReparsePoint)) == 0 &&
+               file.Length > 0;
     }
 
     private void UpdateBlockCenterMotionAvailability()
