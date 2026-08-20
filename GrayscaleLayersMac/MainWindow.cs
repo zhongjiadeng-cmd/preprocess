@@ -38,8 +38,8 @@ public sealed class MainWindow : Window
     private readonly ProgressBar _progress = UiTheme.CreateProgress();
     private readonly TextBox _hatchInputBox = new() { Watermark = "请选择一张黑白纹理图", IsReadOnly = true };
     private readonly TextBox _hatchOutputBox = new() { Watermark = "请选择 DXF 保存位置", IsReadOnly = true };
-    private readonly NumericUpDown _widthBox = MakeNumberBox(100, 0.01m, 100000);
-    private readonly NumericUpDown _heightBox = MakeNumberBox(100, 0.01m, 100000);
+    private readonly NumericUpDown _widthBox = MakeNumberBox(100, 0.01m, 100000, showButtons: false);
+    private readonly NumericUpDown _heightBox = MakeNumberBox(100, 0.01m, 100000, showButtons: false);
     private readonly NumericUpDown _spacingBox = MakeNumberBox(0.02m, 0.001m, 1000);
     private readonly NumericUpDown _thresholdBox = MakeNumberBox(128, 1, 255, 0);
     private readonly TextBox _dpiBox = new() { Watermark = "可选；图片无 DPI 时填写" };
@@ -68,10 +68,10 @@ public sealed class MainWindow : Window
     private readonly TextBox _pipelineDxfOutputBox = new() { Watermark = "请选择 DXF 保存目录", IsReadOnly = true };
     private readonly NumericUpDown _pipelineLayersBox = MakeNumberBox(10, 1, 255, 0);
     private readonly CheckBox _pipelineBelowIsWhite = new() { Content = "低于阈值的区域设为白色（默认设为黑色）" };
-    private readonly NumericUpDown _pipelineWidthBox = MakeNumberBox(100, 0.01m, 100000);
-    private readonly NumericUpDown _pipelineHeightBox = MakeNumberBox(100, 0.01m, 100000);
+    private readonly NumericUpDown _pipelineWidthBox = MakeNumberBox(100, 0.01m, 100000, showButtons: false);
+    private readonly NumericUpDown _pipelineHeightBox = MakeNumberBox(100, 0.01m, 100000, showButtons: false);
     private readonly NumericUpDown _pipelineSpacingBox = MakeNumberBox(0.02m, 0.001m, 1000);
-    private readonly NumericUpDown _pipelineHatchAngleStepBox = MakeNumberBox(0, 0.1m, 180, 2);
+    private readonly NumericUpDown _pipelineHatchAngleStepBox = MakeNumberBox(0, 0.1m, 180, 2, showButtons: false);
     private readonly NumericUpDown _pipelineThresholdBox = MakeNumberBox(128, 1, 255, 0);
     private readonly TextBox _pipelineDpiBox = new() { Watermark = "可选；图片无 DPI 时填写" };
     private readonly ComboBox _pipelineAnchorBox = new()
@@ -600,8 +600,7 @@ public sealed class MainWindow : Window
                                 LetterSpacing = 1.5
                             }
                         }
-                    }, 1),
-                    Place(UiTheme.Badge("工程模式"), 2)
+                    }, 1)
                 }
             }
         };
@@ -622,13 +621,15 @@ public sealed class MainWindow : Window
         decimal increment,
         decimal maximum,
         int decimalPlaces = 3,
-        decimal minimum = 0) => new()
+        decimal minimum = 0,
+        bool showButtons = true) => new()
     {
         Minimum = minimum,
         Maximum = maximum,
         Value = value,
         Increment = increment,
         FormatString = decimalPlaces == 0 ? "0" : $"0.{new string('#', decimalPlaces)}",
+        ShowButtonSpinner = showButtons,
         HorizontalAlignment = HorizontalAlignment.Stretch
     };
 
