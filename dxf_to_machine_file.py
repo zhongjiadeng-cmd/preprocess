@@ -228,7 +228,7 @@ def build_machine_document(
             else _rounded_machine_coordinate(-step_mm)
         )
         command = f"G00X{delta_x:.3f}Y{delta_y:.3f}Z{delta_z:.3f}F40"
-        if patch_index == 0:
+        if patch_index == 0 or patch_index == len(placements) - 1:
             command = "G91" + command
         if patch_index == len(placements) - 1:
             # Target-controller contract: F40 completes this relative motion
@@ -312,7 +312,7 @@ def _simulate_vendor_machine_cycles(
             raise ValueError("vendor cycle patch references must be sequential")
 
         cursor = 0
-        if cycle_index == 0:
+        if cycle_index == 0 or cycle_index == final_index:
             cursor = _consume_vendor_literal(command, cursor, "G91")
             absolute_mode = False
         cursor = _consume_vendor_literal(command, cursor, "G00")
