@@ -1624,16 +1624,17 @@ public sealed class MainWindow : Window
             return;
         }
 
-        var layerScript = Path.Combine(AppContext.BaseDirectory, "grayscale_layers.py");
-        var hatchScript = Path.Combine(AppContext.BaseDirectory, "texture_to_hatch_dxf.py");
-        var machineScript = Path.Combine(AppContext.BaseDirectory, "dxf_to_machine_file.py");
+        var scriptsDirectory = ApplicationLayout.GetScriptsDirectory(AppContext.BaseDirectory);
+        var layerScript = Path.Combine(scriptsDirectory, "grayscale_layers.py");
+        var hatchScript = Path.Combine(scriptsDirectory, "texture_to_hatch_dxf.py");
+        var machineScript = Path.Combine(scriptsDirectory, "dxf_to_machine_file.py");
         if ((needsLayers && !File.Exists(layerScript)) ||
             (needsDxf && !File.Exists(hatchScript)) ||
             (needsMachine && !File.Exists(machineScript)))
         {
             await ShowMessageAsync(
                 "找不到流程所需的 Python 脚本（grayscale_layers.py、texture_to_hatch_dxf.py、" +
-                "dxf_to_machine_file.py），请重新编译或发布应用。");
+                $"dxf_to_machine_file.py）。请重新编译或发布应用。\n脚本目录：{scriptsDirectory}");
             return;
         }
 
@@ -2388,7 +2389,8 @@ public sealed class MainWindow : Window
         output = Path.GetFullPath(output);
         _hatchOutputBox.Text = output;
 
-        var script = Path.Combine(AppContext.BaseDirectory, "texture_to_hatch_dxf.py");
+        var script = ApplicationLayout.GetScriptPath(
+            AppContext.BaseDirectory, "texture_to_hatch_dxf.py");
         if (!File.Exists(script))
         {
             await ShowMessageAsync($"找不到 Python 脚本：\n{script}");
@@ -2652,7 +2654,8 @@ public sealed class MainWindow : Window
             return;
         }
 
-        var script = Path.Combine(AppContext.BaseDirectory, "grayscale_layers.py");
+        var script = ApplicationLayout.GetScriptPath(
+            AppContext.BaseDirectory, "grayscale_layers.py");
         if (!File.Exists(script))
         {
             await ShowMessageAsync($"找不到 Python 脚本：\n{script}");
