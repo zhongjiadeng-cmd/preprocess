@@ -22,3 +22,6 @@ machine_file_*/
 .superpowers/
 .worktrees/
 design-evidence/
+
+# Packaged application artifacts
+artifacts/
