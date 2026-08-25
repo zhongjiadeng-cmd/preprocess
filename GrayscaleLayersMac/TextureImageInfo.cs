@@ -68,6 +68,13 @@ public sealed record TextureImageInfo(
             return false;
         }
 
+        if (!TryConvertDpi(dpiX.Value, out var decimalDpiX) ||
+            !TryConvertDpi(dpiY.Value, out var decimalDpiY))
+        {
+            error = "DPI 超出可计算范围。";
+            return false;
+        }
+
         if (minimum > maximum)
         {
             error = "尺寸允许范围无效。";
@@ -77,9 +84,9 @@ public sealed record TextureImageInfo(
         try
         {
             var calculatedWidth = decimal.Round(
-                PixelWidth / (decimal)dpiX.Value * 25.4m, 3, MidpointRounding.AwayFromZero);
+                PixelWidth / decimalDpiX * 25.4m, 3, MidpointRounding.AwayFromZero);
             var calculatedHeight = decimal.Round(
-                PixelHeight / (decimal)dpiY.Value * 25.4m, 3, MidpointRounding.AwayFromZero);
+                PixelHeight / decimalDpiY * 25.4m, 3, MidpointRounding.AwayFromZero);
 
             if (calculatedWidth < minimum || calculatedWidth > maximum ||
                 calculatedHeight < minimum || calculatedHeight > maximum)
@@ -100,4 +107,19 @@ public sealed record TextureImageInfo(
     }
 
     private static bool IsValidDpi(double dpi) => double.IsFinite(dpi) && dpi > 0;
+
+    private static bool TryConvertDpi(double dpi, out decimal decimalDpi)
+    {
+        decimalDpi = default;
+
+        try
+        {
+            decimalDpi = (decimal)dpi;
+            return decimalDpi > 0;
+        }
+        catch (OverflowException)
+        {
+            return false;
+        }
+    }
 }

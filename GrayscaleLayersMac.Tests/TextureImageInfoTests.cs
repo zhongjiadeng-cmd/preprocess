@@ -44,6 +44,30 @@ public sealed class TextureImageInfoTests
     }
 
     [TestMethod]
+    public void Calculate_RejectsFallbackDpiThatRoundsToZeroAsDecimal()
+    {
+        var info = new TextureImageInfo(100, 50, null, null);
+
+        var ok = info.TryCalculateMillimeters(
+            double.Epsilon, 0.01m, 100000m, out _, out _, out var error);
+
+        Assert.IsFalse(ok);
+        Assert.IsFalse(string.IsNullOrWhiteSpace(error));
+    }
+
+    [TestMethod]
+    public void Calculate_RejectsEmbeddedDpiThatRoundsToZeroAsDecimal()
+    {
+        var info = new TextureImageInfo(100, 50, double.Epsilon, double.Epsilon);
+
+        var ok = info.TryCalculateMillimeters(
+            null, 0.01m, 100000m, out _, out _, out var error);
+
+        Assert.IsFalse(ok);
+        Assert.IsFalse(string.IsNullOrWhiteSpace(error));
+    }
+
+    [TestMethod]
     public void Calculate_RejectsResultOutsideControlRange()
     {
         var info = new TextureImageInfo(1_000_000, 1_000_000, 1, 1);
