@@ -1186,7 +1186,7 @@ public sealed class MainWindow : Window
                 // 使用完全相同的 Voronoi 分块。使用质数步长可避免相邻层相关。
                 var layerVoronoiSeed = (int)(
                     ((baseVoronoiSeed - 1L + index * 104729L) % int.MaxValue) + 1);
-                var layerHatchAngle = (index * hatchAngleStep) % 180m;
+                var layerHatchAngle = ((layerFiles.Length == 1 ? 1 : index) * hatchAngleStep) % 180m;
                 AppendPipelineLog(
                     $"[{index + 1}/{layerFiles.Length}] {Path.GetFileName(layerFile)} → {Path.GetFileName(outputFile)}" +
                     $"（填充角度：{Invariant(layerHatchAngle)}°）" +

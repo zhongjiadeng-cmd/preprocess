@@ -1746,6 +1746,22 @@ class AvaloniaPairValidationSourceContractTests(unittest.TestCase):
         )
 
 
+class AvaloniaHatchAngleSourceContractTests(unittest.TestCase):
+    def test_single_layer_uses_step_while_multiple_layers_keep_zero_based_sequence(self) -> None:
+        source = (
+            Path(__file__).resolve().parents[1]
+            / "GrayscaleLayersMac"
+            / "MainWindow.cs"
+        ).read_text(encoding="utf-8")
+        calculation_start = source.index("var layerHatchAngle")
+        calculation_end = source.index("AppendPipelineLog", calculation_start)
+        calculation = source[calculation_start:calculation_end]
+
+        self.assertIn("layerFiles.Length == 1 ? 1 : index", calculation)
+        self.assertIn("* hatchAngleStep", calculation)
+        self.assertIn("% 180m", calculation)
+
+
 class AngledHatchTests(unittest.TestCase):
     def test_angled_hatch_remains_compatible_with_voronoi_blocks(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
