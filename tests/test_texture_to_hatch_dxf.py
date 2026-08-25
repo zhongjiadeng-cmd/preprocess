@@ -163,6 +163,123 @@ class TextureImageInspectionTests(unittest.TestCase):
             self.assertAlmostEqual(payload["dpi_x"], 200, delta=0.1)
             self.assertAlmostEqual(payload["dpi_y"], 100, delta=0.1)
 
+    def test_inspect_image_cli_does_not_create_or_modify_output(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "source.png"
+            existing_output = root / "existing.dxf"
+            absent_output = root / "absent.dxf"
+            Image.new("L", (8, 4), 255).save(source)
+            existing_output.write_bytes(b"sentinel")
+            before = existing_output.stat()
+
+            for output in (existing_output, absent_output):
+                completed = subprocess.run(
+                    [
+                        sys.executable,
+                        str(ROOT / "texture_to_hatch_dxf.py"),
+                        str(source),
+                        str(output),
+                        "--inspect-image",
+                    ],
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                )
+                self.assertEqual(completed.returncode, 0, completed.stderr)
+                json.loads(completed.stdout)
+
+            self.assertEqual(existing_output.read_bytes(), b"sentinel")
+            self.assertEqual(existing_output.stat().st_mtime_ns, before.st_mtime_ns)
+            self.assertFalse(absent_output.exists())
+
+
+class FallbackDpiValidationTests(unittest.TestCase):
+    def test_api_rejects_non_finite_fallback_before_touching_output(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "source.png"
+            output = root / "output.dxf"
+            Image.new("L", (4, 4), 0).save(source, dpi=(100, 100))
+            output.write_bytes(b"sentinel")
+
+            for fallback in (math.nan, math.inf, -math.inf):
+                with self.subTest(fallback=fallback):
+                    with self.assertRaisesRegex(ValueError, "DPI 必须是有限的正数"):
+                        convert_texture_to_dxf(
+                            source,
+                            output,
+                            4,
+                            4,
+                            1,
+                            fallback_dpi=fallback,
+                            voronoi_block_count=0,
+                        )
+                    self.assertEqual(output.read_bytes(), b"sentinel")
+
+    def test_cli_rejects_non_finite_fallback_cleanly_before_output(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "source.png"
+            Image.new("L", (4, 4), 0).save(source)
+
+            for spelling in ("nan", "inf", "-inf"):
+                with self.subTest(spelling=spelling):
+                    output = root / f"{spelling}.dxf"
+                    completed = subprocess.run(
+                        [
+                            sys.executable,
+                            str(ROOT / "texture_to_hatch_dxf.py"),
+                            str(source),
+                            str(output),
+                            "--size",
+                            "4",
+                            "--spacing",
+                            "1",
+                            "--blocks",
+                            "0",
+                            f"--dpi={spelling}",
+                        ],
+                        check=False,
+                        capture_output=True,
+                        text=True,
+                    )
+                    self.assertNotEqual(completed.returncode, 0)
+                    self.assertIn("DPI 必须是有限的正数", completed.stderr)
+                    self.assertNotIn("Traceback", completed.stderr)
+                    self.assertFalse(output.exists())
+
+    def test_legacy_conversion_cli_form_still_writes_dxf(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "source.png"
+            output = root / "output.dxf"
+            Image.new("L", (4, 4), 0).save(source, dpi=(100, 100))
+
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    str(ROOT / "texture_to_hatch_dxf.py"),
+                    str(source),
+                    str(output),
+                    "--width",
+                    "4",
+                    "--height",
+                    "4",
+                    "--spacing",
+                    "1",
+                    "--blocks",
+                    "0",
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            self.assertTrue(output.is_file())
+            self.assertGreater(output.stat().st_size, 0)
+
 
 def read_line_coordinates(path: Path) -> list[tuple[float, float, float, float]]:
     pairs = path.read_text(encoding="ascii").splitlines()

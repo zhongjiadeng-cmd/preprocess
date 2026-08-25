@@ -47,7 +47,7 @@ public sealed class TextureImageInfoTests
         Assert.AreEqual(12.7m, height);
     }
 
-    [DataTestMethod]
+    [TestMethod]
     [DataRow(0.0)]
     [DataRow(-1.0)]
     [DataRow(double.NaN)]

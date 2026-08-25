@@ -973,6 +973,27 @@ def _valid_image_dpi(value: object) -> tuple[float, float] | None:
     return (dpi_x, dpi_y) if dpi_x > 0 and dpi_y > 0 else None
 
 
+def _validate_fallback_dpi(value: object | None) -> float | None:
+    if value is None:
+        return None
+    try:
+        dpi = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("备用 DPI 必须是有限的正数。") from exc
+    if not math.isfinite(dpi) or dpi <= 0:
+        raise ValueError("备用 DPI 必须是有限的正数。")
+    return dpi
+
+
+def _fallback_dpi_argument(value: str) -> float:
+    try:
+        dpi = _validate_fallback_dpi(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(str(exc)) from exc
+    assert dpi is not None
+    return dpi
+
+
 def inspect_texture_image(image_path: Path) -> dict[str, int | float | None]:
     with Image.open(image_path) as image:
         pixel_width, pixel_height = image.size
@@ -991,14 +1012,15 @@ def read_binary_texture(
     fallback_dpi: float | None = None,
 ) -> tuple[np.ndarray, float, float]:
     """读取纹理，返回黑区掩膜和 X/Y 方向的 mm/像素。"""
+    validated_fallback_dpi = _validate_fallback_dpi(fallback_dpi)
     with Image.open(image_path) as image:
         gray = np.asarray(image.convert("L"), dtype=np.uint8)
         dpi = _valid_image_dpi(image.info.get("dpi"))
 
     if dpi:
         dpi_x, dpi_y = dpi
-    elif fallback_dpi and fallback_dpi > 0:
-        dpi_x = dpi_y = float(fallback_dpi)
+    elif validated_fallback_dpi is not None:
+        dpi_x = dpi_y = validated_fallback_dpi
     else:
         raise ValueError(
             "图片没有有效 DPI 元数据；请通过 --dpi 指定分辨率。"
@@ -1939,6 +1961,7 @@ def convert_texture_to_dxf(
 ) -> None:
     if target_width_mm <= 0 or target_height_mm <= 0:
         raise ValueError("目标毫米尺寸必须大于 0")
+    fallback_dpi = _validate_fallback_dpi(fallback_dpi)
 
     source, pixel_width_mm, pixel_height_mm = read_binary_texture(
         input_path,
@@ -2130,7 +2153,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--dpi",
-        type=float,
+        type=_fallback_dpi_argument,
         help="图片没有 DPI 元数据时使用的 DPI",
     )
     parser.add_argument(

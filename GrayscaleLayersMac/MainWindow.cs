@@ -21,6 +21,11 @@ public sealed class MainWindow : Window
         public override string ToString() => Name;
     }
 
+    private sealed record TexturePreviewView(
+        Image Preview,
+        TextBlock Metadata,
+        TextBlock PhysicalSize);
+
     private readonly TextBox _inputBox = new() { Watermark = "请选择一张灰度纹理图", IsReadOnly = true };
     private readonly TextBox _outputBox = new() { Watermark = "请选择结果保存目录", IsReadOnly = true };
     private readonly NumericUpDown _layersBox = new()
@@ -167,10 +172,10 @@ public sealed class MainWindow : Window
     private readonly Button _pipelineRunButton = new() { Content = "开始三步处理", HorizontalAlignment = HorizontalAlignment.Stretch };
     private readonly Button _pipelineOpenButton = new() { Content = "打开加工文件目录", IsEnabled = false };
     private readonly ProgressBar _pipelineProgress = UiTheme.CreateProgress();
-    private readonly TexturePreviewRequestGate _hatchPreviewRequests = new();
-    private readonly TexturePreviewRequestGate _pipelinePreviewRequests = new();
-    private TextureImageInfo? _hatchTextureInfo;
-    private TextureImageInfo? _pipelineTextureInfo;
+    private readonly TexturePreviewView _hatchTextureView;
+    private readonly TexturePreviewView _pipelineTextureView;
+    private readonly TexturePreviewController _hatchPreviewController;
+    private readonly TexturePreviewController _pipelinePreviewController;
     private string? _lastMachineOutputPath;
     private CancellationTokenSource? _cancellation;
 
@@ -186,6 +191,23 @@ public sealed class MainWindow : Window
         MinHeight = 720;
         Background = UiTheme.RootBrush;
         WindowStartupLocation = WindowStartupLocation.CenterScreen;
+        _hatchTextureView = new TexturePreviewView(
+            _hatchTexturePreview,
+            _hatchTextureMetadata,
+            _hatchTexturePhysicalSize);
+        _pipelineTextureView = new TexturePreviewView(
+            _pipelineTexturePreview,
+            _pipelineTextureMetadata,
+            _pipelineTexturePhysicalSize);
+        _hatchPreviewController = new TexturePreviewController(
+            source => _hatchTextureView.Preview.Source = source as Bitmap,
+            update => ApplyTextureSizeUpdate(update, _widthBox, _heightBox));
+        _pipelinePreviewController = new TexturePreviewController(
+            source => _pipelineTextureView.Preview.Source = source as Bitmap,
+            update => ApplyTextureSizeUpdate(
+                update,
+                _pipelineWidthBox,
+                _pipelineHeightBox));
         foreach (var primaryButton in new[] { _pipelineRunButton, _hatchRunButton, _runButton })
             UiTheme.ApplyPrimaryStyle(primaryButton);
         _pipelineDxfSelector.ItemsSource = _pipelineDxfFiles;
@@ -199,23 +221,19 @@ public sealed class MainWindow : Window
         };
         _dpiBox.TextChanged += (_, _) =>
         {
-            if (_hatchTextureInfo is { HasEmbeddedDpi: false } info)
-                UpdateAutomaticTextureSize(
-                    info,
-                    _dpiBox,
-                    _widthBox,
-                    _heightBox,
-                    _hatchTexturePhysicalSize);
+            _hatchPreviewController.ApplyFallbackDpiEdit(
+                _dpiBox.Text,
+                _widthBox.Minimum,
+                _widthBox.Maximum);
+            RenderTexturePreview(_hatchTextureView, _hatchPreviewController.State);
         };
         _pipelineDpiBox.TextChanged += (_, _) =>
         {
-            if (_pipelineTextureInfo is { HasEmbeddedDpi: false } info)
-                UpdateAutomaticTextureSize(
-                    info,
-                    _pipelineDpiBox,
-                    _pipelineWidthBox,
-                    _pipelineHeightBox,
-                    _pipelineTexturePhysicalSize);
+            _pipelinePreviewController.ApplyFallbackDpiEdit(
+                _pipelineDpiBox.Text,
+                _pipelineWidthBox.Minimum,
+                _pipelineWidthBox.Maximum);
+            RenderTexturePreview(_pipelineTextureView, _pipelinePreviewController.State);
         };
         Closed += (_, _) => DisposeTexturePreviews();
 
@@ -307,10 +325,7 @@ public sealed class MainWindow : Window
                     "输入输出",
                     MakeField("输入纹理图", _hatchInputBox, hatchInputButton),
                     MakeField("输出 DXF", _hatchOutputBox, hatchOutputButton)),
-                MakeTexturePreviewCard(
-                    _hatchTexturePreview,
-                    _hatchTextureMetadata,
-                    _hatchTexturePhysicalSize),
+                MakeTexturePreviewCard(_hatchTextureView),
                 MakeInspectorSection(
                     "Hatch 参数",
                     new Grid
@@ -421,10 +436,7 @@ public sealed class MainWindow : Window
                             MakeLabeledControl("像素方向", _pipelineBelowIsWhite, 1)
                         }
                     }),
-                MakeTexturePreviewCard(
-                    _pipelineTexturePreview,
-                    _pipelineTextureMetadata,
-                    _pipelineTexturePhysicalSize),
+                MakeTexturePreviewCard(_pipelineTextureView),
                 MakeInspectorSection(
                     "Hatch 与 DXF",
                     MakeField("DXF 输出目录", _pipelineDxfOutputBox, pipelineDxfOutputButton),
@@ -756,10 +768,7 @@ public sealed class MainWindow : Window
         return UiTheme.CardExpander(title, content);
     }
 
-    private static Control MakeTexturePreviewCard(
-        Image preview,
-        TextBlock metadata,
-        TextBlock physicalSize) => new Border
+    private static Control MakeTexturePreviewCard(TexturePreviewView view) => new Border
     {
         Padding = new Thickness(14),
         Background = UiTheme.CardBrush,
@@ -796,10 +805,10 @@ public sealed class MainWindow : Window
                     BorderThickness = new Thickness(1),
                     CornerRadius = UiTheme.ControlRadius,
                     ClipToBounds = true,
-                    Child = preview
+                    Child = view.Preview
                 },
-                metadata,
-                physicalSize
+                view.Metadata,
+                view.PhysicalSize
             }
         }
     };
@@ -1085,14 +1094,11 @@ public sealed class MainWindow : Window
 
         await LoadTexturePreviewAsync(
             path,
-            _pipelineTexturePreview,
-            _pipelineTextureMetadata,
-            _pipelineTexturePhysicalSize,
+            _pipelineTextureView,
             _pipelineDpiBox,
             _pipelineWidthBox,
             _pipelineHeightBox,
-            _pipelinePreviewRequests,
-            info => _pipelineTextureInfo = info);
+            _pipelinePreviewController);
     }
 
     private async Task PickPipelineFolderAsync(TextBox target, string title)
@@ -1164,9 +1170,9 @@ public sealed class MainWindow : Window
             await ShowMessageAsync("找不到带有 numpy 和 Pillow 的 Python 3。");
             return;
         }
-        if (!TryOptionalPositiveNumber(_pipelineDpiBox.Text, out var dpi))
+        if (!TextureFallbackDpi.TryParseOptional(_pipelineDpiBox.Text, out var dpi))
         {
-            await ShowMessageAsync(" DPI 必须留空或填写大于 0 的数字。");
+            await ShowMessageAsync("DPI 必须留空或填写有限且大于 0 的数字。");
             return;
         }
 
@@ -1565,9 +1571,12 @@ public sealed class MainWindow : Window
         CreateNoWindow = true
     };
 
-    private static async Task<TextureImageInfo> InspectTextureImageAsync(string path)
+    private static async Task<TextureImageInfo> InspectTextureImageAsync(
+        string path,
+        CancellationToken cancellationToken)
     {
-        var python = await FindPythonAsync();
+        cancellationToken.ThrowIfCancellationRequested();
+        var python = await FindPythonAsync(cancellationToken);
         if (python is null)
             throw new InvalidOperationException("找不到带有 numpy 和 Pillow 的 Python 3。");
 
@@ -1580,7 +1589,8 @@ public sealed class MainWindow : Window
         process.Start();
         var stdoutTask = process.StandardOutput.ReadToEndAsync();
         var stderrTask = process.StandardError.ReadToEndAsync();
-        await Task.WhenAll(process.WaitForExitAsync(), stdoutTask, stderrTask);
+        await WaitForExitOrKillAsync(process, cancellationToken);
+        await Task.WhenAll(stdoutTask, stderrTask);
 
         var stderr = await stderrTask;
         if (process.ExitCode != 0)
@@ -1594,53 +1604,94 @@ public sealed class MainWindow : Window
         return TextureImageInfo.ParseJson(await stdoutTask);
     }
 
+    private static async Task WaitForExitOrKillAsync(
+        Process process,
+        CancellationToken cancellationToken)
+    {
+        using var cancellationRegistration = cancellationToken.Register(
+            static state => TryTerminateProcess((Process)state!),
+            process);
+        try
+        {
+            await process.WaitForExitAsync(cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+            TryTerminateProcess(process);
+            try
+            {
+                await process.WaitForExitAsync(CancellationToken.None);
+            }
+            catch
+            {
+                // Preserve the cancellation after making a best effort to reap the process.
+            }
+            throw;
+        }
+    }
+
+    private static void TryTerminateProcess(Process process)
+    {
+        try
+        {
+            if (!process.HasExited)
+                process.Kill(entireProcessTree: true);
+        }
+        catch
+        {
+            // The process may have exited between the state check and termination.
+        }
+    }
+
     private static async Task LoadTexturePreviewAsync(
         string path,
-        Image preview,
-        TextBlock metadata,
-        TextBlock physicalSize,
+        TexturePreviewView view,
         TextBox dpiBox,
         NumericUpDown widthBox,
         NumericUpDown heightBox,
-        TexturePreviewRequestGate requests,
-        Action<TextureImageInfo?> setInfo)
+        TexturePreviewController controller)
     {
-        var requestId = requests.BeginRequest();
-        if (!requests.RunIfCurrent(requestId, () =>
-            {
-                ReplaceTexturePreview(preview, null);
-                setInfo(null);
-                metadata.Text = "正在读取图片信息…";
-                metadata.ClearValue(TextBlock.ForegroundProperty);
-                physicalSize.Text = string.Empty;
-            }))
-            return;
+        var operation = controller.BeginImport();
+        RenderTexturePreview(view, controller.State);
 
         Bitmap? candidateBitmap = null;
         try
         {
+            var info = await InspectTextureImageAsync(path, operation.CancellationToken);
+            operation.CancellationToken.ThrowIfCancellationRequested();
+            var constraint = TexturePreviewDecodePolicy.Select(info, 380);
             using (var stream = File.OpenRead(path))
-                candidateBitmap = Bitmap.DecodeToHeight(stream, 380);
+            {
+                candidateBitmap = constraint.Axis == TexturePreviewDecodeAxis.Width
+                    ? Bitmap.DecodeToWidth(stream, constraint.PixelLimit)
+                    : Bitmap.DecodeToHeight(stream, constraint.PixelLimit);
+            }
 
-            var info = await InspectTextureImageAsync(path);
-            if (!requests.RunIfCurrent(requestId, () =>
-                {
-                    ReplaceTexturePreview(preview, candidateBitmap!);
-                    candidateBitmap = null;
-                    setInfo(info);
-                    metadata.Text = info.FormatMetadata();
-                    UpdateAutomaticTextureSize(info, dpiBox, widthBox, heightBox, physicalSize);
-                }))
+            var completedPreview = candidateBitmap;
+            candidateBitmap = null;
+            if (!controller.TryCompleteImport(
+                    operation,
+                    completedPreview,
+                    info,
+                    dpiBox.Text,
+                    widthBox.Minimum,
+                    widthBox.Maximum,
+                    out _))
+            {
                 return;
+            }
+
+            RenderTexturePreview(view, controller.State);
+        }
+        catch (OperationCanceledException) when (operation.CancellationToken.IsCancellationRequested)
+        {
+            // A newer import or window close owns the visible state.
         }
         catch (Exception ex)
         {
-            requests.RunIfCurrent(requestId, () =>
-            {
-                metadata.Text = $"无法读取图片：{ex.Message}";
-                metadata.Foreground = Brushes.OrangeRed;
-                physicalSize.Text = string.Empty;
-            });
+            Trace.TraceError($"Texture preview import failed for '{path}': {ex}");
+            if (controller.TryFail(operation, ex))
+                RenderTexturePreview(view, controller.State);
         }
         finally
         {
@@ -1648,61 +1699,34 @@ public sealed class MainWindow : Window
         }
     }
 
-    private static void UpdateAutomaticTextureSize(
-        TextureImageInfo info,
-        TextBox dpiBox,
+    private static void ApplyTextureSizeUpdate(
+        TexturePreviewSizeUpdate update,
         NumericUpDown widthBox,
-        NumericUpDown heightBox,
-        TextBlock physicalSize)
+        NumericUpDown heightBox)
     {
-        double? fallbackDpi = null;
-        if (!info.HasEmbeddedDpi &&
-            (!TryOptionalPositiveNumber(dpiBox.Text, out fallbackDpi) ||
-             !fallbackDpi.HasValue ||
-             !double.IsFinite(fallbackDpi.Value)))
-        {
-            physicalSize.Text = "物理尺寸：等待填写有效 DPI";
+        if (!update.ShouldWriteTargets)
             return;
-        }
 
-        if (!info.TryCalculateMillimeters(
-                fallbackDpi,
-                widthBox.Minimum,
-                widthBox.Maximum,
-                out var width,
-                out var height,
-                out var error))
-        {
-            physicalSize.Text = $"物理尺寸：{error}";
-            return;
-        }
+        widthBox.Value = update.Width;
+        heightBox.Value = update.Height;
+    }
 
-        widthBox.Value = width;
-        heightBox.Value = height;
-        physicalSize.Text = info.FormatPhysicalSize(width, height);
+    private static void RenderTexturePreview(
+        TexturePreviewView view,
+        TexturePreviewState state)
+    {
+        view.Metadata.Text = state.MetadataText;
+        view.PhysicalSize.Text = state.PhysicalSizeText;
+        if (state.Phase == TexturePreviewPhase.Failed)
+            view.Metadata.Foreground = Brushes.OrangeRed;
+        else
+            view.Metadata.ClearValue(TextBlock.ForegroundProperty);
     }
 
     private void DisposeTexturePreviews()
     {
-        _hatchPreviewRequests.Close();
-        _pipelinePreviewRequests.Close();
-        DisposeTexturePreview(_hatchTexturePreview);
-        DisposeTexturePreview(_pipelineTexturePreview);
-        _hatchTextureInfo = null;
-        _pipelineTextureInfo = null;
-    }
-
-    private static void DisposeTexturePreview(Image preview)
-    {
-        ReplaceTexturePreview(preview, null);
-    }
-
-    private static void ReplaceTexturePreview(Image preview, Bitmap? bitmap)
-    {
-        var previous = preview.Source as Bitmap;
-        preview.Source = bitmap;
-        if (!ReferenceEquals(previous, bitmap))
-            previous?.Dispose();
+        _hatchPreviewController.Close();
+        _pipelinePreviewController.Close();
     }
 
     private static async Task<int> RunProcessAsync(
@@ -1784,14 +1808,11 @@ public sealed class MainWindow : Window
 
         await LoadTexturePreviewAsync(
             path,
-            _hatchTexturePreview,
-            _hatchTextureMetadata,
-            _hatchTexturePhysicalSize,
+            _hatchTextureView,
             _dpiBox,
             _widthBox,
             _heightBox,
-            _hatchPreviewRequests,
-            info => _hatchTextureInfo = info);
+            _hatchPreviewController);
     }
 
     private async Task PickHatchOutputAsync()
@@ -1842,9 +1863,9 @@ public sealed class MainWindow : Window
             return;
         }
 
-        if (!TryOptionalPositiveNumber(_dpiBox.Text, out var dpi))
+        if (!TextureFallbackDpi.TryParseOptional(_dpiBox.Text, out var dpi))
         {
-            await ShowMessageAsync(" DPI 必须留空或填写大于 0 的数字。");
+            await ShowMessageAsync("DPI 必须留空或填写有限且大于 0 的数字。");
             return;
         }
 
@@ -2031,20 +2052,6 @@ public sealed class MainWindow : Window
     private static string Invariant(decimal value) =>
         value.ToString(CultureInfo.InvariantCulture);
 
-    private static bool TryOptionalPositiveNumber(string? text, out double? value)
-    {
-        value = null;
-        if (string.IsNullOrWhiteSpace(text))
-            return true;
-        if (!double.TryParse(text.Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out var parsed) &&
-            !double.TryParse(text.Trim(), NumberStyles.Float, CultureInfo.CurrentCulture, out parsed))
-            return false;
-        if (parsed <= 0)
-            return false;
-        value = parsed;
-        return true;
-    }
-
     private async Task RunAsync()
     {
         var input = _inputBox.Text?.Trim();
@@ -2152,10 +2159,12 @@ public sealed class MainWindow : Window
         }
     }
 
-    private static async Task<string?> FindPythonAsync()
+    private static async Task<string?> FindPythonAsync(
+        CancellationToken cancellationToken = default)
     {
         foreach (var candidate in new[] { "/opt/homebrew/bin/python3", "/usr/local/bin/python3", "/usr/bin/python3", "python3" })
         {
+            cancellationToken.ThrowIfCancellationRequested();
             try
             {
                 var info = new ProcessStartInfo
@@ -2170,8 +2179,12 @@ public sealed class MainWindow : Window
                 info.ArgumentList.Add("import numpy, PIL");
                 using var process = Process.Start(info);
                 if (process is null) continue;
-                await process.WaitForExitAsync();
+                await WaitForExitOrKillAsync(process, cancellationToken);
                 if (process.ExitCode == 0) return candidate;
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
             }
             catch
             {
