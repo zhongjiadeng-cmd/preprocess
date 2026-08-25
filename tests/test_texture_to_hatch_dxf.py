@@ -22,6 +22,98 @@ from texture_to_hatch_dxf import (
 )
 
 
+class NonrepeatingTextureFallbackTests(unittest.TestCase):
+    def test_axis_without_reliable_period_raises_dedicated_error(self) -> None:
+        source = np.eye(6, dtype=bool)
+        with self.assertRaises(hatch.RepeatPeriodNotFoundError):
+            hatch._detect_axis_period(source, axis=1)
+
+    def test_unit_mode_falls_back_to_complete_nonperiodic_input(self) -> None:
+        pixels = np.array(
+            [
+                [0, 255, 255, 255, 255, 255],
+                [255, 0, 255, 255, 255, 255],
+                [255, 255, 0, 255, 255, 255],
+                [255, 255, 255, 0, 255, 255],
+                [255, 255, 255, 255, 0, 255],
+                [255, 255, 255, 255, 255, 0],
+            ],
+            dtype=np.uint8,
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            input_path = root / "nonperiodic.tiff"
+            output_path = root / "nonperiodic.dxf"
+            Image.fromarray(pixels).save(input_path, dpi=(25.4, 25.4))
+            stdout = io.StringIO()
+            with redirect_stdout(stdout):
+                convert_texture_to_dxf(
+                    input_path,
+                    output_path,
+                    6,
+                    6,
+                    1,
+                    tile_mode="unit",
+                    voronoi_block_count=0,
+                )
+
+            self.assertGreater(output_path.stat().st_size, 0)
+            log = stdout.getvalue()
+            self.assertIn("处理方式: 未识别到重复周期，使用完整输入图", log)
+            self.assertIn("拼接模式: 完整输入图周期填充", log)
+            self.assertNotIn("处理方式: 自动识别最小重复单元", log)
+
+    def test_periodic_input_still_uses_minimum_repeat_unit(self) -> None:
+        unit = np.array([[0, 255], [255, 0]], dtype=np.uint8)
+        pixels = np.tile(unit, (3, 3))
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            input_path = root / "periodic.tiff"
+            output_path = root / "periodic.dxf"
+            Image.fromarray(pixels).save(input_path, dpi=(25.4, 25.4))
+            stdout = io.StringIO()
+            with redirect_stdout(stdout):
+                convert_texture_to_dxf(
+                    input_path,
+                    output_path,
+                    6,
+                    6,
+                    1,
+                    tile_mode="unit",
+                    voronoi_block_count=0,
+                )
+
+            log = stdout.getvalue()
+            self.assertIn("处理方式: 自动识别最小重复单元", log)
+            self.assertIn("识别周期: 2 × 2 px", log)
+            self.assertNotIn("未识别到重复周期", log)
+
+    def test_unit_mode_does_not_swallow_unrelated_value_error(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            input_path = root / "texture.tiff"
+            Image.fromarray(np.zeros((6, 6), dtype=np.uint8)).save(
+                input_path, dpi=(25.4, 25.4)
+            )
+            with (
+                mock.patch.object(
+                    hatch,
+                    "detect_repeating_unit",
+                    side_effect=ValueError("unexpected unit extraction failure"),
+                ),
+                self.assertRaisesRegex(ValueError, "unexpected unit extraction failure"),
+            ):
+                convert_texture_to_dxf(
+                    input_path,
+                    root / "output.dxf",
+                    6,
+                    6,
+                    1,
+                    tile_mode="unit",
+                    voronoi_block_count=0,
+                )
+
+
 def read_line_coordinates(path: Path) -> list[tuple[float, float, float, float]]:
     pairs = path.read_text(encoding="ascii").splitlines()
     entities: list[tuple[float, float, float, float]] = []

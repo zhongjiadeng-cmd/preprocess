@@ -31,6 +31,10 @@ from PIL import Image
 MM_PER_INCH = 25.4
 
 
+class RepeatPeriodNotFoundError(ValueError):
+    """图片在指定方向上没有可可靠识别的重复周期。"""
+
+
 @dataclass(frozen=True)
 class HatchSegment:
     """一条已经归属到某个加工块的水平加工线。"""
@@ -1021,7 +1025,7 @@ def _detect_axis_period(
             return index + 2, similarity
 
     direction = "横向" if axis == 1 else "纵向"
-    raise ValueError(
+    raise RepeatPeriodNotFoundError(
         f"无法可靠识别{direction}最小重复周期；"
         "图片中至少需要包含两个重复单元，且重复单元应基本一致。"
     )
@@ -1921,32 +1925,44 @@ def convert_texture_to_dxf(
     target_width_px = max(1, round(target_width_mm / pixel_width_mm))
     target_height_px = max(1, round(target_height_mm / pixel_height_mm))
     repeat_info: tuple[int, int, int, int, float, float, int, int] | None = None
+    used_full_source_fallback = False
     if tile_mode == "unit":
-        (
-            unit,
-            period_width,
-            period_height,
-            unit_x,
-            unit_y,
-            repeat_similarity,
-            seam_score,
-        ) = detect_repeating_unit(source)
-        fitted, unit_columns, unit_rows = fit_complete_units_to_size(
-            unit,
-            target_width_px,
-            target_height_px,
-            crop_anchor=crop_anchor,
-        )
-        repeat_info = (
-            period_width,
-            period_height,
-            unit_x,
-            unit_y,
-            repeat_similarity,
-            seam_score,
-            unit_columns,
-            unit_rows,
-        )
+        try:
+            (
+                unit,
+                period_width,
+                period_height,
+                unit_x,
+                unit_y,
+                repeat_similarity,
+                seam_score,
+            ) = detect_repeating_unit(source)
+        except RepeatPeriodNotFoundError:
+            fitted = fit_texture_to_size(
+                source,
+                target_width_px,
+                target_height_px,
+                crop_anchor=crop_anchor,
+                tile_mode="repeat",
+            )
+            used_full_source_fallback = True
+        else:
+            fitted, unit_columns, unit_rows = fit_complete_units_to_size(
+                unit,
+                target_width_px,
+                target_height_px,
+                crop_anchor=crop_anchor,
+            )
+            repeat_info = (
+                period_width,
+                period_height,
+                unit_x,
+                unit_y,
+                repeat_similarity,
+                seam_score,
+                unit_columns,
+                unit_rows,
+            )
     else:
         fitted = fit_texture_to_size(
             source,
@@ -1990,11 +2006,12 @@ def convert_texture_to_dxf(
         random_seed=random_seed,
     )
 
-    print(
-        "处理方式: 自动识别最小重复单元"
-        if tile_mode == "unit"
-        else "传统纹理拼接"
-    )
+    if used_full_source_fallback:
+        print("处理方式: 未识别到重复周期，使用完整输入图")
+    elif tile_mode == "unit":
+        print("处理方式: 自动识别最小重复单元")
+    else:
+        print("处理方式: 传统纹理拼接")
     print(f"像素尺寸: {pixel_width_mm:.8f} × {pixel_height_mm:.8f} mm")
     print(f"目标栅格: {target_width_px} × {target_height_px} px")
     print(f"目标尺寸: {target_width_mm:g} × {target_height_mm:g} mm")
@@ -2003,7 +2020,12 @@ def convert_texture_to_dxf(
         "repeat": "周期重复",
         "mirror": "镜像拼接",
     }
-    print(f"拼接模式: {mode_names[tile_mode]}")
+    mode_name = (
+        "完整输入图周期填充"
+        if used_full_source_fallback
+        else mode_names[tile_mode]
+    )
+    print(f"拼接模式: {mode_name}")
     if repeat_info is not None:
         (
             period_width,
