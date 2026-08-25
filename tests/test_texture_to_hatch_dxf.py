@@ -5,6 +5,8 @@ import json
 import math
 import os
 import stat
+import subprocess
+import sys
 import tempfile
 import unittest
 from unittest import mock
@@ -19,7 +21,11 @@ from texture_to_hatch_dxf import (
     create_constrained_voronoi_blocks,
     convert_texture_to_dxf,
     export_horizontal_hatch_dxf,
+    inspect_texture_image,
 )
+
+
+ROOT = Path(__file__).resolve().parents[1]
 
 
 class NonrepeatingTextureFallbackTests(unittest.TestCase):
@@ -112,6 +118,50 @@ class NonrepeatingTextureFallbackTests(unittest.TestCase):
                     tile_mode="unit",
                     voronoi_block_count=0,
                 )
+
+
+class TextureImageInspectionTests(unittest.TestCase):
+    def test_inspect_texture_image_reports_pixels_and_axis_dpi(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "anisotropic.png"
+            Image.new("L", (600, 300), 255).save(path, dpi=(300, 150))
+            info = inspect_texture_image(path)
+            self.assertEqual((info["pixel_width"], info["pixel_height"]), (600, 300))
+            self.assertAlmostEqual(info["dpi_x"], 300, delta=0.1)
+            self.assertAlmostEqual(info["dpi_y"], 150, delta=0.1)
+
+    def test_inspect_texture_image_uses_null_for_missing_dpi(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "no-dpi.png"
+            Image.new("L", (40, 20), 255).save(path)
+            self.assertEqual(inspect_texture_image(path), {
+                "pixel_width": 40, "pixel_height": 20,
+                "dpi_x": None, "dpi_y": None,
+            })
+
+    def test_inspect_texture_image_rejects_incomplete_dpi(self):
+        with mock.patch("texture_to_hatch_dxf.Image.open") as open_image:
+            image = open_image.return_value.__enter__.return_value
+            image.size = (12, 8)
+            image.info = {"dpi": (300, 0)}
+            info = inspect_texture_image(Path("texture.png"))
+            self.assertIsNone(info["dpi_x"])
+            self.assertIsNone(info["dpi_y"])
+
+    def test_inspect_image_cli_outputs_json_without_output_path(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "source.png"
+            Image.new("L", (80, 40), 255).save(path, dpi=(200, 100))
+            completed = subprocess.run(
+                [sys.executable, str(ROOT / "texture_to_hatch_dxf.py"),
+                 str(path), "--inspect-image"],
+                check=False, capture_output=True, text=True,
+            )
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            payload = json.loads(completed.stdout)
+            self.assertEqual((payload["pixel_width"], payload["pixel_height"]), (80, 40))
+            self.assertAlmostEqual(payload["dpi_x"], 200, delta=0.1)
+            self.assertAlmostEqual(payload["dpi_y"], 100, delta=0.1)
 
 
 def read_line_coordinates(path: Path) -> list[tuple[float, float, float, float]]:

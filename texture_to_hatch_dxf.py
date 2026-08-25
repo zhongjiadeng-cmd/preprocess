@@ -961,6 +961,30 @@ def validate_hatch_output_pair(
         )
 
 
+def _valid_image_dpi(value: object) -> tuple[float, float] | None:
+    if not isinstance(value, (tuple, list)) or len(value) < 2:
+        return None
+    try:
+        dpi_x, dpi_y = float(value[0]), float(value[1])
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(dpi_x) or not math.isfinite(dpi_y):
+        return None
+    return (dpi_x, dpi_y) if dpi_x > 0 and dpi_y > 0 else None
+
+
+def inspect_texture_image(image_path: Path) -> dict[str, int | float | None]:
+    with Image.open(image_path) as image:
+        pixel_width, pixel_height = image.size
+        dpi = _valid_image_dpi(image.info.get("dpi"))
+    return {
+        "pixel_width": int(pixel_width),
+        "pixel_height": int(pixel_height),
+        "dpi_x": dpi[0] if dpi else None,
+        "dpi_y": dpi[1] if dpi else None,
+    }
+
+
 def read_binary_texture(
     image_path: Path,
     black_threshold: int = 128,
@@ -969,10 +993,10 @@ def read_binary_texture(
     """读取纹理，返回黑区掩膜和 X/Y 方向的 mm/像素。"""
     with Image.open(image_path) as image:
         gray = np.asarray(image.convert("L"), dtype=np.uint8)
-        dpi = image.info.get("dpi")
+        dpi = _valid_image_dpi(image.info.get("dpi"))
 
-    if dpi and len(dpi) >= 2 and dpi[0] > 0 and dpi[1] > 0:
-        dpi_x, dpi_y = float(dpi[0]), float(dpi[1])
+    if dpi:
+        dpi_x, dpi_y = dpi
     elif fallback_dpi and fallback_dpi > 0:
         dpi_x = dpi_y = float(fallback_dpi)
     else:
@@ -2073,7 +2097,12 @@ def parse_args() -> argparse.Namespace:
         description="裁剪/拼接单层黑白纹理，并将黑区转换为 DXF 水平阴影线。"
     )
     parser.add_argument("input", type=Path, help="输入单层 TIFF/PNG")
-    parser.add_argument("output", type=Path, help="输出 DXF")
+    parser.add_argument("output", type=Path, nargs="?", help="输出 DXF")
+    parser.add_argument(
+        "--inspect-image",
+        action="store_true",
+        help="以 JSON 输出图片像素和 DPI 信息后退出",
+    )
     parser.add_argument(
         "--size",
         type=float,
@@ -2174,6 +2203,10 @@ def parse_args() -> argparse.Namespace:
     )
     args = parser.parse_args()
 
+    if args.inspect_image:
+        return args
+    if args.output is None:
+        parser.error("转换模式需要输出 DXF 路径")
     if args.size is not None:
         args.width = args.height = args.size
     if args.width is None or args.height is None:
@@ -2198,6 +2231,9 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
+    if args.inspect_image:
+        print(json.dumps(inspect_texture_image(args.input), ensure_ascii=False))
+        return
     convert_texture_to_dxf(
         args.input,
         args.output,
