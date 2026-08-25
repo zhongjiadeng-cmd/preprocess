@@ -43,6 +43,22 @@ public sealed class MainWindow : Window
     private readonly NumericUpDown _spacingBox = MakeNumberBox(0.02m, 0.001m, 1000);
     private readonly NumericUpDown _thresholdBox = MakeNumberBox(128, 1, 255, 0);
     private readonly TextBox _dpiBox = new() { Watermark = "可选；图片无 DPI 时填写" };
+    private readonly Image _hatchTexturePreview = new()
+    {
+        Height = 190,
+        Stretch = Stretch.Uniform,
+        HorizontalAlignment = HorizontalAlignment.Stretch
+    };
+    private readonly TextBlock _hatchTextureMetadata = new()
+    {
+        Text = "尚未选择图片",
+        Foreground = UiTheme.TextSecondaryBrush
+    };
+    private readonly TextBlock _hatchTexturePhysicalSize = new()
+    {
+        Text = "物理尺寸：等待读取图片信息",
+        Foreground = UiTheme.TextSecondaryBrush
+    };
     private readonly ComboBox _anchorBox = new()
     {
         ItemsSource = new[] { "居中裁剪", "左上角裁剪" },
@@ -74,6 +90,22 @@ public sealed class MainWindow : Window
     private readonly NumericUpDown _pipelineHatchAngleStepBox = MakeNumberBox(0, 0.1m, 180, 2, showButtons: false);
     private readonly NumericUpDown _pipelineThresholdBox = MakeNumberBox(128, 1, 255, 0);
     private readonly TextBox _pipelineDpiBox = new() { Watermark = "可选；图片无 DPI 时填写" };
+    private readonly Image _pipelineTexturePreview = new()
+    {
+        Height = 190,
+        Stretch = Stretch.Uniform,
+        HorizontalAlignment = HorizontalAlignment.Stretch
+    };
+    private readonly TextBlock _pipelineTextureMetadata = new()
+    {
+        Text = "尚未选择图片",
+        Foreground = UiTheme.TextSecondaryBrush
+    };
+    private readonly TextBlock _pipelineTexturePhysicalSize = new()
+    {
+        Text = "物理尺寸：等待读取图片信息",
+        Foreground = UiTheme.TextSecondaryBrush
+    };
     private readonly ComboBox _pipelineAnchorBox = new()
     {
         ItemsSource = new[] { "居中裁剪", "左上角裁剪" },
@@ -135,6 +167,8 @@ public sealed class MainWindow : Window
     private readonly Button _pipelineRunButton = new() { Content = "开始三步处理", HorizontalAlignment = HorizontalAlignment.Stretch };
     private readonly Button _pipelineOpenButton = new() { Content = "打开加工文件目录", IsEnabled = false };
     private readonly ProgressBar _pipelineProgress = UiTheme.CreateProgress();
+    private TextureImageInfo? _hatchTextureInfo;
+    private TextureImageInfo? _pipelineTextureInfo;
     private string? _lastMachineOutputPath;
     private CancellationTokenSource? _cancellation;
 
@@ -161,6 +195,27 @@ public sealed class MainWindow : Window
                     _pipelineDxfPreviewStatus,
                     item.Path);
         };
+        _dpiBox.TextChanged += (_, _) =>
+        {
+            if (_hatchTextureInfo is { HasEmbeddedDpi: false } info)
+                UpdateAutomaticTextureSize(
+                    info,
+                    _dpiBox,
+                    _widthBox,
+                    _heightBox,
+                    _hatchTexturePhysicalSize);
+        };
+        _pipelineDpiBox.TextChanged += (_, _) =>
+        {
+            if (_pipelineTextureInfo is { HasEmbeddedDpi: false } info)
+                UpdateAutomaticTextureSize(
+                    info,
+                    _pipelineDpiBox,
+                    _pipelineWidthBox,
+                    _pipelineHeightBox,
+                    _pipelineTexturePhysicalSize);
+        };
+        Closed += (_, _) => DisposeTexturePreviews();
 
         var inputButton = new Button { Content = "选择图片…" };
         var outputButton = new Button { Content = "选择目录…" };
@@ -250,6 +305,10 @@ public sealed class MainWindow : Window
                     "输入输出",
                     MakeField("输入纹理图", _hatchInputBox, hatchInputButton),
                     MakeField("输出 DXF", _hatchOutputBox, hatchOutputButton)),
+                MakeTexturePreviewCard(
+                    _hatchTexturePreview,
+                    _hatchTextureMetadata,
+                    _hatchTexturePhysicalSize),
                 MakeInspectorSection(
                     "Hatch 参数",
                     new Grid
@@ -360,6 +419,10 @@ public sealed class MainWindow : Window
                             MakeLabeledControl("像素方向", _pipelineBelowIsWhite, 1)
                         }
                     }),
+                MakeTexturePreviewCard(
+                    _pipelineTexturePreview,
+                    _pipelineTextureMetadata,
+                    _pipelineTexturePhysicalSize),
                 MakeInspectorSection(
                     "Hatch 与 DXF",
                     MakeField("DXF 输出目录", _pipelineDxfOutputBox, pipelineDxfOutputButton),
@@ -691,6 +754,54 @@ public sealed class MainWindow : Window
         return UiTheme.CardExpander(title, content);
     }
 
+    private static Control MakeTexturePreviewCard(
+        Image preview,
+        TextBlock metadata,
+        TextBlock physicalSize) => new Border
+    {
+        Padding = new Thickness(14),
+        Background = UiTheme.CardBrush,
+        BorderBrush = UiTheme.BorderSubtleBrush,
+        BorderThickness = new Thickness(1),
+        CornerRadius = UiTheme.CardRadius,
+        Child = new StackPanel
+        {
+            Spacing = 12,
+            Children =
+            {
+                new StackPanel
+                {
+                    Orientation = Orientation.Horizontal,
+                    Spacing = 8,
+                    Children =
+                    {
+                        UiTheme.AccentBar(),
+                        new TextBlock
+                        {
+                            Text = "纹理预览",
+                            FontSize = 13,
+                            FontWeight = FontWeight.SemiBold,
+                            Foreground = UiTheme.TextPrimaryBrush,
+                            VerticalAlignment = VerticalAlignment.Center
+                        }
+                    }
+                },
+                new Border
+                {
+                    Padding = new Thickness(8),
+                    Background = UiTheme.SunkenBrush,
+                    BorderBrush = UiTheme.BorderSubtleBrush,
+                    BorderThickness = new Thickness(1),
+                    CornerRadius = UiTheme.ControlRadius,
+                    ClipToBounds = true,
+                    Child = preview
+                },
+                metadata,
+                physicalSize
+            }
+        }
+    };
+
     private static Control MakeDxfPreviewPanel(
         DxfPreviewControl preview,
         TextBlock status,
@@ -969,6 +1080,16 @@ public sealed class MainWindow : Window
             _pipelineLayerOutputBox.Text = Path.Combine(parent, $"{name}_layers");
         if (string.IsNullOrWhiteSpace(_pipelineDxfOutputBox.Text))
             _pipelineDxfOutputBox.Text = Path.Combine(parent, $"{name}_dxf");
+
+        await LoadTexturePreviewAsync(
+            path,
+            _pipelineTexturePreview,
+            _pipelineTextureMetadata,
+            _pipelineTexturePhysicalSize,
+            _pipelineDpiBox,
+            _pipelineWidthBox,
+            _pipelineHeightBox,
+            info => _pipelineTextureInfo = info);
     }
 
     private async Task PickPipelineFolderAsync(TextBox target, string title)
@@ -1441,6 +1562,125 @@ public sealed class MainWindow : Window
         CreateNoWindow = true
     };
 
+    private static async Task<TextureImageInfo> InspectTextureImageAsync(string path)
+    {
+        var python = await FindPythonAsync();
+        if (python is null)
+            throw new InvalidOperationException("找不到带有 numpy 和 Pillow 的 Python 3。");
+
+        var info = CreatePythonProcess(python);
+        info.ArgumentList.Add(Path.Combine(AppContext.BaseDirectory, "texture_to_hatch_dxf.py"));
+        info.ArgumentList.Add(path);
+        info.ArgumentList.Add("--inspect-image");
+
+        using var process = new Process { StartInfo = info };
+        process.Start();
+        var stdoutTask = process.StandardOutput.ReadToEndAsync();
+        var stderrTask = process.StandardError.ReadToEndAsync();
+        await Task.WhenAll(process.WaitForExitAsync(), stdoutTask, stderrTask);
+
+        var stderr = await stderrTask;
+        if (process.ExitCode != 0)
+        {
+            throw new InvalidOperationException(
+                string.IsNullOrWhiteSpace(stderr)
+                    ? $"读取图片信息失败，退出代码：{process.ExitCode}"
+                    : stderr.Trim());
+        }
+
+        return TextureImageInfo.ParseJson(await stdoutTask);
+    }
+
+    private static async Task LoadTexturePreviewAsync(
+        string path,
+        Image preview,
+        TextBlock metadata,
+        TextBlock physicalSize,
+        TextBox dpiBox,
+        NumericUpDown widthBox,
+        NumericUpDown heightBox,
+        Action<TextureImageInfo?> setInfo)
+    {
+        var oldBitmap = preview.Source as Bitmap;
+        preview.Source = null;
+        oldBitmap?.Dispose();
+        setInfo(null);
+
+        metadata.Text = "正在读取图片信息…";
+        metadata.ClearValue(TextBlock.ForegroundProperty);
+        physicalSize.Text = string.Empty;
+
+        Bitmap? newBitmap = null;
+        try
+        {
+            using (var stream = File.OpenRead(path))
+                newBitmap = Bitmap.DecodeToHeight(stream, 380);
+
+            var info = await InspectTextureImageAsync(path);
+            preview.Source = newBitmap;
+            newBitmap = null;
+            setInfo(info);
+            metadata.Text = info.FormatMetadata();
+            UpdateAutomaticTextureSize(info, dpiBox, widthBox, heightBox, physicalSize);
+        }
+        catch (Exception ex)
+        {
+            newBitmap?.Dispose();
+            metadata.Text = $"无法读取图片：{ex.Message}";
+            metadata.Foreground = Brushes.OrangeRed;
+            physicalSize.Text = string.Empty;
+        }
+    }
+
+    private static void UpdateAutomaticTextureSize(
+        TextureImageInfo info,
+        TextBox dpiBox,
+        NumericUpDown widthBox,
+        NumericUpDown heightBox,
+        TextBlock physicalSize)
+    {
+        double? fallbackDpi = null;
+        if (!info.HasEmbeddedDpi &&
+            (!TryOptionalPositiveNumber(dpiBox.Text, out fallbackDpi) ||
+             !fallbackDpi.HasValue ||
+             !double.IsFinite(fallbackDpi.Value)))
+        {
+            physicalSize.Text = "物理尺寸：等待填写有效 DPI";
+            return;
+        }
+
+        if (!info.TryCalculateMillimeters(
+                fallbackDpi,
+                widthBox.Minimum,
+                widthBox.Maximum,
+                out var width,
+                out var height,
+                out var error))
+        {
+            physicalSize.Text = $"物理尺寸：{error}";
+            return;
+        }
+
+        widthBox.Value = width;
+        heightBox.Value = height;
+        physicalSize.Text = info.FormatPhysicalSize(width, height);
+    }
+
+    private void DisposeTexturePreviews()
+    {
+        DisposeTexturePreview(_hatchTexturePreview);
+        DisposeTexturePreview(_pipelineTexturePreview);
+        _hatchTextureInfo = null;
+        _pipelineTextureInfo = null;
+    }
+
+    private static void DisposeTexturePreview(Image preview)
+    {
+        var bitmap = preview.Source as Bitmap;
+        preview.Source = null;
+        bitmap?.Dispose();
+    }
+
     private static async Task<int> RunProcessAsync(
         ProcessStartInfo info,
         Action<string> appendLog,
@@ -1517,6 +1757,16 @@ public sealed class MainWindow : Window
             _hatchOutputBox.Text = Path.Combine(
                 Path.GetDirectoryName(path)!,
                 $"{Path.GetFileNameWithoutExtension(path)}_hatch.dxf");
+
+        await LoadTexturePreviewAsync(
+            path,
+            _hatchTexturePreview,
+            _hatchTextureMetadata,
+            _hatchTexturePhysicalSize,
+            _dpiBox,
+            _widthBox,
+            _heightBox,
+            info => _hatchTextureInfo = info);
     }
 
     private async Task PickHatchOutputAsync()

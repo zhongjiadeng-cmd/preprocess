@@ -7,6 +7,22 @@ namespace GrayscaleLayersMac.Tests;
 public sealed class TextureImageInfoTests
 {
     [TestMethod]
+    public void FormatSummary_ShowsPixelsAxisDpiAndPhysicalSize()
+    {
+        var info = new TextureImageInfo(600, 300, 300, 150);
+        Assert.AreEqual("像素：600 × 300 px\nDPI：300 × 150", info.FormatMetadata());
+        Assert.AreEqual("物理尺寸：50.8 × 50.8 mm",
+            info.FormatPhysicalSize(50.8m, 50.8m));
+    }
+
+    [TestMethod]
+    public void FormatSummary_ExplainsMissingDpi()
+    {
+        var info = new TextureImageInfo(40, 20, null, null);
+        Assert.AreEqual("像素：40 × 20 px\nDPI：未提供", info.FormatMetadata());
+    }
+
+    [TestMethod]
     public void ParseJsonAndCalculate_UsesAxisDpi()
     {
         var info = TextureImageInfo.ParseJson(

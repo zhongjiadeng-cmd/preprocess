@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
@@ -10,6 +11,17 @@ public sealed record TextureImageInfo(
     [property: JsonPropertyName("dpi_y")] double? DpiY)
 {
     public bool HasEmbeddedDpi => DpiX.HasValue && DpiY.HasValue;
+
+    public string FormatMetadata()
+    {
+        var dpi = HasEmbeddedDpi
+            ? $"{DpiX!.Value.ToString("0.###", CultureInfo.InvariantCulture)} × {DpiY!.Value.ToString("0.###", CultureInfo.InvariantCulture)}"
+            : "未提供";
+        return $"像素：{PixelWidth} × {PixelHeight} px\nDPI：{dpi}";
+    }
+
+    public string FormatPhysicalSize(decimal width, decimal height) =>
+        $"物理尺寸：{width.ToString("0.###", CultureInfo.InvariantCulture)} × {height.ToString("0.###", CultureInfo.InvariantCulture)} mm";
 
     public static TextureImageInfo ParseJson(string json)
     {
