@@ -167,6 +167,8 @@ public sealed class MainWindow : Window
     private readonly Button _pipelineRunButton = new() { Content = "开始三步处理", HorizontalAlignment = HorizontalAlignment.Stretch };
     private readonly Button _pipelineOpenButton = new() { Content = "打开加工文件目录", IsEnabled = false };
     private readonly ProgressBar _pipelineProgress = UiTheme.CreateProgress();
+    private readonly TexturePreviewRequestGate _hatchPreviewRequests = new();
+    private readonly TexturePreviewRequestGate _pipelinePreviewRequests = new();
     private TextureImageInfo? _hatchTextureInfo;
     private TextureImageInfo? _pipelineTextureInfo;
     private string? _lastMachineOutputPath;
@@ -1089,6 +1091,7 @@ public sealed class MainWindow : Window
             _pipelineDpiBox,
             _pipelineWidthBox,
             _pipelineHeightBox,
+            _pipelinePreviewRequests,
             info => _pipelineTextureInfo = info);
     }
 
@@ -1599,36 +1602,49 @@ public sealed class MainWindow : Window
         TextBox dpiBox,
         NumericUpDown widthBox,
         NumericUpDown heightBox,
+        TexturePreviewRequestGate requests,
         Action<TextureImageInfo?> setInfo)
     {
-        var oldBitmap = preview.Source as Bitmap;
-        preview.Source = null;
-        oldBitmap?.Dispose();
-        setInfo(null);
+        var requestId = requests.BeginRequest();
+        if (!requests.RunIfCurrent(requestId, () =>
+            {
+                ReplaceTexturePreview(preview, null);
+                setInfo(null);
+                metadata.Text = "正在读取图片信息…";
+                metadata.ClearValue(TextBlock.ForegroundProperty);
+                physicalSize.Text = string.Empty;
+            }))
+            return;
 
-        metadata.Text = "正在读取图片信息…";
-        metadata.ClearValue(TextBlock.ForegroundProperty);
-        physicalSize.Text = string.Empty;
-
-        Bitmap? newBitmap = null;
+        Bitmap? candidateBitmap = null;
         try
         {
             using (var stream = File.OpenRead(path))
-                newBitmap = Bitmap.DecodeToHeight(stream, 380);
+                candidateBitmap = Bitmap.DecodeToHeight(stream, 380);
 
             var info = await InspectTextureImageAsync(path);
-            preview.Source = newBitmap;
-            newBitmap = null;
-            setInfo(info);
-            metadata.Text = info.FormatMetadata();
-            UpdateAutomaticTextureSize(info, dpiBox, widthBox, heightBox, physicalSize);
+            if (!requests.RunIfCurrent(requestId, () =>
+                {
+                    ReplaceTexturePreview(preview, candidateBitmap!);
+                    candidateBitmap = null;
+                    setInfo(info);
+                    metadata.Text = info.FormatMetadata();
+                    UpdateAutomaticTextureSize(info, dpiBox, widthBox, heightBox, physicalSize);
+                }))
+                return;
         }
         catch (Exception ex)
         {
-            newBitmap?.Dispose();
-            metadata.Text = $"无法读取图片：{ex.Message}";
-            metadata.Foreground = Brushes.OrangeRed;
-            physicalSize.Text = string.Empty;
+            requests.RunIfCurrent(requestId, () =>
+            {
+                metadata.Text = $"无法读取图片：{ex.Message}";
+                metadata.Foreground = Brushes.OrangeRed;
+                physicalSize.Text = string.Empty;
+            });
+        }
+        finally
+        {
+            candidateBitmap?.Dispose();
         }
     }
 
@@ -1668,6 +1684,8 @@ public sealed class MainWindow : Window
 
     private void DisposeTexturePreviews()
     {
+        _hatchPreviewRequests.Close();
+        _pipelinePreviewRequests.Close();
         DisposeTexturePreview(_hatchTexturePreview);
         DisposeTexturePreview(_pipelineTexturePreview);
         _hatchTextureInfo = null;
@@ -1676,9 +1694,15 @@ public sealed class MainWindow : Window
 
     private static void DisposeTexturePreview(Image preview)
     {
-        var bitmap = preview.Source as Bitmap;
-        preview.Source = null;
-        bitmap?.Dispose();
+        ReplaceTexturePreview(preview, null);
+    }
+
+    private static void ReplaceTexturePreview(Image preview, Bitmap? bitmap)
+    {
+        var previous = preview.Source as Bitmap;
+        preview.Source = bitmap;
+        if (!ReferenceEquals(previous, bitmap))
+            previous?.Dispose();
     }
 
     private static async Task<int> RunProcessAsync(
@@ -1766,6 +1790,7 @@ public sealed class MainWindow : Window
             _dpiBox,
             _widthBox,
             _heightBox,
+            _hatchPreviewRequests,
             info => _hatchTextureInfo = info);
     }
 
