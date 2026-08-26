@@ -138,7 +138,7 @@ public sealed class TexturePreviewControllerTests
     }
 
     [TestMethod]
-    public void FailedImport_PreservesTargetsAndUsesBoundedStableSummary()
+    public void FailedImport_PreservesTargetsAndUsesActionableBoundedSummary()
     {
         var targetWidth = 73m;
         var targetHeight = 41m;
@@ -153,12 +153,13 @@ public sealed class TexturePreviewControllerTests
 
         Assert.IsTrue(controller.TryFail(
             request,
-            new InvalidOperationException("Traceback (most recent call last): raw stderr")));
+            new InvalidOperationException("图片预览数据不是有效 PNG。\nTraceback (most recent call last): raw stderr")));
 
         Assert.AreEqual(73m, targetWidth);
         Assert.AreEqual(41m, targetHeight);
         Assert.AreEqual(TexturePreviewPhase.Failed, controller.State.Phase);
-        Assert.IsTrue(controller.State.MetadataText.Length <= 80);
+        Assert.AreEqual("无法读取图片：图片预览数据不是有效 PNG。", controller.State.MetadataText);
+        Assert.IsTrue(controller.State.MetadataText.Length <= 120);
         Assert.IsFalse(controller.State.MetadataText.Contains("Traceback", StringComparison.Ordinal));
         Assert.AreEqual(string.Empty, controller.State.PhysicalSizeText);
     }
@@ -242,17 +243,6 @@ public sealed class TexturePreviewControllerTests
 
         Assert.IsTrue(second.IsDisposed);
         Assert.AreEqual(1, second.DisposeCount);
-    }
-
-    [TestMethod]
-    public void DecodeConstraint_BoundsTheLongAxisForExtremeAspectRatios()
-    {
-        Assert.AreEqual(
-            new TexturePreviewDecodeConstraint(TexturePreviewDecodeAxis.Width, 380),
-            TexturePreviewDecodePolicy.Select(new TextureImageInfo(100000, 10, null, null), 380));
-        Assert.AreEqual(
-            new TexturePreviewDecodeConstraint(TexturePreviewDecodeAxis.Height, 380),
-            TexturePreviewDecodePolicy.Select(new TextureImageInfo(10, 100000, null, null), 380));
     }
 
     [TestMethod]

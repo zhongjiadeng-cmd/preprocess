@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Globalization;
 
 namespace GrayscaleLayersMac;
@@ -15,12 +16,6 @@ public enum TexturePreviewAutoSizeTrigger
 {
     ImageImport,
     FallbackDpiEdit
-}
-
-public enum TexturePreviewDecodeAxis
-{
-    Width,
-    Height
 }
 
 public sealed record TexturePreviewState(
@@ -47,10 +42,6 @@ public sealed record TexturePreviewState(
 public readonly record struct TexturePreviewOperation(
     long RequestId,
     CancellationToken CancellationToken);
-
-public readonly record struct TexturePreviewDecodeConstraint(
-    TexturePreviewDecodeAxis Axis,
-    int PixelLimit);
 
 public readonly record struct TexturePreviewSizeUpdate(
     bool ShouldWriteTargets,
@@ -111,31 +102,10 @@ public static class TextureFallbackDpi
     }
 }
 
-public static class TexturePreviewDecodePolicy
-{
-    public static TexturePreviewDecodeConstraint Select(
-        TextureImageInfo info,
-        int pixelLimit)
-    {
-        ArgumentNullException.ThrowIfNull(info);
-        if (info.PixelWidth <= 0 || info.PixelHeight <= 0)
-            throw new ArgumentException("像素尺寸必须为正数。", nameof(info));
-        if (pixelLimit <= 0)
-            throw new ArgumentOutOfRangeException(nameof(pixelLimit));
-
-        return new TexturePreviewDecodeConstraint(
-            info.PixelWidth >= info.PixelHeight
-                ? TexturePreviewDecodeAxis.Width
-                : TexturePreviewDecodeAxis.Height,
-            pixelLimit);
-    }
-}
-
 public sealed class TexturePreviewController : IDisposable
 {
     private const string WaitingForDpi = "物理尺寸：等待填写有效 DPI";
-    private const string StableFailureSummary =
-        "无法读取图片。请确认文件未损坏且格式受支持，然后重试。";
+    private const int MaximumFailureDetailLength = 100;
 
     private readonly object _sync = new();
     private readonly Action<IDisposable?> _displayPreview;
@@ -285,6 +255,7 @@ public sealed class TexturePreviewController : IDisposable
     public bool TryFail(TexturePreviewOperation operation, Exception error)
     {
         ArgumentNullException.ThrowIfNull(error);
+        var summary = FormatFailureSummary(error);
         CancellationTokenSource? completedCancellation;
 
         lock (_sync)
@@ -294,12 +265,13 @@ public sealed class TexturePreviewController : IDisposable
 
             _state = new TexturePreviewState(
                 TexturePreviewPhase.Failed,
-                StableFailureSummary,
+                summary,
                 string.Empty);
             completedCancellation = CompleteActiveOperation();
         }
 
         completedCancellation?.Dispose();
+        Trace.TraceError($"Texture preview import failed: {error}");
         return true;
     }
 
@@ -362,6 +334,22 @@ public sealed class TexturePreviewController : IDisposable
         {
             cancellation.Dispose();
         }
+    }
+
+    private static string FormatFailureSummary(Exception error)
+    {
+        var message = error.Message;
+        var firstLineLength = message.IndexOfAny(['\r', '\n']);
+        if (firstLineLength >= 0)
+            message = message[..firstLineLength];
+
+        var safe = new string(message.Where(static character => !char.IsControl(character)).ToArray()).Trim();
+        if (safe.Length == 0)
+            safe = "未知错误";
+        if (safe.Length > MaximumFailureDetailLength)
+            safe = safe[..(MaximumFailureDetailLength - 1)] + "…";
+
+        return $"无法读取图片：{safe}";
     }
 
     private static TexturePreviewSizeUpdate EvaluateAutoSize(

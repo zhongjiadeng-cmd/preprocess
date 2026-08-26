@@ -26,6 +26,13 @@ public sealed class MainWindow : Window
         TextBlock Metadata,
         TextBlock PhysicalSize);
 
+    private sealed record SharedPreviewView(
+        ToggleButton TextureTab,
+        ToggleButton DxfTab,
+        Control TextureContent,
+        Control DxfContent,
+        SharedPreviewSelection Selection);
+
     private readonly TextBox _inputBox = new() { Watermark = "请选择一张灰度纹理图", IsReadOnly = true };
     private readonly TextBox _outputBox = new() { Watermark = "请选择结果保存目录", IsReadOnly = true };
     private readonly NumericUpDown _layersBox = new()
@@ -50,7 +57,6 @@ public sealed class MainWindow : Window
     private readonly TextBox _dpiBox = new() { Watermark = "可选；图片无 DPI 时填写" };
     private readonly Image _hatchTexturePreview = new()
     {
-        Height = 190,
         Stretch = Stretch.Uniform,
         HorizontalAlignment = HorizontalAlignment.Stretch
     };
@@ -97,7 +103,6 @@ public sealed class MainWindow : Window
     private readonly TextBox _pipelineDpiBox = new() { Watermark = "可选；图片无 DPI 时填写" };
     private readonly Image _pipelineTexturePreview = new()
     {
-        Height = 190,
         Stretch = Stretch.Uniform,
         HorizontalAlignment = HorizontalAlignment.Stretch
     };
@@ -176,6 +181,8 @@ public sealed class MainWindow : Window
     private readonly TexturePreviewView _pipelineTextureView;
     private readonly TexturePreviewController _hatchPreviewController;
     private readonly TexturePreviewController _pipelinePreviewController;
+    private readonly SharedPreviewView _hatchSharedPreview;
+    private readonly SharedPreviewView _pipelineSharedPreview;
     private string? _lastMachineOutputPath;
     private CancellationTokenSource? _cancellation;
 
@@ -214,10 +221,16 @@ public sealed class MainWindow : Window
         _pipelineDxfSelector.SelectionChanged += (_, _) =>
         {
             if (_pipelineDxfSelector.SelectedItem is DxfPreviewItem item)
-                LoadDxfPreview(
+            {
+                if (LoadDxfPreview(
                     _pipelineDxfPreview,
                     _pipelineDxfPreviewStatus,
-                    item.Path);
+                    item.Path))
+                {
+                    _pipelineSharedPreview!.Selection.CompleteDxfLoad();
+                    SelectSharedPreview(_pipelineSharedPreview, SharedPreviewKind.Dxf);
+                }
+            }
         };
         _dpiBox.TextChanged += (_, _) =>
         {
@@ -312,7 +325,8 @@ public sealed class MainWindow : Window
             await ImportDxfPreviewAsync(
                 _hatchDxfPreview,
                 _hatchDxfPreviewStatus,
-                addToPipelineSelector: false);
+                addToPipelineSelector: false,
+                _hatchSharedPreview!);
 
         var hatchInspector = new StackPanel
         {
@@ -325,7 +339,6 @@ public sealed class MainWindow : Window
                     "输入输出",
                     MakeField("输入纹理图", _hatchInputBox, hatchInputButton),
                     MakeField("输出 DXF", _hatchOutputBox, hatchOutputButton)),
-                MakeTexturePreviewCard(_hatchTextureView),
                 MakeInspectorSection(
                     "Hatch 参数",
                     new Grid
@@ -377,12 +390,16 @@ public sealed class MainWindow : Window
                 }
             }
         };
+        var hatchPreviewPanel = MakeSharedPreviewPanel(
+            _hatchTextureView,
+            _hatchDxfPreview,
+            _hatchDxfPreviewStatus,
+            hatchImportDxfButton,
+            fileSelector: null,
+            out _hatchSharedPreview);
         var hatchContent = MakeWorkspace(
             hatchInspector,
-            MakeDxfPreviewPanel(
-                _hatchDxfPreview,
-                _hatchDxfPreviewStatus,
-                hatchImportDxfButton),
+            hatchPreviewPanel,
             _hatchLogBox,
             "运行日志");
 
@@ -411,7 +428,8 @@ public sealed class MainWindow : Window
             await ImportDxfPreviewAsync(
                 _pipelineDxfPreview,
                 _pipelineDxfPreviewStatus,
-                addToPipelineSelector: true);
+                addToPipelineSelector: true,
+                _pipelineSharedPreview!);
         _pipelineBlocksBox.ValueChanged += (_, _) => UpdateBlockCenterMotionAvailability();
         UpdateBlockCenterMotionAvailability();
 
@@ -436,7 +454,6 @@ public sealed class MainWindow : Window
                             MakeLabeledControl("像素方向", _pipelineBelowIsWhite, 1)
                         }
                     }),
-                MakeTexturePreviewCard(_pipelineTextureView),
                 MakeInspectorSection(
                     "Hatch 与 DXF",
                     MakeField("DXF 输出目录", _pipelineDxfOutputBox, pipelineDxfOutputButton),
@@ -582,13 +599,16 @@ public sealed class MainWindow : Window
                 }
             }
         };
+        var pipelinePreviewPanel = MakeSharedPreviewPanel(
+            _pipelineTextureView,
+            _pipelineDxfPreview,
+            _pipelineDxfPreviewStatus,
+            pipelineImportDxfButton,
+            _pipelineDxfSelector,
+            out _pipelineSharedPreview);
         var pipelineContent = MakeWorkspace(
             pipelineInspector,
-            MakeDxfPreviewPanel(
-                _pipelineDxfPreview,
-                _pipelineDxfPreviewStatus,
-                pipelineImportDxfButton,
-                _pipelineDxfSelector),
+            pipelinePreviewPanel,
             _pipelineLogBox,
             "流程日志");
 
@@ -768,52 +788,92 @@ public sealed class MainWindow : Window
         return UiTheme.CardExpander(title, content);
     }
 
-    private static Control MakeTexturePreviewCard(TexturePreviewView view) => new Border
+    private static Control MakeSharedPreviewPanel(
+        TexturePreviewView texture,
+        DxfPreviewControl dxfPreview,
+        TextBlock dxfStatus,
+        Button importButton,
+        ComboBox? fileSelector,
+        out SharedPreviewView view)
     {
-        Padding = new Thickness(14),
-        Background = UiTheme.CardBrush,
-        BorderBrush = UiTheme.BorderSubtleBrush,
-        BorderThickness = new Thickness(1),
-        CornerRadius = UiTheme.CardRadius,
-        Child = new StackPanel
+        var textureContent = MakeTexturePreviewContent(texture);
+        var dxfContent = MakeDxfPreviewContent(
+            dxfPreview,
+            dxfStatus,
+            importButton,
+            fileSelector);
+        var textureTab = new ToggleButton { Content = "纹理" };
+        var dxfTab = new ToggleButton { Content = "DXF" };
+        var sharedView = new SharedPreviewView(
+            textureTab,
+            dxfTab,
+            textureContent,
+            dxfContent,
+            new SharedPreviewSelection());
+        textureTab.Click += (_, _) => SelectSharedPreview(sharedView, SharedPreviewKind.Texture);
+        dxfTab.Click += (_, _) => SelectSharedPreview(sharedView, SharedPreviewKind.Dxf);
+        SelectSharedPreview(sharedView, SharedPreviewKind.Texture);
+        view = sharedView;
+
+        return new Grid
         {
-            Spacing = 12,
+            Margin = new Thickness(0, 12, 12, 12),
+            RowDefinitions = new RowDefinitions("Auto,*"),
+            RowSpacing = 10,
             Children =
             {
-                new StackPanel
+                AtRow(new Grid
                 {
-                    Orientation = Orientation.Horizontal,
-                    Spacing = 8,
+                    ColumnDefinitions = new ColumnDefinitions("*,Auto,Auto"),
+                    ColumnSpacing = 8,
                     Children =
                     {
-                        UiTheme.AccentBar(),
-                        new TextBlock
+                        Place(new StackPanel
                         {
-                            Text = "纹理预览",
-                            FontSize = 13,
-                            FontWeight = FontWeight.SemiBold,
-                            Foreground = UiTheme.TextPrimaryBrush,
-                            VerticalAlignment = VerticalAlignment.Center
-                        }
+                            Orientation = Orientation.Horizontal,
+                            Spacing = 8,
+                            VerticalAlignment = VerticalAlignment.Center,
+                            Children =
+                            {
+                                UiTheme.AccentBar(),
+                                new TextBlock
+                                {
+                                    Text = "实际预览",
+                                    FontSize = 16,
+                                    FontWeight = FontWeight.SemiBold,
+                                    Foreground = UiTheme.TextPrimaryBrush,
+                                    VerticalAlignment = VerticalAlignment.Center
+                                }
+                            }
+                        }, 0),
+                        Place(textureTab, 1),
+                        Place(dxfTab, 2)
                     }
-                },
-                new Border
+                }, 0),
+                AtRow(new Grid
                 {
-                    Padding = new Thickness(8),
-                    Background = UiTheme.SunkenBrush,
-                    BorderBrush = UiTheme.BorderSubtleBrush,
-                    BorderThickness = new Thickness(1),
-                    CornerRadius = UiTheme.ControlRadius,
-                    ClipToBounds = true,
-                    Child = view.Preview
-                },
-                view.Metadata,
-                view.PhysicalSize
+                    Children = { textureContent, dxfContent }
+                }, 1)
             }
+        };
+    }
+
+    private static Control MakeTexturePreviewContent(TexturePreviewView view) => new Grid
+    {
+        RowDefinitions = new RowDefinitions("*,Auto"),
+        RowSpacing = 10,
+        Children =
+        {
+            AtRow(UiTheme.CanvasCard(view.Preview), 0),
+            AtRow(new StackPanel
+            {
+                Spacing = 4,
+                Children = { view.Metadata, view.PhysicalSize }
+            }, 1)
         }
     };
 
-    private static Control MakeDxfPreviewPanel(
+    private static Control MakeDxfPreviewContent(
         DxfPreviewControl preview,
         TextBlock status,
         Button importButton,
@@ -836,39 +896,20 @@ public sealed class MainWindow : Window
         status.Text = preview.Summary;
         return new Grid
         {
-            Margin = new Thickness(0, 12, 12, 12),
             RowDefinitions = new RowDefinitions("Auto,Auto,*,Auto"),
             RowSpacing = 10,
             Children =
             {
                 AtRow(new Grid
                 {
-                    ColumnDefinitions = new ColumnDefinitions("*,Auto,Auto,Auto,Auto"),
+                    ColumnDefinitions = new ColumnDefinitions("*,Auto,Auto,Auto"),
                     ColumnSpacing = 10,
                     Children =
                     {
-                        Place(new StackPanel
-                        {
-                            Orientation = Orientation.Horizontal,
-                            Spacing = 8,
-                            VerticalAlignment = VerticalAlignment.Center,
-                            Children =
-                            {
-                                UiTheme.AccentBar(),
-                                new TextBlock
-                                {
-                                    Text = "DXF 预览",
-                                    FontSize = 16,
-                                    FontWeight = FontWeight.SemiBold,
-                                    Foreground = UiTheme.TextPrimaryBrush,
-                                    VerticalAlignment = VerticalAlignment.Center
-                                }
-                            }
-                        }, 0),
-                        Place(importButton, 1),
-                        Place(topButton, 2),
-                        Place(isometricButton, 3),
-                        Place(fitButton, 4)
+                        Place(importButton, 0),
+                        Place(topButton, 1),
+                        Place(isometricButton, 2),
+                        Place(fitButton, 3)
                     }
                 }, 0),
                 AtRow(new Grid
@@ -905,6 +946,15 @@ public sealed class MainWindow : Window
                 AtRow(status, 3)
             }
         };
+    }
+
+    private static void SelectSharedPreview(SharedPreviewView view, SharedPreviewKind kind)
+    {
+        view.Selection.Select(kind);
+        view.TextureContent.IsVisible = kind == SharedPreviewKind.Texture;
+        view.DxfContent.IsVisible = kind == SharedPreviewKind.Dxf;
+        view.TextureTab.IsChecked = kind == SharedPreviewKind.Texture;
+        view.DxfTab.IsChecked = kind == SharedPreviewKind.Dxf;
     }
 
     private static Control MakeWorkspace(
@@ -1098,7 +1148,8 @@ public sealed class MainWindow : Window
             _pipelineDpiBox,
             _pipelineWidthBox,
             _pipelineHeightBox,
-            _pipelinePreviewController);
+            _pipelinePreviewController,
+            _pipelineSharedPreview);
     }
 
     private async Task PickPipelineFolderAsync(TextBox target, string title)
@@ -1263,6 +1314,7 @@ public sealed class MainWindow : Window
         _pipelineLogBox.Text = "";
         _pipelineDxfPreview.Clear();
         _pipelineDxfPreviewStatus.Text = _pipelineDxfPreview.Summary;
+        _pipelineSharedPreview.Selection.ClearDxf();
         _pipelineDxfFiles.Clear();
 
         try
@@ -1571,7 +1623,7 @@ public sealed class MainWindow : Window
         CreateNoWindow = true
     };
 
-    private static async Task<TextureImageInfo> InspectTextureImageAsync(
+    private static async Task<TextureImageInspection> InspectTextureImageAsync(
         string path,
         CancellationToken cancellationToken)
     {
@@ -1584,6 +1636,7 @@ public sealed class MainWindow : Window
         info.ArgumentList.Add(Path.Combine(AppContext.BaseDirectory, "texture_to_hatch_dxf.py"));
         info.ArgumentList.Add(path);
         info.ArgumentList.Add("--inspect-image");
+        info.ArgumentList.Add("--include-preview");
 
         using var process = new Process { StartInfo = info };
         process.Start();
@@ -1601,7 +1654,7 @@ public sealed class MainWindow : Window
                     : stderr.Trim());
         }
 
-        return TextureImageInfo.ParseJson(await stdoutTask);
+        return TextureImageInspection.ParseJson(await stdoutTask);
     }
 
     private static async Task WaitForExitOrKillAsync(
@@ -1649,30 +1702,31 @@ public sealed class MainWindow : Window
         TextBox dpiBox,
         NumericUpDown widthBox,
         NumericUpDown heightBox,
-        TexturePreviewController controller)
+        TexturePreviewController controller,
+        SharedPreviewView sharedPreview)
     {
         var operation = controller.BeginImport();
+        sharedPreview.Selection.BeginTextureImport();
+        SelectSharedPreview(sharedPreview, SharedPreviewKind.Texture);
         RenderTexturePreview(view, controller.State);
 
         Bitmap? candidateBitmap = null;
         try
         {
-            var info = await InspectTextureImageAsync(path, operation.CancellationToken);
+            var inspection = await InspectTextureImageAsync(path, operation.CancellationToken);
             operation.CancellationToken.ThrowIfCancellationRequested();
-            var constraint = TexturePreviewDecodePolicy.Select(info, 380);
-            using (var stream = File.OpenRead(path))
-            {
-                candidateBitmap = constraint.Axis == TexturePreviewDecodeAxis.Width
-                    ? Bitmap.DecodeToWidth(stream, constraint.PixelLimit)
-                    : Bitmap.DecodeToHeight(stream, constraint.PixelLimit);
-            }
+            using var stream = new MemoryStream(inspection.PreviewPng, writable: false);
+            candidateBitmap = new Bitmap(stream);
+            if (candidateBitmap.PixelSize.Width != inspection.Info.PixelWidth ||
+                candidateBitmap.PixelSize.Height != inspection.Info.PixelHeight)
+                throw new InvalidOperationException("图片预览像素尺寸与源图片不一致。");
 
             var completedPreview = candidateBitmap;
             candidateBitmap = null;
             if (!controller.TryCompleteImport(
                     operation,
                     completedPreview,
-                    info,
+                    inspection.Info,
                     dpiBox.Text,
                     widthBox.Minimum,
                     widthBox.Maximum,
@@ -1681,6 +1735,8 @@ public sealed class MainWindow : Window
                 return;
             }
 
+            sharedPreview.Selection.CompleteTextureImport();
+            SelectSharedPreview(sharedPreview, SharedPreviewKind.Texture);
             RenderTexturePreview(view, controller.State);
         }
         catch (OperationCanceledException) when (operation.CancellationToken.IsCancellationRequested)
@@ -1689,9 +1745,12 @@ public sealed class MainWindow : Window
         }
         catch (Exception ex)
         {
-            Trace.TraceError($"Texture preview import failed for '{path}': {ex}");
             if (controller.TryFail(operation, ex))
+            {
+                sharedPreview.Selection.FailTextureImport();
+                SelectSharedPreview(sharedPreview, SharedPreviewKind.Texture);
                 RenderTexturePreview(view, controller.State);
+            }
         }
         finally
         {
@@ -1812,7 +1871,8 @@ public sealed class MainWindow : Window
             _dpiBox,
             _widthBox,
             _heightBox,
-            _hatchPreviewController);
+            _hatchPreviewController,
+            _hatchSharedPreview);
     }
 
     private async Task PickHatchOutputAsync()
@@ -1876,6 +1936,7 @@ public sealed class MainWindow : Window
         _hatchLogBox.Text = "";
         _hatchDxfPreview.Clear();
         _hatchDxfPreviewStatus.Text = _hatchDxfPreview.Summary;
+        _hatchSharedPreview.Selection.ClearDxf();
 
         var width = _widthBox.Value ?? 100;
         var height = _heightBox.Value ?? 100;
@@ -1963,7 +2024,11 @@ public sealed class MainWindow : Window
             {
                 AppendHatchLog("\nDXF 生成完成。");
                 _hatchOpenButton.IsEnabled = true;
-                LoadDxfPreview(_hatchDxfPreview, _hatchDxfPreviewStatus, output);
+                if (LoadDxfPreview(_hatchDxfPreview, _hatchDxfPreviewStatus, output))
+                {
+                    _hatchSharedPreview.Selection.CompleteDxfLoad();
+                    SelectSharedPreview(_hatchSharedPreview, SharedPreviewKind.Dxf);
+                }
             }
             else
             {
@@ -2201,7 +2266,7 @@ public sealed class MainWindow : Window
             _logBox.CaretIndex = _logBox.Text?.Length ?? 0;
         });
 
-    private static void LoadDxfPreview(
+    private static bool LoadDxfPreview(
         DxfPreviewControl preview,
         TextBlock status,
         string path)
@@ -2211,18 +2276,21 @@ public sealed class MainWindow : Window
             preview.LoadFile(path);
             status.Text = preview.Summary;
             status.ClearValue(TextBlock.ForegroundProperty);
+            return true;
         }
         catch (Exception ex)
         {
             status.Text = $"无法预览 {Path.GetFileName(path)}：{ex.Message}";
             status.Foreground = Brushes.OrangeRed;
+            return false;
         }
     }
 
     private async Task ImportDxfPreviewAsync(
         DxfPreviewControl preview,
         TextBlock status,
-        bool addToPipelineSelector)
+        bool addToPipelineSelector,
+        SharedPreviewView sharedPreview)
     {
         var files = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
         {
@@ -2245,7 +2313,11 @@ public sealed class MainWindow : Window
         }
         else
         {
-            LoadDxfPreview(preview, status, path);
+            if (LoadDxfPreview(preview, status, path))
+            {
+                sharedPreview.Selection.CompleteDxfLoad();
+                SelectSharedPreview(sharedPreview, SharedPreviewKind.Dxf);
+            }
         }
     }
 
