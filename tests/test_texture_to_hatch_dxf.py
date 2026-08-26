@@ -2139,23 +2139,24 @@ class FittedPreviewOutputTests(unittest.TestCase):
             self.assertFalse(dxf_path.exists())
 
 
-class AvaloniaPairValidationSourceContractTests(unittest.TestCase):
-    def test_validates_each_expected_pair_before_manifest_and_preview_acceptance(self) -> None:
+class AvaloniaArtifactValidationSourceContractTests(unittest.TestCase):
+    def test_validates_each_expected_artifact_before_manifest_and_preview_acceptance(self) -> None:
         source = (
             Path(__file__).resolve().parents[1] / "GrayscaleLayersMac" / "MainWindow.cs"
         ).read_text(encoding="utf-8")
         hatch_success = source.index("if (hatchExitCode != 0)")
-        validation = source.index("ValidateGeneratedLayerPair(", hatch_success)
+        validation = source.index("ValidateGeneratedLayerArtifacts(", hatch_success)
         manifest_acceptance = source.index("currentRunDxfFiles.Add", hatch_success)
-        preview_acceptance = source.index("new DxfPreviewItem", hatch_success)
+        preview_acceptance = source.index("new DxfLayerPreviewItem", hatch_success)
 
         self.assertLess(validation, manifest_acceptance)
         self.assertLess(validation, preview_acceptance)
 
-        helper_start = source.index("private static void ValidateGeneratedLayerPair")
+        helper_start = source.index("private static void ValidateGeneratedLayerArtifacts")
         helper_end = source.index("\n    private ", helper_start + 1)
         helper = source[helper_start:helper_end]
         self.assertIn('Path.ChangeExtension(dxfPath, ".blocks.json")', helper)
+        self.assertIn("ValidateRegularNonEmptyFile(previewPath", helper)
         self.assertIn("FileAttributes.Directory", helper)
         self.assertIn("FileAttributes.ReparsePoint", helper)
         self.assertIn("Length <= 0", helper)
@@ -2217,6 +2218,38 @@ class AvaloniaTextureOverlaySourceContractTests(unittest.TestCase):
         # The model bounds have no public getter; this source contract protects the
         # public LoadTexture/LoadFile ordering invariant at its only assignment.
         self.assertIn("_modelBounds = HasTexture ? _textureBounds : bounds;", load_file)
+
+
+class AvaloniaLayerOverlayWiringTests(unittest.TestCase):
+    def test_pipeline_requests_and_registers_matching_preview_png(self) -> None:
+        source = (ROOT / "GrayscaleLayersMac" / "MainWindow.cs").read_text()
+        loop = source[source.index("for (var index = 0;"):source.index("步骤 2/3 完成")]
+        self.assertIn('Path.ChangeExtension(outputFile, ".preview.png")', loop)
+        self.assertIn('hatchInfo.ArgumentList.Add("--preview-output")', loop)
+        self.assertIn("ValidateGeneratedLayerArtifacts(", loop)
+        self.assertIn("new DxfLayerPreviewItem(", loop)
+
+    def test_selector_clears_stale_texture_before_loading_new_item(self) -> None:
+        source = (ROOT / "GrayscaleLayersMac" / "MainWindow.cs").read_text()
+        handler = source[
+            source.index("_pipelineDxfSelector.SelectionChanged"):
+            source.index("_dpiBox.TextChanged")
+        ]
+        self.assertIn("_pipelineDxfPreview.ClearTexture()", handler)
+        self.assertIn("item.HasTexture", handler)
+        self.assertIn("_pipelineDxfPreview.LoadTexture", handler)
+
+    def test_orbiting_refreshes_the_top_view_texture_explanation(self) -> None:
+        source = (ROOT / "GrayscaleLayersMac" / "MainWindow.cs").read_text()
+        toolbar = source[
+            source.index("private static Control MakeDxfPreviewContent"):
+            source.index("private static void SelectSharedPreview")
+        ]
+        self.assertIn("preview.AddHandler(", toolbar)
+        self.assertIn("InputElement.PointerReleasedEvent", toolbar)
+        self.assertIn("InputElement.PointerCaptureLostEvent", toolbar)
+        self.assertIn("handledEventsToo: true", toolbar)
+        self.assertIn("QueueOverlayControlUpdate", toolbar)
 
 
 class AngledHatchTests(unittest.TestCase):
