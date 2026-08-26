@@ -16,6 +16,12 @@ namespace GrayscaleLayersMac;
 
 public sealed class MainWindow : Window
 {
+    private const int InspectionJsonOverheadCharacters = 4 * 1024;
+    private const int MaximumInspectionStandardErrorCharacters = 1024 * 1024;
+    private static readonly int MaximumInspectionStandardOutputCharacters = checked(
+        TextureImageInspection.GetMaximumBase64CharacterCount(
+            TextureImageInspection.DefaultMaximumPreviewBytes) + InspectionJsonOverheadCharacters);
+
     private sealed record DxfPreviewItem(string Name, string Path)
     {
         public override string ToString() => Name;
@@ -1640,8 +1646,12 @@ public sealed class MainWindow : Window
 
         using var process = new Process { StartInfo = info };
         process.Start();
-        var stdoutTask = process.StandardOutput.ReadToEndAsync();
-        var stderrTask = process.StandardError.ReadToEndAsync();
+        var stdoutTask = BoundedTextReader.ReadToEndAsync(
+            process.StandardOutput,
+            MaximumInspectionStandardOutputCharacters);
+        var stderrTask = BoundedTextReader.ReadToEndAsync(
+            process.StandardError,
+            MaximumInspectionStandardErrorCharacters);
         await WaitForExitOrKillAsync(process, cancellationToken);
         await Task.WhenAll(stdoutTask, stderrTask);
 

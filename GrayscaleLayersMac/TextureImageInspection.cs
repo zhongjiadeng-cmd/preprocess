@@ -16,16 +16,26 @@ public sealed record TextureImageInspection(TextureImageInfo Info, byte[] Previe
         var info = TextureImageInfo.ParseJson(json);
         using var document = JsonDocument.Parse(json);
         if (!document.RootElement.TryGetProperty("preview_png_base64", out var element) ||
-            element.ValueKind != JsonValueKind.String ||
-            string.IsNullOrWhiteSpace(element.GetString()))
+            element.ValueKind != JsonValueKind.String)
         {
             throw new ArgumentException("图片预览数据缺失。", nameof(json));
+        }
+
+        var base64 = element.GetString();
+        if (string.IsNullOrWhiteSpace(base64))
+        {
+            throw new ArgumentException("图片预览数据缺失。", nameof(json));
+        }
+
+        if (base64.Length > GetMaximumBase64CharacterCount(maximumPreviewBytes))
+        {
+            throw new ArgumentException("图片预览数据过大。", nameof(json));
         }
 
         byte[] bytes;
         try
         {
-            bytes = Convert.FromBase64String(element.GetString()!);
+            bytes = Convert.FromBase64String(base64);
         }
         catch (FormatException error)
         {
@@ -44,5 +54,11 @@ public sealed record TextureImageInspection(TextureImageInfo Info, byte[] Previe
         }
 
         return new TextureImageInspection(info, bytes);
+    }
+
+    public static int GetMaximumBase64CharacterCount(int maximumPreviewBytes)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThan(maximumPreviewBytes, PngSignature.Length);
+        return checked((int)(((long)maximumPreviewBytes + 2) / 3 * 4));
     }
 }
