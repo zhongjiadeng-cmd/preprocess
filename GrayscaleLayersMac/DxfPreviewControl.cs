@@ -3,10 +3,11 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Media;
+using Avalonia.Media.Imaging;
 
 namespace GrayscaleLayersMac;
 
-public sealed class DxfPreviewControl : Control
+public sealed class DxfPreviewControl : Control, IDisposable
 {
     private sealed record Segment(
         double X1,
@@ -39,7 +40,9 @@ public sealed class DxfPreviewControl : Control
     private double _yaw = -35 * Math.PI / 180;
     private double _tilt = 55 * Math.PI / 180;
     private bool _isOrbiting;
-    private bool _showDirectionArrows = true;
+    private readonly DxfOverlayState _overlay = new();
+    private Bitmap? _textureBitmap;
+    private Rect _textureBounds;
     private static readonly Color[] LayerColors =
     [
         Color.FromRgb(66, 165, 245),
@@ -57,14 +60,47 @@ public sealed class DxfPreviewControl : Control
     ];
 
     public string Summary { get; private set; } = "尚未生成或加载 DXF";
-    public bool ShowDirectionArrows
+    public bool HasTexture => _textureBitmap is not null;
+    public string TextureStatus => !HasTexture
+        ? "此 DXF 没有配对纹理"
+        : _overlay.IsTopView
+            ? "已加载配准纹理"
+            : "纹理对齐仅在顶视图显示";
+    public bool ShowTexture
     {
-        get => _showDirectionArrows;
+        get => _overlay.ShowTexture;
         set
         {
-            if (_showDirectionArrows == value)
+            _overlay.ShowTexture = value;
+            InvalidateVisual();
+        }
+    }
+    public bool ShowLines
+    {
+        get => _overlay.ShowLines;
+        set
+        {
+            _overlay.ShowLines = value;
+            InvalidateVisual();
+        }
+    }
+    public double TextureOpacity
+    {
+        get => _overlay.TextureOpacity;
+        set
+        {
+            _overlay.TextureOpacity = value;
+            InvalidateVisual();
+        }
+    }
+    public bool ShowDirectionArrows
+    {
+        get => _overlay.ShowDirectionArrows;
+        set
+        {
+            if (_overlay.ShowDirectionArrows == value)
                 return;
-            _showDirectionArrows = value;
+            _overlay.ShowDirectionArrows = value;
             InvalidateVisual();
         }
     }
@@ -79,8 +115,12 @@ public sealed class DxfPreviewControl : Control
 
     public void Clear()
     {
+        ClearTexture();
         _segments = [];
         _rowGroups = [];
+        _modelBounds = new Rect(-50, -50, 100, 100);
+        _minZ = 0;
+        _maxZ = 0;
         _zoom = 1;
         _pan = default;
         Summary = "正在等待生成 DXF…";
@@ -98,6 +138,7 @@ public sealed class DxfPreviewControl : Control
     {
         _yaw = -35 * Math.PI / 180;
         _tilt = 55 * Math.PI / 180;
+        _overlay.IsTopView = false;
         FitToView();
     }
 
@@ -105,8 +146,54 @@ public sealed class DxfPreviewControl : Control
     {
         _yaw = 0;
         _tilt = 0;
+        _overlay.IsTopView = true;
         FitToView();
     }
+
+    public void LoadTexture(string path, double widthMm, double heightMm)
+    {
+        if (!double.IsFinite(widthMm) || widthMm <= 0 ||
+            !double.IsFinite(heightMm) || heightMm <= 0)
+            throw new ArgumentOutOfRangeException(nameof(widthMm));
+
+        var file = new FileInfo(path);
+        file.Refresh();
+        if (!file.Exists || file.Length <= 0 ||
+            (file.Attributes & (FileAttributes.Directory | FileAttributes.ReparsePoint)) != 0)
+            throw new InvalidDataException("配准纹理必须是非空普通文件。");
+
+        Bitmap? candidate = null;
+        try
+        {
+            candidate = new Bitmap(path);
+            if (candidate.PixelSize.Width <= 0 || candidate.PixelSize.Height <= 0)
+                throw new InvalidDataException("配准纹理像素尺寸无效。");
+
+            var previous = _textureBitmap;
+            _textureBitmap = candidate;
+            candidate = null;
+            _textureBounds = new Rect(-widthMm / 2, -heightMm / 2, widthMm, heightMm);
+            _modelBounds = _textureBounds;
+            _overlay.SetTextureAvailable(true);
+            previous?.Dispose();
+            FitToView();
+        }
+        finally
+        {
+            candidate?.Dispose();
+        }
+    }
+
+    public void ClearTexture()
+    {
+        _textureBitmap?.Dispose();
+        _textureBitmap = null;
+        _textureBounds = default;
+        _overlay.SetTextureAvailable(false);
+        InvalidateVisual();
+    }
+
+    public void Dispose() => ClearTexture();
 
     public void LoadFile(string path)
     {
@@ -132,7 +219,7 @@ public sealed class DxfPreviewControl : Control
     {
         base.Render(context);
         context.FillRectangle(new SolidColorBrush(Color.FromRgb(15, 18, 23)), Bounds);
-        if (_segments.Count == 0)
+        if (_segments.Count == 0 && _textureBitmap is null)
         {
             var text = new FormattedText(
                 "生成 DXF 后将在这里显示实际文件",
@@ -149,6 +236,35 @@ public sealed class DxfPreviewControl : Control
         var center = Bounds.Center + _pan;
         var viewport = new Rect(Bounds.Size);
         DrawGrid(context, scale, center);
+
+        if (_overlay.ShouldDrawTexture)
+            DrawTextureOverlay(context, scale, center);
+        if (_overlay.ShowLines)
+            DrawDxfSegments(context, scale, center, viewport);
+    }
+
+    private void DrawTextureOverlay(DrawingContext context, double scale, Point center)
+    {
+        if (_textureBitmap is null)
+            return;
+
+        // PNG image Y increases downwards while DXF model Y increases upwards.
+        var topLeft = ToScreen(_textureBounds.Left, _textureBounds.Bottom, 0, scale, center);
+        var bottomRight = ToScreen(_textureBounds.Right, _textureBounds.Top, 0, scale, center);
+        var destination = new Rect(topLeft, bottomRight);
+        using (context.PushOpacity(_overlay.TextureOpacity))
+            context.DrawImage(_textureBitmap, new Rect(_textureBitmap.Size), destination);
+    }
+
+    private void DrawDxfSegments(
+        DrawingContext context,
+        double scale,
+        Point center,
+        Rect viewport)
+    {
+        if (_segments.Count == 0)
+            return;
+
         var pens = _segments
             .Where(segment => !segment.IsBorder)
             .Select(segment => segment.BlockIndex)
@@ -189,7 +305,7 @@ public sealed class DxfPreviewControl : Control
                         ? borderPen
                         : pens[segment.BlockIndex];
                     context.DrawLine(pen, clippedStart, clippedEnd);
-                    if (_showDirectionArrows && !segment.IsBorder)
+                    if (_overlay.ShouldDrawDirectionArrows && !segment.IsBorder)
                         DrawEndpointDirectionArrows(
                             context,
                             arrowPen,
@@ -248,6 +364,7 @@ public sealed class DxfPreviewControl : Control
         {
             _yaw = _yawAtDragStart + delta.X * 0.01;
             _tilt = NormalizeAngle(_tiltAtDragStart + delta.Y * 0.01);
+            _overlay.IsTopView = IsTopView;
         }
         else
         {

@@ -2196,6 +2196,19 @@ class AvaloniaHatchAngleSourceContractTests(unittest.TestCase):
         self.assertIn("% 180m", calculation)
 
 
+class AvaloniaTextureOverlaySourceContractTests(unittest.TestCase):
+    def test_dxf_control_draws_texture_with_dxf_transform_and_owns_bitmap(self) -> None:
+        source = (ROOT / "GrayscaleLayersMac" / "DxfPreviewControl.cs").read_text()
+        self.assertIn("IDisposable", source)
+        self.assertIn("public void LoadTexture(", source)
+        self.assertIn("public void ClearTexture()", source)
+        self.assertIn("_textureBitmap?.Dispose()", source)
+        render = source[source.index("public override void Render"):]
+        self.assertLess(render.index("DrawTextureOverlay"), render.index("DrawDxfSegments"))
+        self.assertIn("ToScreen(_textureBounds.Left", source)
+        self.assertIn("ToScreen(_textureBounds.Right", source)
+
+
 class AngledHatchTests(unittest.TestCase):
     def test_angled_hatch_remains_compatible_with_voronoi_blocks(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
