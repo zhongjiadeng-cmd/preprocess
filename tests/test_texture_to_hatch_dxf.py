@@ -2208,6 +2208,16 @@ class AvaloniaTextureOverlaySourceContractTests(unittest.TestCase):
         self.assertIn("ToScreen(_textureBounds.Left", source)
         self.assertIn("ToScreen(_textureBounds.Right", source)
 
+    def test_loading_dxf_after_texture_keeps_paired_processing_bounds(self) -> None:
+        source = (ROOT / "GrayscaleLayersMac" / "DxfPreviewControl.cs").read_text()
+        load_file = source[
+            source.index("public void LoadFile("):source.index("public override void Render")
+        ]
+
+        # The model bounds have no public getter; this source contract protects the
+        # public LoadTexture/LoadFile ordering invariant at its only assignment.
+        self.assertIn("_modelBounds = HasTexture ? _textureBounds : bounds;", load_file)
+
 
 class AngledHatchTests(unittest.TestCase):
     def test_angled_hatch_remains_compatible_with_voronoi_blocks(self) -> None:

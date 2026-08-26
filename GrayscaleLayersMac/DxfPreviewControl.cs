@@ -205,7 +205,7 @@ public sealed class DxfPreviewControl : Control, IDisposable
         var segments = secondPass.Segments;
         _segments = segments;
         _rowGroups = BuildRowGroups(segments);
-        _modelBounds = bounds;
+        _modelBounds = HasTexture ? _textureBounds : bounds;
         _minZ = secondPass.MinZ;
         _maxZ = secondPass.MaxZ;
         FitToView();
