@@ -1,4 +1,5 @@
 from pathlib import Path
+import base64
 from contextlib import redirect_stdout
 import io
 import json
@@ -121,6 +122,36 @@ class NonrepeatingTextureFallbackTests(unittest.TestCase):
 
 
 class TextureImageInspectionTests(unittest.TestCase):
+    def test_inspect_texture_image_embeds_bounded_tiff_preview(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "texture.tif"
+            Image.new("L", (1500, 1500), 128).save(path, dpi=(1270, 1270))
+            payload = inspect_texture_image(path, preview_max_edge=380)
+            raw = base64.b64decode(payload["preview_png_base64"], validate=True)
+            with Image.open(io.BytesIO(raw)) as preview:
+                self.assertEqual((preview.format, preview.size), ("PNG", (380, 380)))
+            self.assertEqual((payload["pixel_width"], payload["pixel_height"]), (1500, 1500))
+            self.assertAlmostEqual(payload["dpi_x"], 1270, delta=0.1)
+
+    def test_preview_preserves_aspect_ratio(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "wide.png"
+            Image.new("RGB", (800, 200), "white").save(path)
+            payload = inspect_texture_image(path, preview_max_edge=380)
+            with Image.open(io.BytesIO(base64.b64decode(payload["preview_png_base64"]))) as preview:
+                self.assertEqual(preview.size, (380, 95))
+
+    def test_inspect_image_cli_includes_preview_when_requested(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "source.tif"
+            Image.new("L", (1500, 1500), 255).save(path, dpi=(1270, 1270))
+            completed = subprocess.run(
+                [sys.executable, str(ROOT / "texture_to_hatch_dxf.py"), str(path),
+                 "--inspect-image", "--preview-max-edge", "380"],
+                check=False, capture_output=True, text=True)
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            self.assertIn("preview_png_base64", json.loads(completed.stdout))
+
     def test_inspect_texture_image_reports_pixels_and_axis_dpi(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "anisotropic.png"
