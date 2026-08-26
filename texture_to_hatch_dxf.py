@@ -31,7 +31,7 @@ from PIL import Image
 
 
 MM_PER_INCH = 25.4
-MAX_PREVIEW_EDGE = 4096
+MAX_PREVIEW_PNG_BYTES = 64 * 1024 * 1024
 
 
 class RepeatPeriodNotFoundError(ValueError):
@@ -976,22 +976,16 @@ def _valid_image_dpi(value: object) -> tuple[float, float] | None:
     return (dpi_x, dpi_y) if dpi_x > 0 and dpi_y > 0 else None
 
 
-def _validate_preview_max_edge(value: object | None) -> int | None:
-    if value is None:
-        return None
-    if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= MAX_PREVIEW_EDGE:
-        raise ValueError(f"预览最大边必须是 1 到 {MAX_PREVIEW_EDGE} 之间的整数。")
-    return value
-
-
-def _encode_preview_png(image: Image.Image, max_edge: int) -> str:
+def _encode_preview_png(image: Image.Image) -> str:
     preview = image.copy()
-    preview.thumbnail((max_edge, max_edge), Image.Resampling.LANCZOS)
     if preview.mode not in ("L", "LA", "RGB", "RGBA"):
         preview = preview.convert("RGBA")
     output = io.BytesIO()
     preview.save(output, format="PNG", optimize=True)
-    return base64.b64encode(output.getvalue()).decode("ascii")
+    raw = output.getvalue()
+    if len(raw) > MAX_PREVIEW_PNG_BYTES:
+        raise ValueError("图片预览 PNG 超过 64 MiB 限制。")
+    return base64.b64encode(raw).decode("ascii")
 
 
 def _validate_fallback_dpi(value: object | None) -> float | None:
@@ -1016,15 +1010,14 @@ def _fallback_dpi_argument(value: str) -> float:
 
 
 def inspect_texture_image(
-    image_path: Path, preview_max_edge: int | None = None
+    image_path: Path, include_preview: bool = False
 ) -> dict[str, object]:
-    preview_max_edge = _validate_preview_max_edge(preview_max_edge)
     with Image.open(image_path) as image:
         pixel_width, pixel_height = image.size
         dpi = _valid_image_dpi(image.info.get("dpi"))
         preview_png_base64 = (
-            _encode_preview_png(image, preview_max_edge)
-            if preview_max_edge is not None
+            _encode_preview_png(image)
+            if include_preview
             else None
         )
     payload: dict[str, object] = {
@@ -2159,9 +2152,9 @@ def parse_args() -> argparse.Namespace:
         help="以 JSON 输出图片像素和 DPI 信息后退出",
     )
     parser.add_argument(
-        "--preview-max-edge",
-        type=int,
-        help="检查图片时嵌入 PNG 预览的最大边长（像素）",
+        "--include-preview",
+        action="store_true",
+        help="检查图片时嵌入完整像素尺寸的 PNG 预览",
     )
     parser.add_argument(
         "--size",
@@ -2263,13 +2256,8 @@ def parse_args() -> argparse.Namespace:
     )
     args = parser.parse_args()
 
-    if args.preview_max_edge is not None:
-        try:
-            args.preview_max_edge = _validate_preview_max_edge(args.preview_max_edge)
-        except ValueError as exc:
-            parser.error(str(exc))
-        if not args.inspect_image:
-            parser.error("--preview-max-edge 只能与 --inspect-image 一起使用")
+    if args.include_preview and not args.inspect_image:
+        parser.error("--include-preview 只能与 --inspect-image 一起使用")
     if args.inspect_image:
         return args
     if args.output is None:
@@ -2300,7 +2288,7 @@ def main() -> None:
     args = parse_args()
     if args.inspect_image:
         print(json.dumps(
-            inspect_texture_image(args.input, args.preview_max_edge),
+            inspect_texture_image(args.input, args.include_preview),
             ensure_ascii=False,
         ))
         return
