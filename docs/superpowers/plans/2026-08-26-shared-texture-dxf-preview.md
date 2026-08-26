@@ -4,7 +4,7 @@
 
 **Goal:** Preview Pillow-supported TIFF/PNG textures and DXF files in one right-side tabbed viewport on both texture workflows while preserving editable DPI-based target sizing.
 
-**Architecture:** Extend the existing Pillow inspection command to return a bounded Base64 PNG preview with its metadata, then validate that payload in a focused C# model before Avalonia displays it. Keep texture and DXF state independent; a small selection model and page-level container decide which content surface is visible.
+**Architecture:** Extend the existing Pillow inspection command to return a full-pixel Base64 PNG preview with its metadata, then validate its byte size and exact dimensions in C# before Avalonia displays it fitted inside the shared viewport. Keep texture and DXF state independent; a small selection model and page-level container decide which content surface is visible.
 
 **Tech Stack:** Python 3, Pillow, `unittest`, C#/.NET 10, Avalonia 11, MSTest.
 
@@ -15,14 +15,14 @@
 - Generate previews in memory only; create no temporary preview files.
 - Keep both tabs visible. Texture import selects texture; successful DXF generation/import selects DXF; manual switching preserves both.
 - Keep target width/height editable and retain the existing automatic-write triggers only.
-- Limit preview longest edge to 380 px and reject decoded preview data over 4 MiB.
+- Keep preview pixel dimensions exactly equal to the imported image; reject compressed preview PNG data over 64 MiB without resizing accepted images.
 - Preserve unrelated user files and the existing untracked paths.
 
 ---
 
 ## File Structure
 
-- `texture_to_hatch_dxf.py`: optional Pillow PNG preview output.
+- `texture_to_hatch_dxf.py`: optional full-pixel Pillow PNG preview output.
 - `tests/test_texture_to_hatch_dxf.py`: TIFF/PNG preview contract tests.
 - `GrayscaleLayersMac/TextureImageInspection.cs`: combined JSON payload parser.
 - `GrayscaleLayersMac.Tests/TextureImageInspectionTests.cs`: parser validation tests.
@@ -34,7 +34,7 @@
 
 ---
 
-### Task 1: Produce a bounded PNG preview with Pillow
+### Task 1: Produce a full-pixel PNG preview with Pillow
 
 **Files:**
 - Modify: `texture_to_hatch_dxf.py:1-20,964-1010,2120-2260`
@@ -42,29 +42,29 @@
 
 **Interfaces:**
 - Consumes: `PIL.Image.open(Path)` and `_valid_image_dpi(value)`.
-- Produces: `inspect_texture_image(image_path: Path, preview_max_edge: int | None = None) -> dict[str, object]`; optional JSON field `preview_png_base64`; CLI option `--preview-max-edge` valid only with `--inspect-image`.
+- Produces: `inspect_texture_image(image_path: Path, include_preview: bool = False) -> dict[str, object]`; optional JSON field `preview_png_base64`; CLI option `--include-preview` valid only with `--inspect-image`.
 
-- [ ] **Step 1: Write failing TIFF and aspect-ratio tests**
+- [ ] **Step 1: Write failing full-pixel TIFF and PNG tests**
 
 ```python
 def test_inspect_texture_image_embeds_bounded_tiff_preview(self):
     with tempfile.TemporaryDirectory() as tmp:
         path = Path(tmp) / "texture.tif"
         Image.new("L", (1500, 1500), 128).save(path, dpi=(1270, 1270))
-        payload = inspect_texture_image(path, preview_max_edge=380)
+        payload = inspect_texture_image(path, include_preview=True)
         raw = base64.b64decode(payload["preview_png_base64"], validate=True)
         with Image.open(io.BytesIO(raw)) as preview:
-            self.assertEqual((preview.format, preview.size), ("PNG", (380, 380)))
+            self.assertEqual((preview.format, preview.size), ("PNG", (1500, 1500)))
         self.assertEqual((payload["pixel_width"], payload["pixel_height"]), (1500, 1500))
         self.assertAlmostEqual(payload["dpi_x"], 1270, delta=0.1)
 
-def test_preview_preserves_aspect_ratio(self):
+def test_preview_preserves_source_pixel_dimensions(self):
     with tempfile.TemporaryDirectory() as tmp:
         path = Path(tmp) / "wide.png"
         Image.new("RGB", (800, 200), "white").save(path)
-        payload = inspect_texture_image(path, preview_max_edge=380)
+        payload = inspect_texture_image(path, include_preview=True)
         with Image.open(io.BytesIO(base64.b64decode(payload["preview_png_base64"]))) as preview:
-            self.assertEqual(preview.size, (380, 95))
+            self.assertEqual(preview.size, (800, 200))
 ```
 
 - [ ] **Step 2: Run the tests and verify they fail because the parameter is missing**
@@ -73,29 +73,24 @@ def test_preview_preserves_aspect_ratio(self):
 python3 -m unittest tests.test_texture_to_hatch_dxf.TextureImageInspectionTests -v
 ```
 
-- [ ] **Step 3: Implement validation and PNG encoding**
+- [ ] **Step 3: Implement exact-size PNG encoding with a compressed-byte limit**
 
 ```python
-MAX_PREVIEW_EDGE = 4096
+MAX_PREVIEW_PNG_BYTES = 64 * 1024 * 1024
 
-def _validate_preview_max_edge(value: object | None) -> int | None:
-    if value is None:
-        return None
-    if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= MAX_PREVIEW_EDGE:
-        raise ValueError(f"预览最大边必须是 1 到 {MAX_PREVIEW_EDGE} 之间的整数。")
-    return value
-
-def _encode_preview_png(image: Image.Image, max_edge: int) -> str:
+def _encode_preview_png(image: Image.Image) -> str:
     preview = image.copy()
-    preview.thumbnail((max_edge, max_edge), Image.Resampling.LANCZOS)
     if preview.mode not in ("L", "LA", "RGB", "RGBA"):
         preview = preview.convert("RGBA")
     output = io.BytesIO()
     preview.save(output, format="PNG", optimize=True)
-    return base64.b64encode(output.getvalue()).decode("ascii")
+    raw = output.getvalue()
+    if len(raw) > MAX_PREVIEW_PNG_BYTES:
+        raise ValueError("图片预览 PNG 超过 64 MiB 限制。")
+    return base64.b64encode(raw).decode("ascii")
 ```
 
-Update `inspect_texture_image` so calls without `preview_max_edge` return the original four keys unchanged; when supplied, add `preview_png_base64` inside the same `Image.open` context.
+Update `inspect_texture_image` so calls with `include_preview=False` return the original four keys unchanged; when true, add an exact-size `preview_png_base64` inside the same `Image.open` context.
 
 - [ ] **Step 4: Add CLI tests and option wiring**
 
@@ -106,13 +101,13 @@ def test_inspect_image_cli_includes_preview_when_requested(self):
         Image.new("L", (1500, 1500), 255).save(path, dpi=(1270, 1270))
         completed = subprocess.run(
             [sys.executable, str(ROOT / "texture_to_hatch_dxf.py"), str(path),
-             "--inspect-image", "--preview-max-edge", "380"],
+             "--inspect-image", "--include-preview"],
             check=False, capture_output=True, text=True)
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self.assertIn("preview_png_base64", json.loads(completed.stdout))
 ```
 
-Add `parser.add_argument("--preview-max-edge", type=int)`; reject it unless `args.inspect_image`; pass it to `inspect_texture_image` in `main()`.
+Add `parser.add_argument("--include-preview", action="store_true")`; reject it unless `args.inspect_image`; pass it to `inspect_texture_image` in `main()`. Add a focused mock test that makes encoded PNG bytes exceed `MAX_PREVIEW_PNG_BYTES` and asserts a `ValueError` mentioning `64 MiB`.
 
 - [ ] **Step 5: Run the focused suite and commit**
 
@@ -132,7 +127,7 @@ git commit -m "feat: emit bounded texture preview png"
 
 **Interfaces:**
 - Consumes: Task 1 JSON and `TextureImageInfo.ParseJson(string)`.
-- Produces: `TextureImageInspection.ParseJson(string, int)`, `Info`, and `PreviewPng`.
+- Produces: `TextureImageInspection.ParseJson(string, int)`, `Info`, and `PreviewPng`, with a 64 MiB default maximum.
 
 - [ ] **Step 1: Write failing parser tests**
 
@@ -170,7 +165,7 @@ dotnet test GrayscaleLayersMac.Tests/GrayscaleLayersMac.Tests.csproj --filter Fu
 ```csharp
 public sealed record TextureImageInspection(TextureImageInfo Info, byte[] PreviewPng)
 {
-    public const int DefaultMaximumPreviewBytes = 4 * 1024 * 1024;
+    public const int DefaultMaximumPreviewBytes = 64 * 1024 * 1024;
     private static ReadOnlySpan<byte> PngSignature => [137,80,78,71,13,10,26,10];
 
     public static TextureImageInspection ParseJson(string json, int maximumPreviewBytes = DefaultMaximumPreviewBytes)
@@ -306,14 +301,15 @@ Implement `FormatFailureSummary(Exception)` in `TexturePreviewController`; remov
 
 - [ ] **Step 4: Decode only Pillow's PNG payload**
 
-Make `InspectTextureImageAsync` pass `--preview-max-edge 380` and return `TextureImageInspection`. Replace `Bitmap.DecodeToWidth/Height(File.OpenRead(path))` with:
+Make `InspectTextureImageAsync` pass `--include-preview` and return `TextureImageInspection`. Replace `Bitmap.DecodeToWidth/Height(File.OpenRead(path))` with:
 
 ```csharp
 var inspection = await InspectTextureImageAsync(path, operation.CancellationToken);
 using var stream = new MemoryStream(inspection.PreviewPng, writable: false);
 candidateBitmap = new Bitmap(stream);
-if (Math.Max(candidateBitmap.PixelSize.Width, candidateBitmap.PixelSize.Height) > 380)
-    throw new InvalidOperationException("图片预览尺寸超过 380 px 限制。");
+if (candidateBitmap.PixelSize.Width != inspection.Info.PixelWidth ||
+    candidateBitmap.PixelSize.Height != inspection.Info.PixelHeight)
+    throw new InvalidOperationException("图片预览像素尺寸与源图片不一致。");
 ```
 
 Pass `inspection.Info` to `TryCompleteImport`. Delete the obsolete `TexturePreviewDecodePolicy` types and test.
@@ -393,7 +389,7 @@ Confirm updated timestamps for `GrayscaleLayersMac`, `GrayscaleLayersMac.dll`, a
 
 - [ ] **Step 4: Verify the supplied TIFF through the built script**
 
-Run the built script with `30X30-40C-240u-FK.tif --inspect-image --preview-max-edge 380`; parse JSON and assert 1500 × 1500 px, DPI within 0.1 of 1270, PNG signature, and 380 × 380 decoded preview.
+Run the built script with `30X30-40C-240u-FK.tif --inspect-image --include-preview`; parse JSON and assert 1500 × 1500 px, DPI within 0.1 of 1270, PNG signature, and a 1500 × 1500 decoded preview.
 
 - [ ] **Step 5: Smoke-check both pages**
 
