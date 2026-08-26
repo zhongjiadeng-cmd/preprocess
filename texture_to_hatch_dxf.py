@@ -184,6 +184,20 @@ def write_block_metadata(
             temporary_path.unlink(missing_ok=True)
 
 
+def _write_fitted_preview_png(
+    black_mask: np.ndarray,
+    destination: Path,
+    *,
+    owned_file: _OwnedStagedFile | None = None,
+) -> None:
+    pixels = np.where(black_mask, 0, 255).astype(np.uint8)
+    if owned_file is None:
+        Image.fromarray(pixels).save(destination, format="PNG")
+        return
+    with os.fdopen(os.dup(owned_file.descriptor), "wb") as stream:
+        Image.fromarray(pixels).save(stream, format="PNG")
+
+
 def _create_owned_staging_directory(
     final_path: Path,
     resources: _OwnedHatchResources,
@@ -964,6 +978,53 @@ def validate_hatch_output_pair(
         )
 
 
+def validate_hatch_output_bundle(
+    dxf_path: _OwnedStagedFile,
+    metadata_path: _OwnedStagedFile | None,
+    expected_metadata: dict[str, object] | None,
+    preview_path: _OwnedStagedFile | None,
+    black_mask: np.ndarray,
+) -> None:
+    """Descriptor-read and content-validate the staged publication bundle."""
+    if metadata_path is not None:
+        if expected_metadata is None:
+            raise ValueError("staged block metadata is missing its expected document")
+        validate_hatch_output_pair(dxf_path, metadata_path, expected_metadata)
+    else:
+        try:
+            with _open_owned_text_reader(
+                dxf_path,
+                label="DXF",
+                encoding="ascii",
+            ) as stream:
+                dxf_pairs = stream.read().splitlines()
+        except (OSError, UnicodeError) as exc:
+            raise ValueError(f"invalid staged DXF: {dxf_path}") from exc
+        if len(dxf_pairs) % 2 != 0 or dxf_pairs[-2:] != ["0", "EOF"]:
+            raise ValueError(f"invalid staged DXF structure: {dxf_path}")
+
+    if preview_path is None:
+        return
+    try:
+        _verify_owned_staged_file(preview_path, require_nonempty=True)
+        with os.fdopen(os.dup(preview_path.descriptor), "rb") as stream:
+            with Image.open(stream) as preview:
+                if preview.format != "PNG":
+                    raise ValueError(f"invalid staged preview PNG: {preview_path}")
+                if preview.mode != "L":
+                    raise ValueError(f"invalid staged preview mode: {preview_path}")
+                if preview.size != (black_mask.shape[1], black_mask.shape[0]):
+                    raise ValueError(f"invalid staged preview size: {preview_path}")
+                actual_pixels = np.asarray(preview)
+    except (OSError, ValueError) as exc:
+        if isinstance(exc, ValueError) and str(exc).startswith("invalid staged preview"):
+            raise
+        raise ValueError(f"invalid staged preview PNG: {preview_path}") from exc
+    expected_pixels = np.where(black_mask, 0, 255).astype(np.uint8)
+    if not np.array_equal(actual_pixels, expected_pixels):
+        raise ValueError("staged preview PNG does not match the fitted mask")
+
+
 def _valid_image_dpi(value: object) -> tuple[float, float] | None:
     if not isinstance(value, (tuple, list)) or len(value) < 2:
         return None
@@ -1611,6 +1672,7 @@ def export_horizontal_hatch_dxf(
     boundary_blur_mm: float = 0.0,
     boundary_correlation_mm: float = 1.0,
     random_seed: int = 12345,
+    preview_output: Path | None = None,
 ) -> tuple[int, list[int]]:
     """按给定角度生成 LINE；0° 为水平，可按扫描行往返填充。"""
     if hatch_spacing_mm <= 0:
@@ -1626,14 +1688,24 @@ def export_horizontal_hatch_dxf(
 
     height_px, width_px = black_mask.shape
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    publish_pair = block_metadata_output is not None and bool(voronoi_blocks)
-    if publish_pair:
-        assert block_metadata_output is not None
+    publish_bundle = block_metadata_output is not None or preview_output is not None
+    requested_outputs = [output_path]
+    if block_metadata_output is not None:
+        requested_outputs.append(block_metadata_output)
+    if preview_output is not None:
+        requested_outputs.append(preview_output)
+    if publish_bundle:
         output_parent = os.path.abspath(output_path.parent)
-        metadata_parent = os.path.abspath(block_metadata_output.parent)
-        if output_parent != metadata_parent:
-            raise ValueError("DXF and block metadata must use the same output directory")
-        for final_path in (output_path, block_metadata_output):
+        if any(
+            os.path.abspath(final_path.parent) != output_parent
+            for final_path in requested_outputs
+        ):
+            raise ValueError("DXF, block metadata, and preview must use the same output directory")
+        if len({os.path.abspath(final_path) for final_path in requested_outputs}) != len(
+            requested_outputs
+        ):
+            raise ValueError("DXF, block metadata, and preview paths must be distinct")
+        for final_path in requested_outputs:
             if os.path.lexists(final_path):
                 raise FileExistsError(f"output path already exists: {final_path}")
     normalized_angle = float(hatch_angle_deg) % 180.0
@@ -1812,11 +1884,9 @@ def export_horizontal_hatch_dxf(
     staging_directory: _OwnedStagingDirectory | None = None
     temporary_dxf: _OwnedStagedFile | None = None
     temporary_metadata: _OwnedStagedFile | None = None
-    published_dxf: _OwnedPublishedFile | None = None
-    published_metadata: _OwnedPublishedFile | None = None
+    temporary_preview: _OwnedStagedFile | None = None
     try:
-        if publish_pair:
-            assert block_metadata_output is not None
+        if publish_bundle:
             staging_directory = _create_owned_staging_directory(
                 output_path,
                 resources,
@@ -1825,10 +1895,16 @@ def export_horizontal_hatch_dxf(
                 output_path,
                 staging_directory,
             )
-            temporary_metadata = _create_owned_temporary_file(
-                block_metadata_output,
-                staging_directory,
-            )
+            if block_metadata_output is not None:
+                temporary_metadata = _create_owned_temporary_file(
+                    block_metadata_output,
+                    staging_directory,
+                )
+            if preview_output is not None:
+                temporary_preview = _create_owned_temporary_file(
+                    preview_output,
+                    staging_directory,
+                )
             dxf_stream = _open_owned_text_writer(temporary_dxf, encoding="ascii")
         else:
             dxf_stream = output_path.open("w", encoding="ascii", newline="")
@@ -1861,50 +1937,65 @@ def export_horizontal_hatch_dxf(
             dxf_pair(stream, 0, "ENDSEC")
             dxf_pair(stream, 0, "EOF")
 
-        if publish_pair:
-            assert block_metadata_output is not None
+        if publish_bundle:
             assert temporary_dxf is not None
-            assert temporary_metadata is not None
             temporary_dxf = _bind_owned_staged_file_content(temporary_dxf)
-            metadata_document = build_block_metadata(
-                voronoi_blocks,
-                block_order,
-                ordered_block_counts,
-                4 if include_border else 0,
-            )
-            write_block_metadata(
-                temporary_metadata.path,
-                metadata_document,
-                owned_file=temporary_metadata,
-            )
-            temporary_metadata = _bind_owned_staged_file_content(temporary_metadata)
+            metadata_document: dict[str, object] | None = None
+            if temporary_metadata is not None:
+                metadata_document = build_block_metadata(
+                    voronoi_blocks or [],
+                    block_order,
+                    ordered_block_counts,
+                    4 if include_border else 0,
+                )
+                write_block_metadata(
+                    temporary_metadata.path,
+                    metadata_document,
+                    owned_file=temporary_metadata,
+                )
+                temporary_metadata = _bind_owned_staged_file_content(temporary_metadata)
+            if temporary_preview is not None:
+                _write_fitted_preview_png(
+                    black_mask,
+                    temporary_preview.path,
+                    owned_file=temporary_preview,
+                )
+                temporary_preview = _bind_owned_staged_file_content(temporary_preview)
             _lock_owned_staging_directory(staging_directory)
             _verify_owned_staged_file(temporary_dxf, require_nonempty=True)
-            _verify_owned_staged_file(temporary_metadata, require_nonempty=True)
             temporary_dxf = _seal_owned_staged_file(temporary_dxf)
-            temporary_metadata = _seal_owned_staged_file(temporary_metadata)
-            validate_hatch_output_pair(
+            if temporary_metadata is not None:
+                _verify_owned_staged_file(temporary_metadata, require_nonempty=True)
+                temporary_metadata = _seal_owned_staged_file(temporary_metadata)
+            if temporary_preview is not None:
+                _verify_owned_staged_file(temporary_preview, require_nonempty=True)
+                temporary_preview = _seal_owned_staged_file(temporary_preview)
+            validate_hatch_output_bundle(
                 temporary_dxf,
                 temporary_metadata,
                 metadata_document,
+                temporary_preview,
+                black_mask,
             )
-            published_dxf = _publish_file_no_replace(temporary_dxf, output_path)
-            published_metadata = _publish_file_no_replace(
-                temporary_metadata,
-                block_metadata_output,
-            )
-            _verify_owned_published_file(published_dxf, expected_mode=0o400)
-            _verify_owned_published_file(published_metadata, expected_mode=0o400)
+            for staged_file, destination in (
+                (temporary_dxf, output_path),
+                (temporary_metadata, block_metadata_output),
+                (temporary_preview, preview_output),
+            ):
+                if staged_file is not None and destination is not None:
+                    _publish_file_no_replace(staged_file, destination)
+            for published_file in resources.published_files:
+                _verify_owned_published_file(published_file, expected_mode=0o400)
             _verify_owned_publication_directory(staging_directory)
             _make_owned_staging_directory_writable(staging_directory)
-            _restore_owned_staged_file_mode(temporary_dxf)
-            _restore_owned_staged_file_mode(temporary_metadata)
-            _verify_owned_published_file(published_dxf, expected_mode=0o600)
-            _verify_owned_published_file(published_metadata, expected_mode=0o600)
+            for staged_file in (temporary_dxf, temporary_metadata, temporary_preview):
+                if staged_file is not None:
+                    _restore_owned_staged_file_mode(staged_file)
+            for published_file in resources.published_files:
+                _verify_owned_published_file(published_file, expected_mode=0o600)
             _verify_owned_publication_directory(staging_directory)
     except BaseException:
-        if publish_pair:
-            assert block_metadata_output is not None
+        if publish_bundle:
             owned_staging_directory = resources.staging_directory
             if owned_staging_directory is not None:
                 try:
@@ -1927,7 +2018,7 @@ def export_horizontal_hatch_dxf(
                         pass
         raise
     finally:
-        if publish_pair:
+        if publish_bundle:
             for published_file in reversed(resources.published_files):
                 try:
                     _close_published_file(published_file)
@@ -1983,6 +2074,7 @@ def convert_texture_to_dxf(
     random_seed: int = 12345,
     voronoi_lloyd_iterations: int = 8,
     voronoi_attempts: int = 80,
+    preview_output_path: Path | None = None,
 ) -> None:
     if target_width_mm <= 0 or target_height_mm <= 0:
         raise ValueError("目标毫米尺寸必须大于 0")
@@ -2076,6 +2168,7 @@ def convert_texture_to_dxf(
         boundary_blur_mm=boundary_blur_mm,
         boundary_correlation_mm=boundary_correlation_mm,
         random_seed=random_seed,
+        preview_output=preview_output_path,
     )
 
     if used_full_source_fallback:
@@ -2155,6 +2248,11 @@ def parse_args() -> argparse.Namespace:
         "--include-preview",
         action="store_true",
         help="检查图片时嵌入完整像素尺寸的 PNG 预览",
+    )
+    parser.add_argument(
+        "--preview-output",
+        type=Path,
+        help="输出与拟合掩膜完全一致的 PNG 预览",
     )
     parser.add_argument(
         "--size",
@@ -2313,6 +2411,7 @@ def main() -> None:
         random_seed=args.seed,
         voronoi_lloyd_iterations=args.voronoi_lloyd_iterations,
         voronoi_attempts=args.voronoi_attempts,
+        preview_output_path=args.preview_output,
     )
 
 

@@ -2001,6 +2001,144 @@ class BlockMetadataTests(unittest.TestCase):
             self.assertEqual([line for line in lines if "空加工块" in line], ["空加工块: 2"])
 
 
+class FittedPreviewOutputTests(unittest.TestCase):
+    def test_preview_png_is_the_exact_fitted_mask(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = np.array([[0, 255], [255, 0]], dtype=np.uint8)
+            input_path = root / "layer.tiff"
+            preview_path = root / "layer.preview.png"
+            Image.fromarray(source).save(input_path, dpi=(25.4, 25.4))
+
+            convert_texture_to_dxf(
+                input_path,
+                root / "layer.dxf",
+                3,
+                2,
+                1,
+                tile_mode="repeat",
+                crop_anchor="top-left",
+                preview_output_path=preview_path,
+            )
+
+            with Image.open(preview_path) as preview:
+                self.assertEqual(preview.mode, "L")
+                np.testing.assert_array_equal(
+                    np.asarray(preview),
+                    np.array([[0, 255, 0], [255, 0, 255]], dtype=np.uint8),
+                )
+
+    def test_cli_writes_requested_preview_output(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            input_path = root / "layer.tiff"
+            dxf_path = root / "layer.dxf"
+            preview_path = root / "layer.preview.png"
+            Image.fromarray(np.zeros((2, 2), dtype=np.uint8)).save(
+                input_path, dpi=(25.4, 25.4)
+            )
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    str(ROOT / "texture_to_hatch_dxf.py"),
+                    str(input_path),
+                    str(dxf_path),
+                    "--size",
+                    "2",
+                    "--spacing",
+                    "1",
+                    "--blocks",
+                    "0",
+                    "--tile-mode",
+                    "repeat",
+                    "--preview-output",
+                    str(preview_path),
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            self.assertTrue(preview_path.is_file())
+
+    def test_preview_is_published_with_dxf_and_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            input_path = root / "layer.tiff"
+            dxf_path = root / "layer.dxf"
+            preview_path = root / "layer.preview.png"
+            Image.fromarray(np.zeros((2, 2), dtype=np.uint8)).save(
+                input_path, dpi=(25.4, 25.4)
+            )
+            convert_texture_to_dxf(
+                input_path,
+                dxf_path,
+                2,
+                2,
+                1,
+                tile_mode="repeat",
+                voronoi_block_count=2,
+                min_block_area_mm2=0,
+                max_block_area_mm2=4,
+                preview_output_path=preview_path,
+            )
+            self.assertTrue(dxf_path.is_file())
+            self.assertTrue(block_metadata_path(dxf_path).is_file())
+            self.assertTrue(preview_path.is_file())
+
+    def test_preview_encoding_failure_publishes_neither_dxf_nor_preview(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            input_path = root / "layer.tiff"
+            dxf_path = root / "layer.dxf"
+            preview_path = root / "layer.preview.png"
+            Image.fromarray(np.zeros((2, 2), dtype=np.uint8)).save(
+                input_path, dpi=(25.4, 25.4)
+            )
+            with mock.patch.object(
+                hatch,
+                "_write_fitted_preview_png",
+                side_effect=OSError("preview encode failed"),
+            ):
+                with self.assertRaisesRegex(OSError, "preview encode failed"):
+                    convert_texture_to_dxf(
+                        input_path,
+                        dxf_path,
+                        2,
+                        2,
+                        1,
+                        tile_mode="repeat",
+                        voronoi_block_count=0,
+                        preview_output_path=preview_path,
+                    )
+            self.assertFalse(dxf_path.exists())
+            self.assertFalse(preview_path.exists())
+
+    def test_existing_preview_is_not_replaced_and_dxf_is_not_published(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            input_path = root / "layer.tiff"
+            dxf_path = root / "layer.dxf"
+            preview_path = root / "layer.preview.png"
+            Image.fromarray(np.zeros((2, 2), dtype=np.uint8)).save(
+                input_path, dpi=(25.4, 25.4)
+            )
+            preview_path.write_bytes(b"foreign")
+            with self.assertRaises(FileExistsError):
+                convert_texture_to_dxf(
+                    input_path,
+                    dxf_path,
+                    2,
+                    2,
+                    1,
+                    tile_mode="repeat",
+                    voronoi_block_count=0,
+                    preview_output_path=preview_path,
+                )
+            self.assertEqual(preview_path.read_bytes(), b"foreign")
+            self.assertFalse(dxf_path.exists())
+
+
 class AvaloniaPairValidationSourceContractTests(unittest.TestCase):
     def test_validates_each_expected_pair_before_manifest_and_preview_acceptance(self) -> None:
         source = (
