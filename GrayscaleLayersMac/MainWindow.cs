@@ -54,7 +54,7 @@ public sealed class MainWindow : Window
     private readonly Button _openOutputButton = new() { Content = "打开输出目录", IsEnabled = false };
     private readonly ProgressBar _progress = UiTheme.CreateProgress();
     private readonly TextBox _hatchInputBox = new() { Watermark = "请选择一张黑白纹理图", IsReadOnly = true };
-    private readonly TextBox _hatchOutputBox = new() { Watermark = "请选择 DXF 保存位置", IsReadOnly = true };
+    private readonly TextBox _hatchOutputBox = new() { Watermark = "可输入文件名或完整路径" };
     private readonly NumericUpDown _widthBox = MakeNumberBox(100, 0.01m, 100000, showButtons: false);
     private readonly NumericUpDown _heightBox = MakeNumberBox(100, 0.01m, 100000, showButtons: false);
     private readonly NumericUpDown _spacingBox = MakeNumberBox(0.02m, 0.001m, 1000);
@@ -2086,6 +2086,16 @@ public sealed class MainWindow : Window
             await ShowMessageAsync("请先选择 DXF 输出位置。");
             return;
         }
+
+        // 如果只输入了文件名，自动补到输入图片所在目录；如果是完整路径则直接取绝对路径。
+        if (!Path.IsPathRooted(output)
+            && !output.Contains(Path.DirectorySeparatorChar)
+            && !output.Contains(Path.AltDirectorySeparatorChar))
+        {
+            output = Path.Combine(Path.GetDirectoryName(input)!, output);
+        }
+        output = Path.GetFullPath(output);
+        _hatchOutputBox.Text = output;
 
         var script = Path.Combine(AppContext.BaseDirectory, "texture_to_hatch_dxf.py");
         if (!File.Exists(script))
