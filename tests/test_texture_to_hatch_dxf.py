@@ -2221,6 +2221,51 @@ class AvaloniaTextureOverlaySourceContractTests(unittest.TestCase):
 
 
 class AvaloniaLayerOverlayWiringTests(unittest.TestCase):
+    def test_layer_overlay_controls_and_status_are_pipeline_only(self) -> None:
+        source = (ROOT / "GrayscaleLayersMac" / "MainWindow.cs").read_text()
+        hatch_call = source[
+            source.index("var hatchPreviewPanel = MakeSharedPreviewPanel"):
+            source.index("var hatchContent = MakeWorkspace")
+        ]
+        pipeline_call = source[
+            source.index("var pipelinePreviewPanel = MakeSharedPreviewPanel"):
+            source.index("var pipelineContent = MakeWorkspace")
+        ]
+        standalone_builder = source[
+            source.index("private static Control MakeDxfPreviewContent"):
+            source.index("private static Control MakePipelineDxfPreviewContent")
+        ]
+        pipeline_builder = source[
+            source.index("private static Control MakePipelineDxfPreviewContent"):
+            source.index("private static void SelectSharedPreview")
+        ]
+
+        self.assertIn("enableLayerOverlay: false", hatch_call)
+        self.assertIn("enableLayerOverlay: true", pipeline_call)
+        self.assertNotIn("显示灰度纹理", standalone_builder)
+        self.assertNotIn("TextureStatus", standalone_builder)
+        self.assertIn("显示灰度纹理", pipeline_builder)
+        self.assertIn("TextureStatus", pipeline_builder)
+
+    def test_hidden_texture_disables_opacity_without_resetting_its_value(self) -> None:
+        source = (ROOT / "GrayscaleLayersMac" / "MainWindow.cs").read_text()
+        toolbar = source[
+            source.index("private static Control MakePipelineDxfPreviewContent"):
+            source.index("private static void SelectSharedPreview")
+        ]
+        texture_handler = toolbar[
+            toolbar.index("textureCheckBox.IsCheckedChanged"):
+            toolbar.index("linesCheckBox.IsCheckedChanged")
+        ]
+
+        self.assertIn(
+            "textureOpacity.IsEnabled = preview.HasTexture && preview.ShowTexture;",
+            toolbar,
+        )
+        self.assertIn("preview.ShowTexture", texture_handler)
+        self.assertIn("UpdateOverlayControlAvailability()", texture_handler)
+        self.assertNotIn("textureOpacity.Value =", texture_handler)
+
     def test_pipeline_requests_and_registers_matching_preview_png(self) -> None:
         source = (ROOT / "GrayscaleLayersMac" / "MainWindow.cs").read_text()
         loop = source[source.index("for (var index = 0;"):source.index("步骤 2/3 完成")]

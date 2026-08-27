@@ -432,6 +432,7 @@ public sealed class MainWindow : Window
             _hatchDxfPreviewStatus,
             hatchImportDxfButton,
             fileSelector: null,
+            enableLayerOverlay: false,
             out _hatchSharedPreview);
         var hatchContent = MakeWorkspace(
             hatchInspector,
@@ -641,6 +642,7 @@ public sealed class MainWindow : Window
             _pipelineDxfPreviewStatus,
             pipelineImportDxfButton,
             _pipelineDxfSelector,
+            enableLayerOverlay: true,
             out _pipelineSharedPreview);
         var pipelineContent = MakeWorkspace(
             pipelineInspector,
@@ -830,15 +832,30 @@ public sealed class MainWindow : Window
         TextBlock dxfStatus,
         Button importButton,
         ComboBox? fileSelector,
+        bool enableLayerOverlay,
         out SharedPreviewView view)
     {
         var textureContent = MakeTexturePreviewContent(texture);
-        var dxfContent = MakeDxfPreviewContent(
-            dxfPreview,
-            dxfStatus,
-            importButton,
-            fileSelector,
-            out var updateDxfOverlayControls);
+        Control dxfContent;
+        Action updateDxfOverlayControls;
+        if (enableLayerOverlay)
+        {
+            dxfContent = MakePipelineDxfPreviewContent(
+                dxfPreview,
+                dxfStatus,
+                importButton,
+                fileSelector,
+                out updateDxfOverlayControls);
+        }
+        else
+        {
+            dxfContent = MakeDxfPreviewContent(
+                dxfPreview,
+                dxfStatus,
+                importButton,
+                fileSelector);
+            updateDxfOverlayControls = static () => { };
+        }
         var textureTab = new ToggleButton { Content = "纹理" };
         var dxfTab = new ToggleButton { Content = "DXF" };
         var sharedView = new SharedPreviewView(
@@ -915,6 +932,81 @@ public sealed class MainWindow : Window
         DxfPreviewControl preview,
         TextBlock status,
         Button importButton,
+        ComboBox? fileSelector)
+    {
+        var fitButton = new Button { Content = "适应窗口" };
+        fitButton.Click += (_, _) => preview.FitToView();
+        var topButton = new Button { Content = "顶视图" };
+        topButton.Click += (_, _) => preview.SetTopView();
+        var isometricButton = new Button { Content = "等轴测" };
+        isometricButton.Click += (_, _) => preview.SetIsometricView();
+        var arrowCheckBox = new CheckBox
+        {
+            Content = "显示方向箭头",
+            IsChecked = preview.ShowDirectionArrows,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        arrowCheckBox.IsCheckedChanged += (_, _) =>
+            preview.ShowDirectionArrows = arrowCheckBox.IsChecked == true;
+        status.Text = preview.Summary;
+        return new Grid
+        {
+            RowDefinitions = new RowDefinitions("Auto,Auto,*,Auto"),
+            RowSpacing = 10,
+            Children =
+            {
+                AtRow(new Grid
+                {
+                    ColumnDefinitions = new ColumnDefinitions("*,Auto,Auto,Auto"),
+                    ColumnSpacing = 10,
+                    Children =
+                    {
+                        Place(importButton, 0),
+                        Place(topButton, 1),
+                        Place(isometricButton, 2),
+                        Place(fitButton, 3)
+                    }
+                }, 0),
+                AtRow(new Grid
+                {
+                    ColumnDefinitions = new ColumnDefinitions("*,Auto"),
+                    ColumnSpacing = 10,
+                    Children =
+                    {
+                        fileSelector is null
+                            ? Place(new TextBlock
+                            {
+                                Text = "左键拖拽环视 · 滚轮缩放 · 中键平移 · Shift + 中键环视 · 双击中键适应窗口",
+                                Foreground = UiTheme.TextFaintBrush,
+                                VerticalAlignment = VerticalAlignment.Center
+                            }, 0)
+                            : Place(new StackPanel
+                            {
+                                Spacing = 5,
+                                Children =
+                                {
+                                    fileSelector,
+                                    new TextBlock
+                                    {
+                                        Text = "左键拖拽环视 · 滚轮缩放 · 中键平移 · Shift + 中键环视 · 双击中键适应窗口",
+                                        Foreground = UiTheme.TextFaintBrush,
+                                        FontSize = 11
+                                    }
+                                }
+                            }, 0),
+                        Place(arrowCheckBox, 1)
+                    }
+                }, 1),
+                AtRow(UiTheme.CanvasCard(preview), 2),
+                AtRow(status, 3)
+            }
+        };
+    }
+
+    private static Control MakePipelineDxfPreviewContent(
+        DxfPreviewControl preview,
+        TextBlock status,
+        Button importButton,
         ComboBox? fileSelector,
         out Action updateOverlayControlAvailability)
     {
@@ -954,7 +1046,7 @@ public sealed class MainWindow : Window
         void UpdateOverlayControlAvailability()
         {
             textureCheckBox.IsEnabled = preview.HasTexture;
-            textureOpacity.IsEnabled = preview.HasTexture;
+            textureOpacity.IsEnabled = preview.HasTexture && preview.ShowTexture;
             arrowCheckBox.IsEnabled = preview.ShowLines;
 
             var statusText = status.Text ?? string.Empty;
@@ -1005,7 +1097,10 @@ public sealed class MainWindow : Window
             RoutingStrategies.Direct | RoutingStrategies.Bubble,
             handledEventsToo: true);
         textureCheckBox.IsCheckedChanged += (_, _) =>
+        {
             preview.ShowTexture = textureCheckBox.IsChecked == true;
+            UpdateOverlayControlAvailability();
+        };
         linesCheckBox.IsCheckedChanged += (_, _) =>
         {
             preview.ShowLines = linesCheckBox.IsChecked == true;
