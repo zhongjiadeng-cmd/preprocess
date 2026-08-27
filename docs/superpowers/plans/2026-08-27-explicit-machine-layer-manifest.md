@@ -254,7 +254,23 @@ Expected: unknown `layer_files` and `--layer-dxf`.
 
 - [ ] **Step 7: Thread selected files through generation and CLI**
 
-Make existing optional generator arguments keyword-only and add `layer_files`. Immediately after normalizing `dxf_dir`, before any output/lock mutation:
+Preserve the existing positional-call compatibility of `owner_token` and
+`block_center_positioning`, then add only `layer_files` as keyword-only:
+
+```python
+def generate_machine_file(
+    dxf_dir: Path,
+    output_name: str | None,
+    layer_step_um: float,
+    first_laser_params: dict[str, object],
+    owner_token: str | None = None,
+    block_center_positioning: bool = False,
+    *,
+    layer_files: list[Path] | None = None,
+) -> Path:
+```
+
+Immediately after normalizing `dxf_dir`, before any output/lock mutation:
 
 ```python
 selected_layer_files = select_layer_dxf_files(dxf_dir, layer_files)
