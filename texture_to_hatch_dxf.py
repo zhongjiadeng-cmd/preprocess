@@ -957,13 +957,15 @@ def _publish_file_no_replace(
 def _reclaim_interrupted_precommit_companions(
     commit_path: Path,
     requested_outputs: list[Path],
+    expected_outputs: dict[str, _OwnedStagedFile],
 ) -> None:
-    """Reclaim only companions proven to be hard links from one owned stage.
+    """Reclaim only companions proven to match a retained and new owned stage.
 
     The DXF path is the public commit marker.  When it is absent, an abrupt
     force-kill may have left one or more earlier companion hard links.  A retry
     may quarantine those names only when every existing companion is the same
-    inode as its counterpart in one private stage created for this DXF bundle.
+    inode as its counterpart in one retained private stage and every retained
+    artifact is byte-identical to the newly generated, sealed bundle.
     """
     if os.path.lexists(commit_path):
         return
@@ -1025,7 +1027,18 @@ def _reclaim_interrupted_precommit_companions(
                         break
                     staged_descriptors.append(descriptor)
                     staged_stat = os.fstat(descriptor)
-                    if not stat.S_ISREG(staged_stat.st_mode) or staged_stat.st_size <= 0:
+                    expected_file = expected_outputs.get(final_path.name)
+                    if (
+                        expected_file is None
+                        or expected_file.expected_size is None
+                        or expected_file.digest is None
+                        or not stat.S_ISREG(staged_stat.st_mode)
+                        or staged_stat.st_size != expected_file.expected_size
+                        or _digest_owned_descriptor(
+                            descriptor,
+                            staged_stat.st_size,
+                        ) != expected_file.digest
+                    ):
                         valid_stage = False
                         break
                     staged_by_name[final_path.name] = (descriptor, staged_stat)
@@ -1889,10 +1902,8 @@ def export_horizontal_hatch_dxf(
             requested_outputs
         ):
             raise ValueError("DXF, block metadata, and preview paths must be distinct")
-        _reclaim_interrupted_precommit_companions(output_path, requested_outputs)
-        for final_path in requested_outputs:
-            if os.path.lexists(final_path):
-                raise FileExistsError(f"output path already exists: {final_path}")
+        if os.path.lexists(output_path):
+            raise FileExistsError(f"output path already exists: {output_path}")
     normalized_angle = float(hatch_angle_deg) % 180.0
     angle_radians = math.radians(normalized_angle)
     cosine = math.cos(angle_radians)
@@ -1957,15 +1968,18 @@ def export_horizontal_hatch_dxf(
         y_mm = top - y_from_top_mm
 
         if normalized_angle == 0.0:
-            image_row = min(int(y_from_top_mm / pixel_height_mm), height_px - 1)
-            starts, ends = black_runs(black_mask[image_row])
-            source_intervals = [
-                (
-                    min(float(start_px) * pixel_width_mm, target_width_mm) + left,
-                    min(float(end_px) * pixel_width_mm, target_width_mm) + left,
-                )
-                for start_px, end_px in zip(starts, ends)
-            ]
+            image_row = int(y_from_top_mm / pixel_height_mm)
+            if 0 <= image_row < height_px:
+                starts, ends = black_runs(black_mask[image_row])
+                source_intervals = [
+                    (
+                        min(float(start_px) * pixel_width_mm, target_width_mm) + left,
+                        min(float(end_px) * pixel_width_mm, target_width_mm) + left,
+                    )
+                    for start_px, end_px in zip(starts, ends)
+                ]
+            else:
+                source_intervals = []
         else:
             sample_step_mm = min(pixel_width_mm, pixel_height_mm)
             sample_count = max(1, math.ceil(scan_width_mm / sample_step_mm))
@@ -2162,6 +2176,25 @@ def export_horizontal_hatch_dxf(
                 temporary_preview,
                 black_mask,
             )
+            expected_outputs = {
+                staged_file.name: staged_file
+                for staged_file in (
+                    temporary_dxf,
+                    temporary_metadata,
+                    temporary_preview,
+                )
+                if staged_file is not None
+            }
+            _reclaim_interrupted_precommit_companions(
+                output_path,
+                requested_outputs,
+                expected_outputs,
+            )
+            for final_path in requested_outputs:
+                if os.path.lexists(final_path):
+                    raise FileExistsError(
+                        f"output path already exists: {final_path}"
+                    )
             # Publish companions first.  The DXF is the public commit marker
             # consumed by the UI and downstream machine conversion.
             for staged_file, destination in (

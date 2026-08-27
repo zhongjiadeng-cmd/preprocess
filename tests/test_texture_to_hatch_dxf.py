@@ -2061,6 +2061,35 @@ class FittedPreviewOutputTests(unittest.TestCase):
             self.assertAlmostEqual(hatch_lines[0][0], -1.25, places=9)
             self.assertAlmostEqual(hatch_lines[0][2], -0.25, places=9)
 
+    def test_nonintegral_height_does_not_repeat_last_raster_row_below_texture(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            input_path = root / "layer.tiff"
+            output_path = root / "layer.dxf"
+            preview_path = root / "layer.preview.png"
+            Image.fromarray(np.array([[255], [0]], dtype=np.uint8)).save(
+                input_path, dpi=(25.4, 25.4)
+            )
+
+            convert_texture_to_dxf(
+                input_path,
+                output_path,
+                1,
+                2.5,
+                0.25,
+                tile_mode="repeat",
+                crop_anchor="top-left",
+                preview_output_path=preview_path,
+            )
+
+            hatch_lines = read_line_coordinates(output_path)
+            self.assertGreater(len(hatch_lines), 0)
+            self.assertGreaterEqual(
+                min(min(line[1], line[3]) for line in hatch_lines),
+                -0.75,
+                "Hatch must stop at the physical bottom of the two-row raster",
+            )
+
     def test_preview_png_is_the_exact_fitted_mask(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -2277,6 +2306,37 @@ class FittedPreviewOutputTests(unittest.TestCase):
             Image.fromarray(np.zeros((2, 2), dtype=np.uint8)).save(
                 input_path, dpi=(25.4, 25.4)
             )
+
+            with self.assertRaises(FileExistsError):
+                convert_texture_to_dxf(
+                    input_path,
+                    dxf_path,
+                    2,
+                    2,
+                    1,
+                    tile_mode="repeat",
+                    voronoi_block_count=0,
+                    preview_output_path=preview_path,
+                )
+
+            self.assertEqual(preview_path.read_bytes(), sentinel)
+            self.assertFalse(dxf_path.exists())
+
+    def test_retry_does_not_trust_forged_same_owner_staging_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            input_path = root / "layer.tiff"
+            dxf_path = root / "layer.dxf"
+            preview_path = root / "layer.preview.png"
+            sentinel = b"foreign preview linked into forged stage"
+            preview_path.write_bytes(sentinel)
+            Image.fromarray(np.zeros((2, 2), dtype=np.uint8)).save(
+                input_path, dpi=(25.4, 25.4)
+            )
+            forged_stage = root / ".layer.dxf.forged.staging"
+            forged_stage.mkdir(mode=0o700)
+            os.link(preview_path, forged_stage / preview_path.name)
+            (forged_stage / dxf_path.name).write_bytes(b"forged staged dxf")
 
             with self.assertRaises(FileExistsError):
                 convert_texture_to_dxf(
