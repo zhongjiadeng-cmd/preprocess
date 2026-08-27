@@ -2457,6 +2457,29 @@ class AvaloniaArtifactValidationSourceContractTests(unittest.TestCase):
             manifest,
         )
 
+    def test_pipeline_passes_each_current_run_dxf_as_explicit_machine_input(self) -> None:
+        source = (
+            Path(__file__).resolve().parents[1] / "GrayscaleLayersMac" / "MainWindow.cs"
+        ).read_text(encoding="utf-8")
+        start = source.index("var machineInfo = CreatePythonProcess(python)")
+        end = source.index("var machineExitCode = await RunProcessAsync", start)
+        setup = source[start:end]
+        self.assertIn("foreach (var layerDxfPath in currentRunDxfFiles)", setup)
+        self.assertIn('machineInfo.ArgumentList.Add("--layer-dxf")', setup)
+        self.assertIn("machineInfo.ArgumentList.Add(layerDxfPath)", setup)
+
+    def test_pipeline_ignores_historical_dxfs_but_revalidates_current_manifest(self) -> None:
+        source = (
+            Path(__file__).resolve().parents[1] / "GrayscaleLayersMac" / "MainWindow.cs"
+        ).read_text(encoding="utf-8")
+        start = source.index("var pathComparer = StringComparer.OrdinalIgnoreCase")
+        end = source.index("步骤 3/3：开始生成机器加工文件", start)
+        manifest = source[start:end]
+        self.assertIn("expectedDxfFiles", manifest)
+        self.assertIn("!IsRegularNonEmptyFile(path)", manifest)
+        self.assertNotIn("unexpectedDxfFiles", manifest)
+        self.assertNotIn("actualDxfFiles", manifest)
+
 
 class AvaloniaHatchAngleSourceContractTests(unittest.TestCase):
     def test_single_layer_uses_step_while_multiple_layers_keep_zero_based_sequence(self) -> None:

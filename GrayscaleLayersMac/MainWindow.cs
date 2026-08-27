@@ -1685,45 +1685,18 @@ public sealed class MainWindow : Window
 
             var pathComparer = StringComparer.OrdinalIgnoreCase;
             var expectedDxfFiles = new HashSet<string>(currentRunDxfFiles, pathComparer);
-            var actualDxfFiles = Directory
-                .EnumerateFiles(
-                    dxfOutputAbsolute,
-                    "layer_*.dxf",
-                    new EnumerationOptions
-                    {
-                        RecurseSubdirectories = false,
-                        MatchCasing = MatchCasing.CaseInsensitive,
-                        ReturnSpecialDirectories = false
-                    })
-                .Select(Path.GetFullPath)
-                .ToHashSet(pathComparer);
-            var unexpectedDxfFiles = actualDxfFiles
-                .Except(expectedDxfFiles, pathComparer)
-                .OrderBy(path => path, pathComparer)
-                .ToArray();
             var missingDxfFiles = expectedDxfFiles
                 .Where(path => !IsRegularNonEmptyFile(path))
                 .OrderBy(path => path, pathComparer)
                 .ToArray();
-            if (unexpectedDxfFiles.Length > 0 || missingDxfFiles.Length > 0)
+            if (missingDxfFiles.Length > 0)
             {
                 var manifestError = new StringBuilder();
                 manifestError.AppendLine(
-                    $"DXF 目录与本次运行清单不一致：意外文件 {unexpectedDxfFiles.Length} 个，" +
-                    $"缺失文件 {missingDxfFiles.Length} 个。");
-                if (unexpectedDxfFiles.Length > 0)
-                {
-                    manifestError.AppendLine("意外文件：");
-                    foreach (var path in unexpectedDxfFiles)
-                        manifestError.AppendLine($"- {path}");
-                }
-                if (missingDxfFiles.Length > 0)
-                {
-                    manifestError.AppendLine("缺失文件：");
-                    foreach (var path in missingDxfFiles)
-                        manifestError.AppendLine($"- {path}");
-                }
-                manifestError.Append("请使用干净的 DXF 目录后重试；程序不会自动删除任何文件。");
+                    $"本次 DXF 清单中有 {missingDxfFiles.Length} 个文件缺失或无效：");
+                foreach (var path in missingDxfFiles)
+                    manifestError.AppendLine($"- {path}");
+                manifestError.Append("请重新运行流程生成完整的本次 DXF 清单。");
                 throw new InvalidOperationException(manifestError.ToString());
             }
             AppendPipelineLog($"已验证本次 DXF 清单：{expectedDxfFiles.Count} 个文件。");
@@ -1764,6 +1737,11 @@ public sealed class MainWindow : Window
                 useBlockCenterMotion
                     ? "--block-center-positioning"
                     : "--no-block-center-positioning");
+            foreach (var layerDxfPath in currentRunDxfFiles)
+            {
+                machineInfo.ArgumentList.Add("--layer-dxf");
+                machineInfo.ArgumentList.Add(layerDxfPath);
+            }
 
             var machineExitCode = await RunProcessAsync(
                 machineInfo,
