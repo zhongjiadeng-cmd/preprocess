@@ -24,6 +24,7 @@ from dxf_to_machine_file import (
     PlannedPatch,
     build_machine_document,
     discover_layer_dxf_files,
+    select_layer_dxf_files,
     extract_layer_number,
     generate_machine_file,
     make_patch,
@@ -163,6 +164,62 @@ class LayerDiscoveryTests(unittest.TestCase):
             (dxf_dir / "unrelated.dxf").write_text("", encoding="ascii")
             with self.assertRaises(ValueError):
                 discover_layer_dxf_files(dxf_dir)
+
+    def test_explicit_manifest_ignores_historical_duplicate_in_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            dxf_dir = Path(directory).resolve()
+            historical = dxf_dir / "layer_1_old.dxf"
+            current = dxf_dir / "layer_01_current.dxf"
+            historical.write_text("old", encoding="ascii")
+            current.write_text("current", encoding="ascii")
+
+            files = select_layer_dxf_files(dxf_dir, [current])
+
+        self.assertEqual(files, [current])
+
+    def test_explicit_manifest_sorts_numeric_layers(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            dxf_dir = Path(directory).resolve()
+            first = dxf_dir / "layer_01_first.dxf"
+            second = dxf_dir / "layer_02_second.dxf"
+            first.write_text("first", encoding="ascii")
+            second.write_text("second", encoding="ascii")
+
+            files = select_layer_dxf_files(dxf_dir, [second, first])
+
+        self.assertEqual(files, [first, second])
+
+    def test_explicit_manifest_rejects_invalid_paths_and_numbers(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            dxf_dir = root / "dxfs"
+            dxf_dir.mkdir()
+            outside = root / "layer_01_outside.dxf"
+            outside.write_text("outside", encoding="ascii")
+            nested_dir = dxf_dir / "nested"
+            nested_dir.mkdir()
+            nested = nested_dir / "layer_01_nested.dxf"
+            nested.write_text("nested", encoding="ascii")
+            first = dxf_dir / "layer_01_first.dxf"
+            duplicate = dxf_dir / "layer_1_duplicate.dxf"
+            third = dxf_dir / "layer_03_third.dxf"
+            invalid = dxf_dir / "not-a-layer.dxf"
+            for path in (first, duplicate, third, invalid):
+                path.write_text("x", encoding="ascii")
+
+            invalid_manifests = (
+                [],
+                [Path("layer_01_first.dxf")],
+                [outside],
+                [nested],
+                [dxf_dir / "layer_02_missing.dxf"],
+                [invalid],
+                [first, duplicate],
+                [first, third],
+            )
+            for manifest in invalid_manifests:
+                with self.subTest(manifest=manifest), self.assertRaises(ValueError):
+                    select_layer_dxf_files(dxf_dir, manifest)
 
 
 class MakePatchTests(unittest.TestCase):
@@ -911,6 +968,51 @@ class GenerateMachineFileTests(unittest.TestCase):
             np.testing.assert_array_equal(second[:, [2, 5]], np.array([[-0.003, -0.003], [-0.003, -0.003]], dtype="<f4"))
             document = json.loads((result / "machine.json").read_text(encoding="utf-8"))
             self.assertEqual(document["laser_params"][0]["power"], 41)
+
+    def test_explicit_manifest_uses_current_file_despite_historical_duplicate(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            dxf_dir = root / "dxfs"
+            dxf_dir.mkdir()
+            historical = dxf_dir / "layer_1_old.dxf"
+            current = dxf_dir / "layer_01_current.dxf"
+            write_dxf(historical, [(90, 90, 0, 91, 91, 0)])
+            write_dxf(current, [(1, 2, 0, 3, 4, 0)])
+
+            result = generate_machine_file(
+                dxf_dir,
+                "job",
+                3,
+                dict(DEFAULT_LASER_PARAMS[0]),
+                layer_files=[current],
+            )
+            patch = np.load(result / "patches" / "0_0.npy", allow_pickle=False)
+
+        np.testing.assert_array_equal(
+            patch[:, [0, 1, 3, 4]],
+            np.array([[1, 2, 3, 4]], dtype="<f4"),
+        )
+
+    def test_invalid_explicit_manifest_leaves_no_machine_artifacts(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            dxf_dir = root / "dxfs"
+            dxf_dir.mkdir()
+            current = dxf_dir / "layer_01_current.dxf"
+            current.write_text("invalid", encoding="ascii")
+
+            with self.assertRaises(ValueError):
+                generate_machine_file(
+                    dxf_dir,
+                    "job",
+                    3,
+                    dict(DEFAULT_LASER_PARAMS[0]),
+                    layer_files=[dxf_dir / "layer_02_missing.dxf"],
+                )
+
+            self.assertFalse(os.path.lexists(root / "job"))
+            self.assertFalse(os.path.lexists(root / ".job.building"))
+            self.assertFalse(os.path.lexists(root / ".job.lock"))
 
     def test_generates_two_layer_block_local_package_and_relative_commands(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -1755,6 +1857,38 @@ class AvaloniaLayerStepSourceContractTests(unittest.TestCase):
 
 
 class CliTests(unittest.TestCase):
+    def test_cli_repeatable_layer_dxf_uses_only_explicit_manifest(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            dxf_dir = root / "dxfs"
+            dxf_dir.mkdir()
+            historical = dxf_dir / "layer_1_old.dxf"
+            first = dxf_dir / "layer_01_current.dxf"
+            second = dxf_dir / "layer_02_current.dxf"
+            write_dxf(historical, [(90, 90, 0, 91, 91, 0)])
+            write_dxf(first, [(1, 2, 0, 3, 4, 0)])
+            write_dxf(second, [(5, 6, 0, 7, 8, 0)])
+
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    str(Path(__file__).parents[1] / "dxf_to_machine_file.py"),
+                    str(dxf_dir), "cli-manifest",
+                    "--layer-dxf", str(second),
+                    "--layer-dxf", str(first),
+                ],
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            self.assertIn("层数: 2", completed.stdout)
+            self.assertEqual(
+                sorted(path.name for path in (root / "cli-manifest" / "patches").iterdir()),
+                ["0_0.npy", "1_0.npy"],
+            )
+
     def test_cli_maps_all_first_group_flags_booleans_and_custom_step(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

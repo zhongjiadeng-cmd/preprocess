@@ -380,6 +380,66 @@ def discover_layer_dxf_files(
     return [path for _, path in numbered_files]
 
 
+def select_layer_dxf_files(
+    dxf_dir: Path,
+    layer_files: list[Path] | None = None,
+    *,
+    require_contiguous: bool = True,
+) -> list[Path]:
+    if layer_files is None:
+        return discover_layer_dxf_files(
+            dxf_dir,
+            require_contiguous=require_contiguous,
+        )
+    if not layer_files:
+        raise ValueError("Explicit layer DXF manifest must not be empty")
+
+    try:
+        resolved_dir = dxf_dir.resolve(strict=True)
+    except (FileNotFoundError, NotADirectoryError) as exc:
+        raise ValueError(
+            f"DXF directory does not exist or is not a directory: {dxf_dir}"
+        ) from exc
+    if not resolved_dir.is_dir():
+        raise ValueError(f"DXF directory does not exist or is not a directory: {dxf_dir}")
+
+    numbered_files: list[tuple[int, Path]] = []
+    for supplied_path in layer_files:
+        if not supplied_path.is_absolute():
+            raise ValueError(f"Explicit layer DXF path must be absolute: {supplied_path}")
+        try:
+            supplied_stat = os.lstat(supplied_path)
+            resolved_path = supplied_path.resolve(strict=True)
+        except (FileNotFoundError, NotADirectoryError) as exc:
+            raise ValueError(
+                f"Explicit layer DXF file does not exist: {supplied_path}"
+            ) from exc
+        if not stat.S_ISREG(supplied_stat.st_mode):
+            raise ValueError(
+                f"Explicit layer DXF path must be a regular file: {supplied_path}"
+            )
+        if resolved_path.parent != resolved_dir:
+            raise ValueError(
+                "Explicit layer DXF must be a direct child of the DXF directory: "
+                f"{supplied_path}"
+            )
+        match = _LAYER_FILENAME_RE.fullmatch(resolved_path.name)
+        if match is None:
+            raise ValueError(f"Invalid layer DXF filename: {resolved_path.name}")
+        numbered_files.append((int(match.group(1)), resolved_path))
+
+    numbered_files.sort(key=lambda item: item[0])
+    layer_numbers = [number for number, _ in numbered_files]
+    if len(set(layer_numbers)) != len(layer_numbers):
+        raise ValueError("Duplicate numeric layer numbers found")
+    if require_contiguous and any(
+        current != previous + 1
+        for previous, current in zip(layer_numbers, layer_numbers[1:])
+    ):
+        raise ValueError("Layer numbers must be contiguous")
+    return [path for _, path in numbered_files]
+
+
 def read_dxf_lines(path: Path) -> np.ndarray:
     """Read LINE entities from a minimal ASCII DXF file."""
     raw_lines = path.read_text(encoding="ascii").splitlines()
@@ -776,6 +836,8 @@ def generate_machine_file(
     first_laser_params: dict[str, object],
     owner_token: str | None = None,
     block_center_positioning: bool = False,
+    *,
+    layer_files: list[Path] | None = None,
 ) -> Path:
     """Generate, validate, and atomically publish a machine-file directory."""
     step_um = _validate_layer_step(layer_step_um)
@@ -783,6 +845,7 @@ def generate_machine_file(
     resolved_owner_token = uuid.uuid4().hex if owner_token is None else owner_token
     _validate_owner_token(resolved_owner_token)
     dxf_dir = dxf_dir.absolute()
+    selected_layer_files = select_layer_dxf_files(dxf_dir, layer_files)
     resolved_name = resolve_output_name(output_name)
     final_path = dxf_dir.parent / resolved_name
     temp_path = dxf_dir.parent / f".{resolved_name}.building"
@@ -812,8 +875,7 @@ def generate_machine_file(
         os.mkdir(temp_path)
         temp_stat = os.lstat(temp_path)
         temp_identity = (temp_stat.st_dev, temp_stat.st_ino)
-        layer_files = discover_layer_dxf_files(dxf_dir)
-        planned_patches = build_patch_plan(layer_files, block_center_positioning)
+        planned_patches = build_patch_plan(selected_layer_files, block_center_positioning)
         (temp_path / "patches").mkdir()
         for index, planned_patch in enumerate(planned_patches):
             patch = make_patch(
@@ -939,6 +1001,7 @@ def _build_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument("dxf_dir", type=Path)
     parser.add_argument("output_name", nargs="?")
     parser.add_argument("--owner-token")
+    parser.add_argument("--layer-dxf", action="append", type=Path)
     parser.add_argument("--layer-step-um", type=_parse_layer_step_argument, default=3)
     parser.add_argument(
         "--block-center-positioning",
@@ -977,7 +1040,8 @@ def _build_argument_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = _build_argument_parser().parse_args(argv)
-    layer_count = len(discover_layer_dxf_files(args.dxf_dir))
+    layer_files = select_layer_dxf_files(args.dxf_dir.absolute(), args.layer_dxf)
+    layer_count = len(layer_files)
     params = {
         key: getattr(args, key)
         for key in DEFAULT_LASER_PARAMS[0]
@@ -989,6 +1053,7 @@ def main(argv: list[str] | None = None) -> int:
         params,
         owner_token=args.owner_token,
         block_center_positioning=args.block_center_positioning,
+        layer_files=layer_files,
     )
     patches = [
         np.load(path, allow_pickle=False)
