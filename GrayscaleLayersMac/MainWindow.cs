@@ -82,7 +82,7 @@ public sealed class MainWindow : Window
         HorizontalAlignment = HorizontalAlignment.Stretch
     };
     private readonly CheckBox _includeBorder = new() { Content = "在 DXF 中写入加工区域边框" };
-    private readonly CheckBox _bidirectionalHatch = new() { Content = "往返填充 Hatch（相邻行方向交替）" };
+    private readonly CheckBox _bidirectionalHatch = new() { Content = "往返填充" };
     private readonly NumericUpDown _blocksBox = MakeNumberBox(9, 1, 100, 0);
     private readonly NumericUpDown _minBlockPercentBox = MakeNumberBox(5, 0.5m, 100, 1);
     private readonly NumericUpDown _maxBlockPercentBox = MakeNumberBox(18, 0.5m, 100, 1);
@@ -128,7 +128,7 @@ public sealed class MainWindow : Window
         HorizontalAlignment = HorizontalAlignment.Stretch
     };
     private readonly CheckBox _pipelineIncludeBorder = new() { Content = "在 DXF 中写入加工区域边框" };
-    private readonly CheckBox _pipelineBidirectionalHatch = new() { Content = "往返填充 Hatch（相邻行方向交替）" };
+    private readonly CheckBox _pipelineBidirectionalHatch = new() { Content = "往返填充" };
     private readonly NumericUpDown _pipelineBlocksBox = MakeNumberBox(9, 1, 100, 0);
     private readonly NumericUpDown _pipelineMinBlockPercentBox = MakeNumberBox(5, 0.5m, 100, 1);
     private readonly NumericUpDown _pipelineMaxBlockPercentBox = MakeNumberBox(18, 0.5m, 100, 1);
