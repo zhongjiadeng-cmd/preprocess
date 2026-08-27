@@ -5,6 +5,7 @@ import io
 import json
 import math
 import os
+import signal
 import stat
 import subprocess
 import sys
@@ -655,7 +656,7 @@ class BlockMetadataTests(unittest.TestCase):
 
             self.assertEqual(
                 observed_publications,
-                [output.name, block_metadata_path(output).name],
+                [block_metadata_path(output).name, output.name],
             )
             self.assertGreater(generated_output.stat().st_size, 0)
             self.assertGreater(generated_metadata.stat().st_size, 0)
@@ -926,10 +927,10 @@ class BlockMetadataTests(unittest.TestCase):
             root = Path(directory)
             output = root / "layer_01.dxf"
             metadata = block_metadata_path(output)
-            foreign = root / "foreign-sentinel.dxf"
+            foreign = root / "foreign-sentinel.json"
             sentinel = b"foreign between-publications sentinel"
             foreign.write_bytes(sentinel)
-            displaced_owned = root / "displaced-owned-output.dxf"
+            displaced_owned = root / "displaced-owned-metadata.json"
             real_publish = hatch._publish_file_no_replace
             publication_count = 0
 
@@ -938,8 +939,8 @@ class BlockMetadataTests(unittest.TestCase):
                 published = real_publish(source, destination)  # type: ignore[arg-type]
                 publication_count += 1
                 if publication_count == 1:
-                    output.rename(displaced_owned)
-                    foreign.rename(output)
+                    metadata.rename(displaced_owned)
+                    foreign.rename(metadata)
                 return published
 
             with mock.patch.object(
@@ -952,8 +953,8 @@ class BlockMetadataTests(unittest.TestCase):
 
             self.assertEqual(publication_count, 2)
             self.assertFalse(os.path.lexists(foreign))
-            self.assertEqual(output.read_bytes(), sentinel)
-            self.assertFalse(os.path.lexists(metadata))
+            self.assertEqual(metadata.read_bytes(), sentinel)
+            self.assertFalse(os.path.lexists(output))
             self.assertTrue(displaced_owned.is_file())
 
     def test_same_size_mutation_through_retained_descriptor_is_not_published(self) -> None:
@@ -1455,9 +1456,10 @@ class BlockMetadataTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             output = root / "layer_01.dxf"
-            foreign = root / "foreign-sentinel.dxf"
+            metadata = block_metadata_path(output)
+            foreign = root / "foreign-sentinel.json"
             foreign.write_bytes(b"foreign rollback sentinel")
-            displaced_owned = root / "owned-output-displaced-by-injection"
+            displaced_owned = root / "owned-metadata-displaced-by-injection"
             publication_count = 0
             injected = False
             real_publish = hatch._publish_file_no_replace
@@ -1478,10 +1480,10 @@ class BlockMetadataTests(unittest.TestCase):
                 destination_name: str,
             ) -> None:
                 nonlocal injected
-                if not injected and source_name == output.name and output.exists():
+                if not injected and source_name == metadata.name and metadata.exists():
                     injected = True
-                    output.rename(displaced_owned)
-                    os.link(foreign, output, follow_symlinks=False)
+                    metadata.rename(displaced_owned)
+                    os.link(foreign, metadata, follow_symlinks=False)
                 real_atomic_rename(
                     source_directory_descriptor,
                     source_name,
@@ -1508,9 +1510,9 @@ class BlockMetadataTests(unittest.TestCase):
                     self.export_blocked_pair(root)
 
             self.assertTrue(injected)
-            self.assertEqual(output.read_bytes(), foreign.read_bytes())
+            self.assertEqual(metadata.read_bytes(), foreign.read_bytes())
             self.assertEqual(
-                (os.stat(output).st_dev, os.stat(output).st_ino),
+                (os.stat(metadata).st_dev, os.stat(metadata).st_ino),
                 (os.stat(foreign).st_dev, os.stat(foreign).st_ino),
             )
 
@@ -1518,10 +1520,11 @@ class BlockMetadataTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             output = root / "layer_01.dxf"
-            foreign = root / "foreign-sentinel.dxf"
+            metadata = block_metadata_path(output)
+            foreign = root / "foreign-sentinel.json"
             sentinel = b"foreign rollback-interrupt sentinel"
             foreign.write_bytes(sentinel)
-            displaced_owned = root / "owned-output-displaced-by-injection"
+            displaced_owned = root / "owned-metadata-displaced-by-injection"
             publication_count = 0
             injected = False
             real_publish = hatch._publish_file_no_replace
@@ -1541,10 +1544,10 @@ class BlockMetadataTests(unittest.TestCase):
                 destination_name: str,
             ) -> None:
                 nonlocal injected
-                if not injected and source_name == output.name and output.exists():
+                if not injected and source_name == metadata.name and metadata.exists():
                     injected = True
-                    output.rename(displaced_owned)
-                    foreign.rename(output)
+                    metadata.rename(displaced_owned)
+                    foreign.rename(metadata)
                     real_atomic_rename(
                         source_directory_descriptor,
                         source_name,
@@ -1579,7 +1582,8 @@ class BlockMetadataTests(unittest.TestCase):
 
             self.assertTrue(injected)
             self.assertFalse(os.path.lexists(foreign))
-            self.assertEqual(output.read_bytes(), sentinel)
+            self.assertEqual(metadata.read_bytes(), sentinel)
+            self.assertFalse(os.path.lexists(output))
             self.assertTrue(displaced_owned.is_file())
 
     def test_failed_publication_does_not_promote_unproven_foreign_quarantine(self) -> None:
@@ -1587,7 +1591,7 @@ class BlockMetadataTests(unittest.TestCase):
             root = Path(directory)
             output = root / "layer_01.dxf"
             metadata = block_metadata_path(output)
-            foreign = root / "foreign-sentinel.dxf"
+            foreign = root / "foreign-sentinel.json"
             sentinel = b"unproven foreign quarantine sentinel"
             foreign.write_bytes(sentinel)
             foreign_identity = (os.stat(foreign).st_dev, os.stat(foreign).st_ino)
@@ -1676,8 +1680,8 @@ class BlockMetadataTests(unittest.TestCase):
             sentinel = b"foreign restore-interrupt sentinel"
             foreign.write_bytes(sentinel)
             foreign_identity = (os.stat(foreign).st_dev, os.stat(foreign).st_ino)
-            displaced_owned = root / "owned-output-displaced-by-injection"
-            quarantine_name = f".{output.name}.published-rollback"
+            displaced_owned = root / "owned-metadata-displaced-by-injection"
+            quarantine_name = f".{metadata.name}.published-rollback"
             publication_count = 0
             swapped = False
             interrupted = False
@@ -1717,12 +1721,12 @@ class BlockMetadataTests(unittest.TestCase):
                 nonlocal swapped, interrupted
                 if (
                     not swapped
-                    and source_name == output.name
+                    and source_name == metadata.name
                     and destination_name == quarantine_name
                 ):
                     swapped = True
-                    output.rename(displaced_owned)
-                    foreign.rename(output)
+                    metadata.rename(displaced_owned)
+                    foreign.rename(metadata)
                     real_atomic_rename(
                         source_directory_descriptor,
                         source_name,
@@ -1734,7 +1738,7 @@ class BlockMetadataTests(unittest.TestCase):
                     swapped
                     and not interrupted
                     and source_name == quarantine_name
-                    and destination_name == output.name
+                    and destination_name == metadata.name
                 ):
                     interrupted = True
                     raise KeyboardInterrupt("injected foreign-restore interruption")
@@ -1777,13 +1781,13 @@ class BlockMetadataTests(unittest.TestCase):
             self.assertTrue(swapped)
             self.assertTrue(interrupted)
             self.assertFalse(os.path.lexists(foreign))
-            self.assertTrue(output.is_file())
-            self.assertEqual(output.read_bytes(), sentinel)
+            self.assertTrue(metadata.is_file())
+            self.assertEqual(metadata.read_bytes(), sentinel)
             self.assertEqual(
-                (os.stat(output).st_dev, os.stat(output).st_ino),
+                (os.stat(metadata).st_dev, os.stat(metadata).st_ino),
                 foreign_identity,
             )
-            self.assertFalse(os.path.lexists(metadata))
+            self.assertFalse(os.path.lexists(output))
             self.assertTrue(displaced_owned.is_file())
 
             staging_directories = [path for path in root.iterdir() if path.is_dir()]
@@ -1823,7 +1827,7 @@ class BlockMetadataTests(unittest.TestCase):
                 destination_name: str,
             ) -> None:
                 nonlocal interrupted
-                if not interrupted and source_name == output.name:
+                if not interrupted and source_name == metadata.name:
                     interrupted = True
                     raise KeyboardInterrupt("injected pre-rollback-move interrupt")
                 real_atomic_rename(
@@ -2002,6 +2006,61 @@ class BlockMetadataTests(unittest.TestCase):
 
 
 class FittedPreviewOutputTests(unittest.TestCase):
+    def test_cli_cooperative_sigterm_raises_through_bundle_cleanup(self) -> None:
+        previous = signal.getsignal(signal.SIGTERM)
+
+        with hatch._cooperative_termination():
+            handler = signal.getsignal(signal.SIGTERM)
+            self.assertTrue(callable(handler))
+            with self.assertRaisesRegex(
+                hatch.CooperativeTermination,
+                "termination requested",
+            ):
+                handler(signal.SIGTERM, None)  # type: ignore[operator]
+
+        self.assertIs(signal.getsignal(signal.SIGTERM), previous)
+
+    def test_nonintegral_target_emits_exact_hatch_raster_registration(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            input_path = root / "layer.tiff"
+            output_path = root / "layer.dxf"
+            preview_path = root / "layer.preview.png"
+            Image.fromarray(np.array([[0, 255]], dtype=np.uint8)).save(
+                input_path, dpi=(25.4, 25.4)
+            )
+            stdout = io.StringIO()
+
+            with redirect_stdout(stdout):
+                convert_texture_to_dxf(
+                    input_path,
+                    output_path,
+                    2.5,
+                    1,
+                    0.5,
+                    tile_mode="repeat",
+                    crop_anchor="top-left",
+                    preview_output_path=preview_path,
+                )
+
+            registration_line = next(
+                line for line in stdout.getvalue().splitlines()
+                if line.startswith("PREVIEW_REGISTRATION_JSON:")
+            )
+            registration = json.loads(registration_line.split(":", 1)[1])
+            self.assertEqual(registration["version"], 1)
+            self.assertEqual(registration["target_width_mm"], 2.5)
+            self.assertEqual(registration["target_height_mm"], 1)
+            self.assertAlmostEqual(registration["pixel_width_mm"], 1, places=6)
+            self.assertAlmostEqual(registration["pixel_height_mm"], 1, places=6)
+            self.assertEqual(registration["pixel_columns"], 2)
+            self.assertEqual(registration["pixel_rows"], 1)
+
+            hatch_lines = read_line_coordinates(output_path)
+            self.assertGreater(len(hatch_lines), 0)
+            self.assertAlmostEqual(hatch_lines[0][0], -1.25, places=9)
+            self.assertAlmostEqual(hatch_lines[0][2], -0.25, places=9)
+
     def test_preview_png_is_the_exact_fitted_mask(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -2138,6 +2197,164 @@ class FittedPreviewOutputTests(unittest.TestCase):
             self.assertEqual(preview_path.read_bytes(), b"foreign")
             self.assertFalse(dxf_path.exists())
 
+    def test_interrupted_precommit_publications_are_invisible_and_retryable(self) -> None:
+        for interrupt_after in (1, 2):
+            with self.subTest(interrupt_after=interrupt_after), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                input_path = root / "layer.tiff"
+                dxf_path = root / "layer.dxf"
+                preview_path = root / "layer.preview.png"
+                metadata_path = block_metadata_path(dxf_path)
+                Image.fromarray(np.zeros((2, 2), dtype=np.uint8)).save(
+                    input_path, dpi=(25.4, 25.4)
+                )
+                real_publish = hatch._publish_file_no_replace
+                publication_count = 0
+
+                def interrupt_after_publication(source: object, destination: Path) -> object:
+                    nonlocal publication_count
+                    published = real_publish(source, destination)  # type: ignore[arg-type]
+                    publication_count += 1
+                    if publication_count == interrupt_after:
+                        raise KeyboardInterrupt("simulated force-kill publication boundary")
+                    return published
+
+                with (
+                    mock.patch.object(
+                        hatch,
+                        "_publish_file_no_replace",
+                        side_effect=interrupt_after_publication,
+                    ),
+                    mock.patch.object(hatch, "_rollback_published_file", return_value=None),
+                ):
+                    with self.assertRaisesRegex(
+                        KeyboardInterrupt,
+                        "simulated force-kill publication boundary",
+                    ):
+                        convert_texture_to_dxf(
+                            input_path,
+                            dxf_path,
+                            2,
+                            2,
+                            1,
+                            tile_mode="repeat",
+                            voronoi_block_count=2,
+                            min_block_area_mm2=0,
+                            max_block_area_mm2=4,
+                            preview_output_path=preview_path,
+                        )
+
+                self.assertFalse(
+                    dxf_path.exists(),
+                    "DXF is the commit marker and must not be public precommit",
+                )
+                self.assertTrue(preview_path.exists() or metadata_path.exists())
+
+                convert_texture_to_dxf(
+                    input_path,
+                    dxf_path,
+                    2,
+                    2,
+                    1,
+                    tile_mode="repeat",
+                    voronoi_block_count=2,
+                    min_block_area_mm2=0,
+                    max_block_area_mm2=4,
+                    preview_output_path=preview_path,
+                )
+                self.assertTrue(dxf_path.is_file())
+                self.assertTrue(preview_path.is_file())
+                self.assertTrue(metadata_path.is_file())
+
+    def test_retry_never_reclaims_unproven_foreign_companion(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            input_path = root / "layer.tiff"
+            dxf_path = root / "layer.dxf"
+            preview_path = root / "layer.preview.png"
+            sentinel = b"foreign preview sentinel"
+            preview_path.write_bytes(sentinel)
+            Image.fromarray(np.zeros((2, 2), dtype=np.uint8)).save(
+                input_path, dpi=(25.4, 25.4)
+            )
+
+            with self.assertRaises(FileExistsError):
+                convert_texture_to_dxf(
+                    input_path,
+                    dxf_path,
+                    2,
+                    2,
+                    1,
+                    tile_mode="repeat",
+                    voronoi_block_count=0,
+                    preview_output_path=preview_path,
+                )
+
+            self.assertEqual(preview_path.read_bytes(), sentinel)
+            self.assertFalse(dxf_path.exists())
+
+    def test_invalid_cross_directory_bundle_does_not_reclaim_same_named_companion(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            other = root / "other"
+            other.mkdir()
+            input_path = root / "layer.tiff"
+            dxf_path = root / "layer.dxf"
+            local_preview = root / "layer.preview.png"
+            cross_directory_preview = other / local_preview.name
+            Image.fromarray(np.zeros((2, 2), dtype=np.uint8)).save(
+                input_path, dpi=(25.4, 25.4)
+            )
+            real_publish = hatch._publish_file_no_replace
+
+            def interrupt_after_preview(source: object, destination: Path) -> object:
+                published = real_publish(source, destination)  # type: ignore[arg-type]
+                raise KeyboardInterrupt("leave owned precommit preview")
+
+            with (
+                mock.patch.object(
+                    hatch,
+                    "_publish_file_no_replace",
+                    side_effect=interrupt_after_preview,
+                ),
+                mock.patch.object(hatch, "_rollback_published_file", return_value=None),
+            ):
+                with self.assertRaisesRegex(KeyboardInterrupt, "owned precommit"):
+                    convert_texture_to_dxf(
+                        input_path,
+                        dxf_path,
+                        2,
+                        2,
+                        1,
+                        tile_mode="repeat",
+                        voronoi_block_count=0,
+                        preview_output_path=local_preview,
+                    )
+
+            original_identity = (local_preview.stat().st_dev, local_preview.stat().st_ino)
+            cross_directory_preview.write_bytes(b"foreign same-name companion")
+
+            with self.assertRaisesRegex(ValueError, "same output directory"):
+                convert_texture_to_dxf(
+                    input_path,
+                    dxf_path,
+                    2,
+                    2,
+                    1,
+                    tile_mode="repeat",
+                    voronoi_block_count=0,
+                    preview_output_path=cross_directory_preview,
+                )
+
+            self.assertEqual(
+                (local_preview.stat().st_dev, local_preview.stat().st_ino),
+                original_identity,
+            )
+            self.assertEqual(
+                cross_directory_preview.read_bytes(),
+                b"foreign same-name companion",
+            )
+
 
 class AvaloniaArtifactValidationSourceContractTests(unittest.TestCase):
     def test_validates_each_expected_artifact_before_manifest_and_preview_acceptance(self) -> None:
@@ -2217,7 +2434,7 @@ class AvaloniaTextureOverlaySourceContractTests(unittest.TestCase):
 
         # The model bounds have no public getter; this source contract protects the
         # public LoadTexture/LoadFile ordering invariant at its only assignment.
-        self.assertIn("_modelBounds = HasTexture ? _textureBounds : bounds;", load_file)
+        self.assertIn("_modelBounds = HasTexture ? _textureFrameBounds : bounds;", load_file)
 
 
 class AvaloniaLayerOverlayWiringTests(unittest.TestCase):
@@ -2273,6 +2490,18 @@ class AvaloniaLayerOverlayWiringTests(unittest.TestCase):
         self.assertIn('hatchInfo.ArgumentList.Add("--preview-output")', loop)
         self.assertIn("ValidateGeneratedLayerArtifacts(", loop)
         self.assertIn("new DxfLayerPreviewItem(", loop)
+
+    def test_only_pipeline_preview_opts_into_initial_top_view(self) -> None:
+        source = (ROOT / "GrayscaleLayersMac" / "MainWindow.cs").read_text()
+        self.assertIn(
+            "private readonly DxfPreviewControl _pipelineDxfPreview = "
+            "new(startInTopView: true);",
+            source,
+        )
+        self.assertIn(
+            "private readonly DxfPreviewControl _hatchDxfPreview = new();",
+            source,
+        )
 
     def test_selector_clears_stale_texture_before_loading_new_item(self) -> None:
         source = (ROOT / "GrayscaleLayersMac" / "MainWindow.cs").read_text()

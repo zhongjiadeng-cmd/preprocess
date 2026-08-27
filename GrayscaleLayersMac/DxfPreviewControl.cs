@@ -40,9 +40,10 @@ public sealed class DxfPreviewControl : Control, IDisposable
     private double _yaw = -35 * Math.PI / 180;
     private double _tilt = 55 * Math.PI / 180;
     private bool _isOrbiting;
-    private readonly DxfOverlayState _overlay = new();
+    private readonly DxfOverlayState _overlay;
     private Bitmap? _textureBitmap;
     private Rect _textureBounds;
+    private Rect _textureFrameBounds;
     private static readonly Color[] LayerColors =
     [
         Color.FromRgb(66, 165, 245),
@@ -104,13 +105,22 @@ public sealed class DxfPreviewControl : Control, IDisposable
             InvalidateVisual();
         }
     }
-    public DxfPreviewControl()
+    public bool IsTopView =>
+        Math.Abs(_yaw) < 1e-7 && Math.Abs(_tilt) < 1e-7;
+
+    public DxfPreviewControl(bool startInTopView = false)
     {
+        _overlay = new DxfOverlayState(startInTopView);
         MinHeight = 360;
         HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch;
         VerticalAlignment = Avalonia.Layout.VerticalAlignment.Stretch;
         ClipToBounds = true;
         Cursor = new Cursor(StandardCursorType.Arrow);
+        if (startInTopView)
+        {
+            _yaw = 0;
+            _tilt = 0;
+        }
     }
 
     public void Clear()
@@ -151,10 +161,14 @@ public sealed class DxfPreviewControl : Control, IDisposable
     }
 
     public void LoadTexture(string path, double widthMm, double heightMm)
+        => LoadTexture(
+            path,
+            new DxfTextureRegistration(
+                widthMm, heightMm, widthMm, heightMm, 1, 1));
+
+    public void LoadTexture(string path, DxfTextureRegistration registration)
     {
-        if (!double.IsFinite(widthMm) || widthMm <= 0 ||
-            !double.IsFinite(heightMm) || heightMm <= 0)
-            throw new ArgumentOutOfRangeException(nameof(widthMm));
+        ArgumentNullException.ThrowIfNull(registration);
 
         var file = new FileInfo(path);
         file.Refresh();
@@ -168,12 +182,24 @@ public sealed class DxfPreviewControl : Control, IDisposable
             candidate = new Bitmap(path);
             if (candidate.PixelSize.Width <= 0 || candidate.PixelSize.Height <= 0)
                 throw new InvalidDataException("配准纹理像素尺寸无效。");
+            if (candidate.PixelSize.Width != registration.PixelColumns ||
+                candidate.PixelSize.Height != registration.PixelRows)
+                throw new InvalidDataException("配准纹理像素尺寸与 Hatch 采样信息不一致。");
 
             var previous = _textureBitmap;
             _textureBitmap = candidate;
             candidate = null;
-            _textureBounds = new Rect(-widthMm / 2, -heightMm / 2, widthMm, heightMm);
-            _modelBounds = _textureBounds;
+            _textureFrameBounds = new Rect(
+                -registration.FrameWidthMm / 2,
+                -registration.FrameHeightMm / 2,
+                registration.FrameWidthMm,
+                registration.FrameHeightMm);
+            _textureBounds = new Rect(
+                registration.RasterLeftMm,
+                registration.RasterBottomMm,
+                registration.RasterRightMm - registration.RasterLeftMm,
+                registration.RasterTopMm - registration.RasterBottomMm);
+            _modelBounds = _textureFrameBounds;
             _overlay.SetTextureAvailable(true);
             previous?.Dispose();
             FitToView();
@@ -189,6 +215,7 @@ public sealed class DxfPreviewControl : Control, IDisposable
         _textureBitmap?.Dispose();
         _textureBitmap = null;
         _textureBounds = default;
+        _textureFrameBounds = default;
         _overlay.SetTextureAvailable(false);
         InvalidateVisual();
     }
@@ -205,7 +232,7 @@ public sealed class DxfPreviewControl : Control, IDisposable
         var segments = secondPass.Segments;
         _segments = segments;
         _rowGroups = BuildRowGroups(segments);
-        _modelBounds = HasTexture ? _textureBounds : bounds;
+        _modelBounds = HasTexture ? _textureFrameBounds : bounds;
         _minZ = secondPass.MinZ;
         _maxZ = secondPass.MaxZ;
         FitToView();
@@ -252,6 +279,19 @@ public sealed class DxfPreviewControl : Control, IDisposable
         var topLeft = ToScreen(_textureBounds.Left, _textureBounds.Bottom, 0, scale, center);
         var bottomRight = ToScreen(_textureBounds.Right, _textureBounds.Top, 0, scale, center);
         var destination = new Rect(topLeft, bottomRight);
+        var clipTopLeft = ToScreen(
+            _textureFrameBounds.Left,
+            _textureFrameBounds.Bottom,
+            0,
+            scale,
+            center);
+        var clipBottomRight = ToScreen(
+            _textureFrameBounds.Right,
+            _textureFrameBounds.Top,
+            0,
+            scale,
+            center);
+        using (context.PushClip(new Rect(clipTopLeft, clipBottomRight)))
         using (context.PushOpacity(_overlay.TextureOpacity))
             context.DrawImage(_textureBitmap, new Rect(_textureBitmap.Size), destination);
     }
@@ -424,9 +464,6 @@ public sealed class DxfPreviewControl : Control, IDisposable
         var vertical = away * Math.Cos(_tilt) + dz * Math.Sin(_tilt);
         return new Vector(horizontal, vertical);
     }
-
-    private bool IsTopView =>
-        Math.Abs(_yaw) < 1e-7 && Math.Abs(_tilt) < 1e-7;
 
     private static double NormalizeAngle(double angle)
     {

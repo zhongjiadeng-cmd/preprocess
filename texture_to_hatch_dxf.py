@@ -19,9 +19,11 @@ import io
 import json
 import math
 import os
+import signal
 import stat
 import sys
 import tempfile
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TextIO
@@ -36,6 +38,24 @@ MAX_PREVIEW_PNG_BYTES = 64 * 1024 * 1024
 
 class RepeatPeriodNotFoundError(ValueError):
     """图片在指定方向上没有可可靠识别的重复周期。"""
+
+
+class CooperativeTermination(BaseException):
+    """Raised from SIGTERM so owned publication cleanup can complete."""
+
+
+@contextmanager
+def _cooperative_termination():
+    previous = signal.getsignal(signal.SIGTERM)
+
+    def request_termination(_signal_number: int, _frame: object) -> None:
+        raise CooperativeTermination("termination requested")
+
+    signal.signal(signal.SIGTERM, request_termination)
+    try:
+        yield
+    finally:
+        signal.signal(signal.SIGTERM, previous)
 
 
 @dataclass(frozen=True)
@@ -934,6 +954,170 @@ def _publish_file_no_replace(
         raise
 
 
+def _reclaim_interrupted_precommit_companions(
+    commit_path: Path,
+    requested_outputs: list[Path],
+) -> None:
+    """Reclaim only companions proven to be hard links from one owned stage.
+
+    The DXF path is the public commit marker.  When it is absent, an abrupt
+    force-kill may have left one or more earlier companion hard links.  A retry
+    may quarantine those names only when every existing companion is the same
+    inode as its counterpart in one private stage created for this DXF bundle.
+    """
+    if os.path.lexists(commit_path):
+        return
+    companions = [path for path in requested_outputs if path != commit_path]
+    existing_companions = [path for path in companions if os.path.lexists(path)]
+    if not existing_companions:
+        return
+
+    parent_descriptor = _open_directory_no_follow(commit_path.parent)
+    candidate_prefix = f".{commit_path.name}."
+    candidate_suffix = ".staging"
+    try:
+        with os.scandir(parent_descriptor) as entries:
+            candidate_names = [
+                entry.name
+                for entry in entries
+                if entry.name.startswith(candidate_prefix)
+                and entry.name.endswith(candidate_suffix)
+            ]
+        for candidate_name in candidate_names:
+            directory_descriptor: int | None = None
+            staging_parent_descriptor: int | None = None
+            staged_descriptors: list[int] = []
+            published_descriptors: list[int] = []
+            try:
+                no_follow = getattr(os, "O_NOFOLLOW", 0)
+                if not no_follow:
+                    raise OSError(
+                        errno.ENOTSUP,
+                        "O_NOFOLLOW is required for interrupted bundle recovery",
+                    )
+                directory_descriptor = os.open(
+                    candidate_name,
+                    os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | no_follow,
+                    dir_fd=parent_descriptor,
+                )
+                directory_stat = os.fstat(directory_descriptor)
+                if (
+                    not stat.S_ISDIR(directory_stat.st_mode)
+                    or stat.S_IMODE(directory_stat.st_mode) not in {0o500, 0o700}
+                    or (
+                        hasattr(os, "geteuid")
+                        and directory_stat.st_uid != os.geteuid()
+                    )
+                ):
+                    continue
+
+                staged_by_name: dict[str, tuple[int, os.stat_result]] = {}
+                valid_stage = True
+                for final_path in requested_outputs:
+                    try:
+                        descriptor = os.open(
+                            final_path.name,
+                            os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | no_follow,
+                            dir_fd=directory_descriptor,
+                        )
+                    except OSError:
+                        valid_stage = False
+                        break
+                    staged_descriptors.append(descriptor)
+                    staged_stat = os.fstat(descriptor)
+                    if not stat.S_ISREG(staged_stat.st_mode) or staged_stat.st_size <= 0:
+                        valid_stage = False
+                        break
+                    staged_by_name[final_path.name] = (descriptor, staged_stat)
+                if not valid_stage:
+                    continue
+
+                resources = _OwnedHatchResources()
+                parent_stat = os.fstat(parent_descriptor)
+                staging_parent_descriptor = os.dup(parent_descriptor)
+                staging_directory = _OwnedStagingDirectory(
+                    commit_path.parent / candidate_name,
+                    directory_descriptor,
+                    (directory_stat.st_dev, directory_stat.st_ino),
+                    staging_parent_descriptor,
+                    (parent_stat.st_dev, parent_stat.st_ino),
+                    resources,
+                )
+                resources.staging_directory = staging_directory
+                proven_files: list[_OwnedPublishedFile] = []
+                all_existing_are_owned = True
+                for companion in existing_companions:
+                    staged_descriptor, staged_stat = staged_by_name[companion.name]
+                    try:
+                        public_descriptor = os.open(
+                            companion.name,
+                            os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | no_follow,
+                            dir_fd=parent_descriptor,
+                        )
+                    except OSError:
+                        all_existing_are_owned = False
+                        break
+                    published_descriptors.append(public_descriptor)
+                    public_stat = os.fstat(public_descriptor)
+                    identity = (staged_stat.st_dev, staged_stat.st_ino)
+                    if (
+                        not stat.S_ISREG(public_stat.st_mode)
+                        or (public_stat.st_dev, public_stat.st_ino) != identity
+                        or public_stat.st_size != staged_stat.st_size
+                    ):
+                        all_existing_are_owned = False
+                        break
+                    proven_files.append(_OwnedPublishedFile(
+                        companion,
+                        companion.name,
+                        staged_descriptor,
+                        identity,
+                        staged_stat.st_size,
+                        _digest_owned_descriptor(
+                            staged_descriptor,
+                            staged_stat.st_size,
+                        ),
+                        os.dup(parent_descriptor),
+                        staging_directory,
+                    ))
+                if not all_existing_are_owned:
+                    for proven_file in proven_files:
+                        os.close(proven_file.directory_descriptor)
+                    continue
+
+                for proven_file in proven_files:
+                    try:
+                        _rollback_published_file(proven_file)
+                    finally:
+                        os.close(proven_file.directory_descriptor)
+                return
+            except (OSError, ValueError):
+                continue
+            finally:
+                for descriptor in reversed(published_descriptors):
+                    try:
+                        os.close(descriptor)
+                    except OSError:
+                        pass
+                for descriptor in reversed(staged_descriptors):
+                    try:
+                        os.close(descriptor)
+                    except OSError:
+                        pass
+                if directory_descriptor is not None:
+                    try:
+                        os.close(directory_descriptor)
+                    except OSError:
+                        pass
+                if staging_parent_descriptor is not None:
+                    try:
+                        os.close(staging_parent_descriptor)
+                    except OSError:
+                        pass
+    finally:
+        os.close(parent_descriptor)
+
+
 def validate_hatch_output_pair(
     dxf_path: _OwnedStagedFile,
     metadata_path: _OwnedStagedFile,
@@ -1705,6 +1889,7 @@ def export_horizontal_hatch_dxf(
             requested_outputs
         ):
             raise ValueError("DXF, block metadata, and preview paths must be distinct")
+        _reclaim_interrupted_precommit_companions(output_path, requested_outputs)
         for final_path in requested_outputs:
             if os.path.lexists(final_path):
                 raise FileExistsError(f"output path already exists: {final_path}")
@@ -1977,10 +2162,12 @@ def export_horizontal_hatch_dxf(
                 temporary_preview,
                 black_mask,
             )
+            # Publish companions first.  The DXF is the public commit marker
+            # consumed by the UI and downstream machine conversion.
             for staged_file, destination in (
-                (temporary_dxf, output_path),
                 (temporary_metadata, block_metadata_output),
                 (temporary_preview, preview_output),
+                (temporary_dxf, output_path),
             ):
                 if staged_file is not None and destination is not None:
                     _publish_file_no_replace(staged_file, destination)
@@ -2180,6 +2367,20 @@ def convert_texture_to_dxf(
     print(f"像素尺寸: {pixel_width_mm:.8f} × {pixel_height_mm:.8f} mm")
     print(f"目标栅格: {target_width_px} × {target_height_px} px")
     print(f"目标尺寸: {target_width_mm:g} × {target_height_mm:g} mm")
+    print("PREVIEW_REGISTRATION_JSON:" + json.dumps(
+        {
+            "version": 1,
+            "target_width_mm": target_width_mm,
+            "target_height_mm": target_height_mm,
+            "pixel_width_mm": pixel_width_mm,
+            "pixel_height_mm": pixel_height_mm,
+            "pixel_columns": target_width_px,
+            "pixel_rows": target_height_px,
+        },
+        ensure_ascii=True,
+        allow_nan=False,
+        separators=(",", ":"),
+    ))
     mode_names = {
         "unit": "完整重复单元",
         "repeat": "周期重复",
@@ -2390,29 +2591,30 @@ def main() -> None:
             ensure_ascii=False,
         ))
         return
-    convert_texture_to_dxf(
-        args.input,
-        args.output,
-        args.width,
-        args.height,
-        args.spacing,
-        hatch_angle_deg=args.angle,
-        black_threshold=args.threshold,
-        fallback_dpi=args.dpi,
-        crop_anchor=args.anchor,
-        tile_mode=args.tile_mode,
-        include_border=args.border,
-        bidirectional=args.bidirectional,
-        voronoi_block_count=args.blocks,
-        min_block_area_mm2=args.min_block_area,
-        max_block_area_mm2=args.max_block_area,
-        boundary_blur_mm=args.boundary_blur,
-        boundary_correlation_mm=args.boundary_correlation,
-        random_seed=args.seed,
-        voronoi_lloyd_iterations=args.voronoi_lloyd_iterations,
-        voronoi_attempts=args.voronoi_attempts,
-        preview_output_path=args.preview_output,
-    )
+    with _cooperative_termination():
+        convert_texture_to_dxf(
+            args.input,
+            args.output,
+            args.width,
+            args.height,
+            args.spacing,
+            hatch_angle_deg=args.angle,
+            black_threshold=args.threshold,
+            fallback_dpi=args.dpi,
+            crop_anchor=args.anchor,
+            tile_mode=args.tile_mode,
+            include_border=args.border,
+            bidirectional=args.bidirectional,
+            voronoi_block_count=args.blocks,
+            min_block_area_mm2=args.min_block_area,
+            max_block_area_mm2=args.max_block_area,
+            boundary_blur_mm=args.boundary_blur,
+            boundary_correlation_mm=args.boundary_correlation,
+            random_seed=args.seed,
+            voronoi_lloyd_iterations=args.voronoi_lloyd_iterations,
+            voronoi_attempts=args.voronoi_attempts,
+            preview_output_path=args.preview_output,
+        )
 
 
 if __name__ == "__main__":

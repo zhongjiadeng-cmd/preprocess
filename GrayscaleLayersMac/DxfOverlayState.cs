@@ -10,6 +10,11 @@ public sealed class DxfOverlayState
     public bool ShowDirectionArrows { get; set; } = true;
     public bool IsTopView { get; set; }
 
+    public DxfOverlayState(bool startInTopView = false)
+    {
+        IsTopView = startInTopView;
+    }
+
     public double TextureOpacity
     {
         get => _textureOpacity;

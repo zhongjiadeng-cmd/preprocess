@@ -1,3 +1,4 @@
+using System;
 using GrayscaleLayersMac;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 
@@ -38,5 +39,43 @@ public sealed class DxfOverlayStateTests
         var state = new DxfOverlayState { ShowLines = false };
 
         Assert.IsFalse(state.ShouldDrawDirectionArrows);
+    }
+
+    [TestMethod]
+    public void TextureOpacityRejectsNonFiniteValues()
+    {
+        var state = new DxfOverlayState();
+
+        Assert.ThrowsExactly<ArgumentOutOfRangeException>(() =>
+            state.TextureOpacity = double.NaN);
+        Assert.ThrowsExactly<ArgumentOutOfRangeException>(() =>
+            state.TextureOpacity = double.PositiveInfinity);
+        Assert.ThrowsExactly<ArgumentOutOfRangeException>(() =>
+            state.TextureOpacity = double.NegativeInfinity);
+    }
+
+    [TestMethod]
+    public void RemovingTextureAvailabilityPreservesVisibilityPreference()
+    {
+        var state = new DxfOverlayState { ShowTexture = true };
+        state.SetTextureAvailable(true);
+
+        state.SetTextureAvailable(false);
+
+        Assert.IsTrue(state.ShowTexture);
+        Assert.IsFalse(state.ShouldDrawTexture);
+    }
+
+    [TestMethod]
+    public void PipelinePreviewCanStartTopViewWithoutChangingStandaloneDefault()
+    {
+        var standalone = new DxfOverlayState();
+        var pipeline = new DxfOverlayState(startInTopView: true);
+
+        Assert.IsFalse(standalone.IsTopView);
+        Assert.IsTrue(pipeline.IsTopView);
+
+        pipeline.IsTopView = false;
+        Assert.IsFalse(pipeline.IsTopView);
     }
 }

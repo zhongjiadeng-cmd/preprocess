@@ -168,7 +168,7 @@ public sealed class MainWindow : Window
     private readonly NumericUpDown _pipelineLaserOnShiftBox = MakeNumberBox(18, 1, int.MaxValue, 0);
     private readonly NumericUpDown _pipelineDelayLaserOffBox = MakeNumberBox(32, 1, int.MaxValue, 0);
     private readonly NumericUpDown _pipelineDelayLaserOnBox = MakeNumberBox(0, 1, int.MaxValue, 0);
-    private readonly DxfPreviewControl _pipelineDxfPreview = new();
+    private readonly DxfPreviewControl _pipelineDxfPreview = new(startInTopView: true);
     private readonly TextBlock _pipelineDxfPreviewStatus = new() { Foreground = UiTheme.TextSecondaryBrush };
     private readonly ObservableCollection<DxfLayerPreviewItem> _pipelineDxfFiles = [];
     private readonly ComboBox _pipelineDxfSelector = new()
@@ -218,7 +218,7 @@ public sealed class MainWindow : Window
             try
             {
                 _pipelineDxfPreview.LoadTexture(
-                    item.TexturePath!, item.WidthMm, item.HeightMm);
+                    item.TexturePath!, item.TextureRegistration!);
             }
             catch (Exception error)
             {
@@ -1648,9 +1648,17 @@ public sealed class MainWindow : Window
                     _pipelineVoronoiSeedBox,
                     layerVoronoiSeed);
 
+                DxfTextureRegistration? textureRegistration = null;
                 var hatchExitCode = await RunProcessAsync(
                     hatchInfo,
-                    line => AppendPipelineLog($"    {line}"),
+                    line =>
+                    {
+                        if (DxfTextureRegistration.TryParseProcessOutput(
+                                line,
+                                out var emittedRegistration))
+                            textureRegistration = emittedRegistration;
+                        AppendPipelineLog($"    {line}");
+                    },
                     _cancellation.Token);
                 if (hatchExitCode != 0)
                     throw new InvalidOperationException(
@@ -1659,13 +1667,15 @@ public sealed class MainWindow : Window
                     outputFile,
                     previewFile,
                     (_pipelineBlocksBox.Value ?? 0) > 0);
+                if (textureRegistration is null)
+                    throw new InvalidOperationException(
+                        "Hatch 生成结束，但未返回预览配准信息。");
                 currentRunDxfFiles.Add(Path.GetFullPath(outputFile));
                 var previewItem = new DxfLayerPreviewItem(
                     $"第 {index + 1:D2} 层 · {Path.GetFileName(outputFile)}",
                     outputFile,
                     previewFile,
-                    (double)width,
-                    (double)height);
+                    textureRegistration);
                 _pipelineDxfFiles.Add(previewItem);
                 _pipelineDxfSelector.SelectedItem = previewItem;
             }
@@ -1912,39 +1922,9 @@ public sealed class MainWindow : Window
         Process process,
         CancellationToken cancellationToken)
     {
-        using var cancellationRegistration = cancellationToken.Register(
-            static state => TryTerminateProcess((Process)state!),
-            process);
-        try
-        {
-            await process.WaitForExitAsync(cancellationToken);
-        }
-        catch (OperationCanceledException)
-        {
-            TryTerminateProcess(process);
-            try
-            {
-                await process.WaitForExitAsync(CancellationToken.None);
-            }
-            catch
-            {
-                // Preserve the cancellation after making a best effort to reap the process.
-            }
-            throw;
-        }
-    }
-
-    private static void TryTerminateProcess(Process process)
-    {
-        try
-        {
-            if (!process.HasExited)
-                process.Kill(entireProcessTree: true);
-        }
-        catch
-        {
-            // The process may have exited between the state check and termination.
-        }
+        await ProcessCancellation.WaitForExitOrTerminateAsync(
+            process,
+            cancellationToken);
     }
 
     private static async Task LoadTexturePreviewAsync(
@@ -2050,46 +2030,11 @@ public sealed class MainWindow : Window
         process.OutputDataReceived += (_, e) => { if (e.Data is not null) appendLog(e.Data); };
         process.ErrorDataReceived += (_, e) => { if (e.Data is not null) appendLog($"错误：{e.Data}"); };
         process.Start();
-        using var cancellationRegistration = cancellationToken.Register(() =>
-        {
-            try
-            {
-                if (!process.HasExited)
-                    process.Kill(entireProcessTree: true);
-            }
-            catch
-            {
-                // The process may already have exited.
-            }
-        });
         process.BeginOutputReadLine();
         process.BeginErrorReadLine();
-        try
-        {
-            await process.WaitForExitAsync(cancellationToken);
-        }
-        catch (OperationCanceledException)
-        {
-            try
-            {
-                if (!process.HasExited)
-                    process.Kill(entireProcessTree: true);
-            }
-            catch
-            {
-                // The process may already have exited.
-            }
-
-            try
-            {
-                await process.WaitForExitAsync(CancellationToken.None);
-            }
-            catch
-            {
-                // Preserve cancellation even if waiting for final termination fails.
-            }
-            throw;
-        }
+        await ProcessCancellation.WaitForExitOrTerminateAsync(
+            process,
+            cancellationToken);
         return process.ExitCode;
     }
 
@@ -2258,21 +2203,11 @@ public sealed class MainWindow : Window
             process.OutputDataReceived += (_, e) => { if (e.Data is not null) AppendHatchLog(e.Data); };
             process.ErrorDataReceived += (_, e) => { if (e.Data is not null) AppendHatchLog($"错误：{e.Data}"); };
             process.Start();
-            using var cancellationRegistration = _cancellation.Token.Register(() =>
-            {
-                try
-                {
-                    if (!process.HasExited)
-                        process.Kill(entireProcessTree: true);
-                }
-                catch
-                {
-                    // The process may already have exited.
-                }
-            });
             process.BeginOutputReadLine();
             process.BeginErrorReadLine();
-            await process.WaitForExitAsync(_cancellation.Token);
+            await ProcessCancellation.WaitForExitOrTerminateAsync(
+                process,
+                _cancellation.Token);
 
             if (process.ExitCode == 0)
             {
@@ -2438,21 +2373,11 @@ public sealed class MainWindow : Window
             process.ErrorDataReceived += (_, e) => { if (e.Data is not null) AppendLog($"错误：{e.Data}"); };
 
             process.Start();
-            using var cancellationRegistration = _cancellation.Token.Register(() =>
-            {
-                try
-                {
-                    if (!process.HasExited)
-                        process.Kill(entireProcessTree: true);
-                }
-                catch
-                {
-                    // The process may already have exited.
-                }
-            });
             process.BeginOutputReadLine();
             process.BeginErrorReadLine();
-            await process.WaitForExitAsync(_cancellation.Token);
+            await ProcessCancellation.WaitForExitOrTerminateAsync(
+                process,
+                _cancellation.Token);
 
             if (process.ExitCode == 0)
             {
