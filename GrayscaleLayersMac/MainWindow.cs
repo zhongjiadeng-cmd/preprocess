@@ -913,24 +913,6 @@ public sealed class MainWindow : Window
                     ColumnSpacing = 8,
                     Children =
                     {
-                        Place(new StackPanel
-                        {
-                            Orientation = Orientation.Horizontal,
-                            Spacing = 8,
-                            VerticalAlignment = VerticalAlignment.Center,
-                            Children =
-                            {
-                                UiTheme.AccentBar(),
-                                new TextBlock
-                                {
-                                    Text = "实际预览",
-                                    FontSize = 16,
-                                    FontWeight = FontWeight.SemiBold,
-                                    Foreground = UiTheme.TextPrimaryBrush,
-                                    VerticalAlignment = VerticalAlignment.Center
-                                }
-                            }
-                        }, 0),
                         Place(textureTab, 1),
                         Place(dxfTab, 2)
                     }
