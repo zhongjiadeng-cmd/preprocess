@@ -1835,8 +1835,13 @@ def _fuzzy_block_intervals(
         )
     fuzzy_boundaries.append(base_boundaries[-1])
 
+    # 模糊边界必须限制在各自真实多边形截面内，防止影线飞出 Voronoi 单元。
     return [
-        (intervals[index][0], fuzzy_boundaries[index], fuzzy_boundaries[index + 1])
+        (
+            intervals[index][0],
+            max(intervals[index][1], fuzzy_boundaries[index]),
+            min(intervals[index][2], fuzzy_boundaries[index + 1]),
+        )
         for index in range(len(intervals))
     ]
 
