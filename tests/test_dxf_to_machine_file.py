@@ -204,7 +204,8 @@ class LayerDiscoveryTests(unittest.TestCase):
             duplicate = dxf_dir / "layer_1_duplicate.dxf"
             third = dxf_dir / "layer_03_third.dxf"
             invalid = dxf_dir / "not-a-layer.dxf"
-            for path in (first, duplicate, third, invalid):
+            zero = dxf_dir / "layer_0_zero.dxf"
+            for path in (first, duplicate, third, invalid, zero):
                 path.write_text("x", encoding="ascii")
 
             invalid_manifests = (
@@ -214,12 +215,27 @@ class LayerDiscoveryTests(unittest.TestCase):
                 [nested],
                 [dxf_dir / "layer_02_missing.dxf"],
                 [invalid],
+                [zero],
                 [first, duplicate],
                 [first, third],
             )
             for manifest in invalid_manifests:
                 with self.subTest(manifest=manifest), self.assertRaises(ValueError):
                     select_layer_dxf_files(dxf_dir, manifest)
+
+    def test_explicit_manifest_rejects_symlink_while_ambient_discovery_accepts_it(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            dxf_dir = root / "dxfs"
+            dxf_dir.mkdir()
+            target = root / "target.dxf"
+            target.write_text("target", encoding="ascii")
+            link = dxf_dir / "layer_1_link.dxf"
+            link.symlink_to(target)
+
+            self.assertEqual(discover_layer_dxf_files(dxf_dir), [link])
+            with self.assertRaises(ValueError):
+                select_layer_dxf_files(dxf_dir, [link])
 
 
 class MakePatchTests(unittest.TestCase):
@@ -1857,6 +1873,30 @@ class AvaloniaLayerStepSourceContractTests(unittest.TestCase):
 
 
 class CliTests(unittest.TestCase):
+    def test_cli_default_discovery_accepts_symlinked_layer_file(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            dxf_dir = root / "dxfs"
+            dxf_dir.mkdir()
+            target = root / "target.dxf"
+            write_dxf(target, [(1, 2, 0, 3, 4, 0)])
+            link = dxf_dir / "layer_1_link.dxf"
+            link.symlink_to(target)
+
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    str(Path(__file__).parents[1] / "dxf_to_machine_file.py"),
+                    str(dxf_dir), "cli-symlink",
+                ],
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            self.assertIn("层数: 1", completed.stdout)
+
     def test_cli_repeatable_layer_dxf_uses_only_explicit_manifest(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory).resolve()

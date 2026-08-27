@@ -426,7 +426,10 @@ def select_layer_dxf_files(
         match = _LAYER_FILENAME_RE.fullmatch(resolved_path.name)
         if match is None:
             raise ValueError(f"Invalid layer DXF filename: {resolved_path.name}")
-        numbered_files.append((int(match.group(1)), resolved_path))
+        layer_number = int(match.group(1))
+        if layer_number <= 0:
+            raise ValueError("Layer numbers must be positive")
+        numbered_files.append((layer_number, resolved_path))
 
     numbered_files.sort(key=lambda item: item[0])
     layer_numbers = [number for number, _ in numbered_files]
@@ -1040,8 +1043,12 @@ def _build_argument_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = _build_argument_parser().parse_args(argv)
-    layer_files = select_layer_dxf_files(args.dxf_dir.absolute(), args.layer_dxf)
-    layer_count = len(layer_files)
+    if args.layer_dxf is None:
+        layer_files = None
+        layer_count = len(discover_layer_dxf_files(args.dxf_dir))
+    else:
+        layer_files = select_layer_dxf_files(args.dxf_dir.absolute(), args.layer_dxf)
+        layer_count = len(layer_files)
     params = {
         key: getattr(args, key)
         for key in DEFAULT_LASER_PARAMS[0]
