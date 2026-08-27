@@ -10,7 +10,7 @@ namespace GrayscaleLayersMac;
 
 /// <summary>
 /// 集中管理应用的视觉设计令牌、全局交互样式与常用控件工厂。
-/// 配色采用"蓝调石墨"深色系：近黑窗口 + 逐级抬升的表面 + 单一琥珀强调色。
+/// 配色采用"蓝调石墨"深色系：近黑窗口 + 逐级抬升的表面 + 单一蓝色强调色。
 /// 注意：按钮的背景/前景/边框一律走类名样式（CreateGlobalStyles），
 /// 不要直接设置本地值——本地值优先级高于伪类样式，会堵死悬停反馈。
 /// </summary>
@@ -31,11 +31,11 @@ internal static class UiTheme
     public static readonly Color TextSecondaryColor = Color.FromRgb(154, 163, 178);
     public static readonly Color TextFaintColor = Color.FromRgb(94, 103, 116);
 
-    // ---- 强调色（琥珀橙）----
-    public static readonly Color AccentColor = Color.FromRgb(245, 166, 35);
-    public static readonly Color AccentHoverColor = Color.FromRgb(255, 184, 77);
-    public static readonly Color AccentPressedColor = Color.FromRgb(217, 142, 26);
-    public static readonly Color AccentTextColor = Color.FromRgb(36, 29, 15);
+    // ---- 强调色（蓝）----
+    public static readonly Color AccentColor = Color.FromRgb(0, 120, 212);
+    public static readonly Color AccentHoverColor = Color.FromRgb(45, 145, 235);
+    public static readonly Color AccentPressedColor = Color.FromRgb(0, 95, 170);
+    public static readonly Color AccentTextColor = Color.FromRgb(255, 255, 255);
 
     // ---- 危险色（取消等破坏性操作）----
     public static readonly Color DangerColor = Color.FromRgb(229, 83, 75);
