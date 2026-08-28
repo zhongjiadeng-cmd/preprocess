@@ -222,11 +222,13 @@ public sealed class DxfPreviewControl : Control, IDisposable
 
     public void LoadFile(string path)
     {
-        var firstPass = ScanFile(path, 0, false);
+        var metadata = DxfBlockMetadata.LoadForDxf(path);
+        var firstPass = ScanFile(path, 0, metadata: null);
         var count = firstPass.Count;
         var bounds = firstPass.Bounds;
+        metadata?.ValidateLineCount(count);
         var stride = Math.Max(1, (int)Math.Ceiling(count / (double)MaximumDisplayedSegments));
-        var secondPass = ScanFile(path, stride, firstPass.HasVerticalLine);
+        var secondPass = ScanFile(path, stride, metadata);
         var segments = secondPass.Segments;
         _segments = segments;
         _rowGroups = BuildRowGroups(segments);
@@ -234,9 +236,11 @@ public sealed class DxfPreviewControl : Control, IDisposable
         _minZ = secondPass.MinZ;
         _maxZ = secondPass.MaxZ;
         FitToView();
-        var blockSummary = $" · 分析出 {secondPass.BlockCount} 个加工块";
+        var blockSummary = metadata is null
+            ? string.Empty
+            : $" · 加工块 {metadata.Blocks.Count} 个";
         Summary = stride == 1
-            ? $"{Path.GetFileName(path)} · {count:N0} 条 LINE{blockSummary} "
+            ? $"{Path.GetFileName(path)} · {count:N0} 条 LINE{blockSummary}"
             : $"{Path.GetFileName(path)} · {count:N0} 条 LINE{blockSummary} · 抽样显示 {segments.Count:N0} 条";
     }
 
@@ -627,13 +631,11 @@ public sealed class DxfPreviewControl : Control, IDisposable
         int Count,
         Rect Bounds,
         List<Segment> Segments,
-        int BlockCount,
-        bool HasVerticalLine,
         double MinZ,
         double MaxZ) ScanFile(
         string path,
         int collectEvery,
-        bool detectGeneratedBorder)
+        DxfBlockMetadata? metadata)
     {
         var segments = new List<Segment>();
         var count = 0;
@@ -644,9 +646,6 @@ public sealed class DxfPreviewControl : Control, IDisposable
         var minZ = double.PositiveInfinity;
         var maxZ = double.NegativeInfinity;
         var inLine = false;
-        var blockIndex = 0;
-        double? previousHatchY = null;
-        var hasVerticalLine = false;
         double? x1 = null, y1 = null, z1 = null, x2 = null, y2 = null, z2 = null;
 
         void CompleteEntity()
@@ -654,16 +653,8 @@ public sealed class DxfPreviewControl : Control, IDisposable
             if (!inLine || x1 is null || y1 is null || x2 is null || y2 is null)
                 return;
             var entityIndex = count;
-            var vertical = Math.Abs(x1.Value - x2.Value) <= 1e-8 &&
-                           Math.Abs(y1.Value - y2.Value) > 1e-8;
-            hasVerticalLine |= vertical;
-            var isBorder = detectGeneratedBorder && entityIndex < 4;
-            if (!isBorder)
-            {
-                if (previousHatchY.HasValue && y1.Value > previousHatchY.Value + 1e-7)
-                    blockIndex++;
-                previousHatchY = y1.Value;
-            }
+            var classification = metadata?.ClassifyLine(entityIndex)
+                ?? new DxfLineClassification(0, false);
             var segment = new Segment(
                 x1.Value,
                 y1.Value,
@@ -671,8 +662,8 @@ public sealed class DxfPreviewControl : Control, IDisposable
                 x2.Value,
                 y2.Value,
                 z2 ?? 0,
-                blockIndex,
-                isBorder);
+                classification.BlockIndex,
+                classification.IsBorder);
             minX = Math.Min(minX, Math.Min(segment.X1, segment.X2));
             minY = Math.Min(minY, Math.Min(segment.Y1, segment.Y2));
             maxX = Math.Max(maxX, Math.Max(segment.X1, segment.X2));
@@ -717,8 +708,6 @@ public sealed class DxfPreviewControl : Control, IDisposable
             count,
             new Rect(minX, minY, Math.Max(maxX - minX, 1e-6), Math.Max(maxY - minY, 1e-6)),
             segments,
-            count > (detectGeneratedBorder ? 4 : 0) ? blockIndex + 1 : 0,
-            hasVerticalLine,
             double.IsFinite(minZ) ? minZ : 0,
             double.IsFinite(maxZ) ? maxZ : 0);
     }
