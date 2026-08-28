@@ -45,6 +45,11 @@ public sealed class MainWindow : Window
         ColumnDefinition Preview,
         ColumnDefinition Inspector);
 
+    // 日志面板折叠状态的存储 key：三个面板各自记住自己的状态。
+    private const string LayerLogKey = "layer";
+    private const string HatchLogKey = "hatch";
+    private const string PipelineLogKey = "pipeline";
+
     private readonly WorkspaceSplitSettings _workspaceSplitSettings =
         WorkspaceSplitSettings.CreateDefault();
     private readonly List<WorkspaceColumns> _workspaceColumns = [];
@@ -325,7 +330,7 @@ public sealed class MainWindow : Window
                         Place(_openOutputButton, 2)
                     }
                 },
-                UiTheme.LogPanel(_logBox, "运行日志").Root
+                PersistLogCollapse(UiTheme.LogPanel(_logBox, "运行日志"), LayerLogKey).Root
             }
         };
 
@@ -426,7 +431,8 @@ public sealed class MainWindow : Window
             hatchInspector,
             hatchPreviewPanel,
             _hatchLogBox,
-            "运行日志");
+            "运行日志",
+            HatchLogKey);
 
         var pipelineInputButton = new Button { Content = "选择图片…" };
         var pipelineLayerOutputButton = new Button { Content = "选择目录…" };
@@ -668,7 +674,8 @@ public sealed class MainWindow : Window
             pipelineInspector,
             pipelinePreviewPanel,
             _pipelineLogBox,
-            "流程日志");
+            "流程日志",
+            PipelineLogKey);
 
         foreach (var secondaryButton in new[]
         {
@@ -1250,11 +1257,24 @@ public sealed class MainWindow : Window
         view.DxfTab.IsChecked = kind == SharedPreviewKind.Dxf;
     }
 
+    /// <summary>
+    /// 恢复日志面板上次的折叠状态，并在之后每次切换时落盘。
+    /// 先恢复、再订阅，这样恢复动作本身不会触发一次多余的写入。
+    /// </summary>
+    private LogPanelView PersistLogCollapse(LogPanelView panel, string key)
+    {
+        panel.SetCollapsed(_workspaceSplitSettings.LoadLogCollapsed(key));
+        panel.CollapsedChanged += (_, _) =>
+            _workspaceSplitSettings.TrySaveLogCollapsed(key, panel.IsCollapsed);
+        return panel;
+    }
+
     private Control MakeWorkspace(
         StackPanel inspector,
         Control previewPanel,
         TextBox log,
-        string logTitle)
+        string logTitle,
+        string logKey)
     {
         var actionRow = inspector.Children[^1];
         inspector.Children.RemoveAt(inspector.Children.Count - 1);
@@ -1297,7 +1317,7 @@ public sealed class MainWindow : Window
                 }
             }
         };
-        var logPanel = UiTheme.LogPanel(log, logTitle);
+        var logPanel = PersistLogCollapse(UiTheme.LogPanel(log, logTitle), logKey);
         var logSurface = logPanel.Root;
         logSurface.Margin = new Thickness(0, 0, 12, 0);
 

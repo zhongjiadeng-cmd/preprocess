@@ -57,6 +57,107 @@ public sealed class WorkspaceSplitSettingsTests
         });
     }
 
+    [TestMethod]
+    public void LoadLogCollapsed_MissingFileIsExpanded()
+    {
+        WithSettings(settings => Assert.IsFalse(settings.LoadLogCollapsed("pipeline")));
+    }
+
+    [TestMethod]
+    public void SaveAndLoadLogCollapsed_RoundTrips()
+    {
+        WithSettings(settings =>
+        {
+            Assert.IsTrue(settings.TrySaveLogCollapsed("pipeline", true));
+            Assert.IsTrue(settings.LoadLogCollapsed("pipeline"));
+
+            Assert.IsTrue(settings.TrySaveLogCollapsed("pipeline", false));
+            Assert.IsFalse(settings.LoadLogCollapsed("pipeline"));
+        });
+    }
+
+    [TestMethod]
+    public void LogCollapsed_IsRememberedPerPanel()
+    {
+        WithSettings(settings =>
+        {
+            settings.TrySaveLogCollapsed("layer", false);
+            settings.TrySaveLogCollapsed("hatch", true);
+            settings.TrySaveLogCollapsed("pipeline", true);
+
+            Assert.IsFalse(settings.LoadLogCollapsed("layer"));
+            Assert.IsTrue(settings.LoadLogCollapsed("hatch"));
+            Assert.IsTrue(settings.LoadLogCollapsed("pipeline"));
+            Assert.IsFalse(settings.LoadLogCollapsed("unknown"));
+        });
+    }
+
+    [TestMethod]
+    public void SaveLogCollapsed_PreservesPreviewRatio()
+    {
+        WithSettings(settings =>
+        {
+            settings.TrySavePreviewRatio(0.63);
+            settings.TrySaveLogCollapsed("hatch", true);
+
+            Assert.AreEqual(0.63, settings.LoadPreviewRatio(), 0.000001);
+            Assert.IsTrue(settings.LoadLogCollapsed("hatch"));
+        });
+    }
+
+    [TestMethod]
+    public void SavePreviewRatio_PreservesLogCollapsed()
+    {
+        WithSettings(settings =>
+        {
+            settings.TrySaveLogCollapsed("pipeline", true);
+            settings.TrySavePreviewRatio(0.41);
+
+            Assert.IsTrue(settings.LoadLogCollapsed("pipeline"));
+            Assert.AreEqual(0.41, settings.LoadPreviewRatio(), 0.000001);
+        });
+    }
+
+    [TestMethod]
+    [DataRow("not json")]
+    [DataRow("{\"Version\":2,\"PreviewRatio\":0.6,\"LogCollapsed\":{\"a\":true}}")]
+    [DataRow("{\"Version\":1,\"PreviewRatio\":0.01,\"LogCollapsed\":{\"a\":true}}")]
+    public void LoadLogCollapsed_InvalidSettingsFallBackToExpanded(string json)
+    {
+        WithSettings((settings, path) =>
+        {
+            File.WriteAllText(path, json);
+            Assert.IsFalse(settings.LoadLogCollapsed("a"));
+        });
+    }
+
+    [TestMethod]
+    public void LoadLogCollapsed_LegacyFileWithoutTheFieldIsExpanded()
+    {
+        WithSettings((settings, path) =>
+        {
+            File.WriteAllText(path, "{\"Version\":1,\"PreviewRatio\":0.58}");
+
+            Assert.IsFalse(settings.LoadLogCollapsed("layer"));
+            Assert.AreEqual(
+                WorkspaceSplitSettings.DefaultPreviewRatio,
+                settings.LoadPreviewRatio());
+        });
+    }
+
+    [TestMethod]
+    [DataRow(null)]
+    [DataRow("")]
+    [DataRow("   ")]
+    public void SaveLogCollapsed_BlankKeyIsRejected(string? key)
+    {
+        WithSettings((settings, path) =>
+        {
+            Assert.IsFalse(settings.TrySaveLogCollapsed(key!, true));
+            Assert.IsFalse(File.Exists(path));
+        });
+    }
+
     private static void WithSettings(Action<WorkspaceSplitSettings> action) =>
         WithSettings((settings, _) => action(settings));
 
