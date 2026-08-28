@@ -1,0 +1,674 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>图层叠加对齐预览器</title>
+<style>
+  :root{
+    --bg:#f4f6f8; --panel:#ffffff; --line:#e2e6ea; --text:#1f2733; --muted:#6a7682;
+    --accent:#2f7dff; --accent2:#16c0ff; --danger:#e5484d; --ok:#2bad6a;
+    --chip:#eef2f6;
+  }
+  *{box-sizing:border-box;}
+  html,body{height:100%;margin:0;}
+  body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+       background:var(--bg);color:var(--text);font-size:13px;-webkit-font-smoothing:antialiased;}
+  #app{display:grid;grid-template-columns:320px 1fr;grid-template-rows:auto 1fr;height:100vh;}
+  header{grid-column:1/3;display:flex;align-items:center;gap:14px;padding:10px 16px;
+         background:var(--panel);border-bottom:1px solid var(--line);}
+  header h1{font-size:15px;margin:0;font-weight:650;letter-spacing:.3px;}
+  header .hint{color:var(--muted);font-size:12px;}
+  header .spacer{flex:1;}
+  header button, header select{
+    font-size:12px;padding:6px 10px;border:1px solid var(--line);background:var(--chip);
+    border-radius:6px;cursor:pointer;color:var(--text);}
+  header button:hover{background:#e3e9ef;}
+  aside{grid-row:2;overflow-y:auto;background:var(--panel);border-right:1px solid var(--line);padding:12px;}
+  main{grid-row:2;position:relative;overflow:hidden;background:#dfe4e9;}
+  canvas{display:block;width:100%;height:100%;cursor:grab;}
+  canvas.dragging{cursor:grabbing;}
+  #hud{position:absolute;left:12px;bottom:12px;background:rgba(20,28,38,.82);color:#eaf2ff;
+       padding:7px 10px;border-radius:7px;font-size:11.5px;line-height:1.6;pointer-events:none;
+       font-variant-numeric:tabular-nums;max-width:60%;}
+  #hud b{color:#9fd0ff;font-weight:600;}
+  .card{border:1px solid var(--line);border-radius:9px;margin-bottom:12px;overflow:hidden;}
+  .card .hd{display:flex;align-items:center;gap:8px;padding:9px 11px;background:var(--chip);
+            border-bottom:1px solid var(--line);font-weight:600;}
+  .card .hd .dot{width:10px;height:10px;border-radius:50%;}
+  .card .bd{padding:10px 11px;}
+  .row{display:flex;align-items:center;gap:8px;margin:7px 0;}
+  .row label{flex:0 0 76px;color:var(--muted);font-size:12px;}
+  .row .val{flex:0 0 52px;text-align:right;color:var(--text);font-variant-numeric:tabular-nums;font-size:12px;}
+  .row input[type=range]{flex:1;min-width:0;}
+  .row select,.row input[type=color]{flex:1;min-width:0;}
+  input[type=color]{height:26px;border:1px solid var(--line);border-radius:5px;padding:0;background:none;}
+  .btn{display:inline-block;font-size:12px;padding:6px 9px;border:1px solid var(--accent);
+       background:var(--accent);color:#fff;border-radius:6px;cursor:pointer;text-align:center;}
+  .btn.ghost{background:#fff;color:var(--accent);}
+  .btn.full{width:100%;}
+  .filelabel{font-size:11px;color:var(--muted);margin-top:5px;word-break:break-all;}
+  .sec-title{font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:var(--muted);
+             margin:4px 0 8px;font-weight:700;}
+  .check{display:flex;align-items:center;gap:7px;margin:7px 0;font-size:12px;}
+  .check input{width:15px;height:15px;}
+  .meta{font-size:11px;color:var(--muted);margin-top:4px;}
+  .legend{display:flex;gap:10px;font-size:11px;color:var(--muted);margin-top:6px;flex-wrap:wrap;}
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <h1>图层叠加对齐预览器</h1>
+    <span class="hint">拖动平移 · 滚轮缩放 · 自动对齐 / 逐图层微调</span>
+    <span class="spacer"></span>
+    <button id="alignBtn" style="background:var(--ok);border-color:var(--ok);">自动对齐</button>
+    <button id="fitBtn">适应窗口</button>
+    <button id="resetBtn">复位</button>
+    <button id="exportBtn">导出 PNG</button>
+  </header>
+
+  <aside>
+    <!-- 图像层 -->
+    <div class="card">
+      <div class="hd"><span class="dot" style="background:#7a8aa0"></span>图像层 (TIFF)</div>
+      <div class="bd">
+        <div class="check"><input type="checkbox" id="imgVisible" checked/><label>显示图层</label></div>
+        <div class="row"><label>透明度</label><input type="range" id="imgOpacity" min="0" max="100" value="100"/><span class="val" id="imgOpacityV">100%</span></div>
+        <div class="row"><label>偏移 X</label><input type="range" id="imgOffX" min="-1000" max="1000" value="0"/><span class="val" id="imgOffXV">0</span></div>
+        <div class="row"><label>偏移 Y</label><input type="range" id="imgOffY" min="-1000" max="1000" value="0"/><span class="val" id="imgOffYV">0</span></div>
+        <div class="row"><label>缩放</label><input type="range" id="imgScale" min="20" max="300" value="100"/><span class="val" id="imgScaleV">1.00×</span></div>
+        <div class="row"><label>旋转</label><input type="range" id="imgRot" min="-180" max="180" value="0"/><span class="val" id="imgRotV">0°</span></div>
+        <div class="check"><input type="checkbox" id="imgInvert"/><label>反相（便于对齐）</label></div>
+        <label class="btn full" for="imgImport" style="display:block;">导入图像 (TIFF/PNG/JPG)</label>
+        <input type="file" id="imgImport" accept=".tif,.tiff,.png,.jpg,.jpeg" style="display:none"/>
+        <div class="filelabel" id="imgFileLabel">默认：layer_25_gray_lt_102.tiff</div>
+      </div>
+    </div>
+
+    <!-- 矢量层 -->
+    <div class="card">
+      <div class="hd"><span class="dot" id="dxfDot" style="background:#16c0ff"></span>矢量层 (DXF)</div>
+      <div class="bd">
+        <div class="check"><input type="checkbox" id="dxfVisible" checked/><label>显示图层</label></div>
+        <div class="row"><label>透明度</label><input type="range" id="dxfOpacity" min="0" max="100" value="90"/><span class="val" id="dxfOpacityV">90%</span></div>
+        <div class="row"><label>颜色</label><input type="color" id="dxfColor" value="#16c0ff"/></div>
+        <div class="row"><label>偏移 X</label><input type="range" id="dxfOffX" min="-1000" max="1000" value="0"/><span class="val" id="dxfOffXV">0</span></div>
+        <div class="row"><label>偏移 Y</label><input type="range" id="dxfOffY" min="-1000" max="1000" value="0"/><span class="val" id="dxfOffYV">0</span></div>
+        <div class="row"><label>缩放</label><input type="range" id="dxfScale" min="20" max="300" value="100"/><span class="val" id="dxfScaleV">1.00×</span></div>
+        <div class="row"><label>旋转</label><input type="range" id="dxfRot" min="-180" max="180" value="0"/><span class="val" id="dxfRotV">0°</span></div>
+        <label class="btn ghost full" for="dxfImport" style="display:block;">导入 DXF</label>
+        <input type="file" id="dxfImport" accept=".dxf" style="display:none"/>
+        <div class="filelabel" id="dxfFileLabel">默认：layer_25_gray_lt_102.dxf</div>
+      </div>
+    </div>
+
+    <!-- 视图 -->
+    <div class="card">
+      <div class="hd">视图 / 混合</div>
+      <div class="bd">
+        <div class="sec-title">视图</div>
+        <div class="row"><label>缩放</label><input type="range" id="zoom" min="10" max="600" value="100"/><span class="val" id="zoomV">100%</span></div>
+        <div class="check"><input type="checkbox" id="gridOn" checked/><label>显示网格 / 坐标轴</label></div>
+        <div class="row"><label>背景色</label><input type="color" id="bgColor" value="#dfe4e9"/></div>
+        <div class="sec-title">混合</div>
+        <div class="row"><label>上层图层</label>
+          <select id="topLayer"><option value="dxf">DXF 在上方</option><option value="img">图像在上方</option></select>
+        </div>
+        <div class="check"><input type="checkbox" id="diffMode"/><label>差值模式（高亮错位）</label></div>
+        <div class="legend">
+          <span>提示：开启差值后，上层以“差集”叠加，重叠处变暗、错位处发亮。</span>
+        </div>
+      </div>
+    </div>
+  </aside>
+
+  <main>
+    <canvas id="cv"></canvas>
+    <div id="hud">移动鼠标查看坐标…</div>
+  </main>
+</div>
+
+<script src="UTIF.js"></script>
+<script src="defaults.js"></script>
+<script>
+"use strict";
+
+/* ---------------- 状态 ---------------- */
+const cv = document.getElementById('cv');
+const view = { zoom:1, panX:0, panY:0, topLayer:'dxf', diffMode:false, gridOn:true, bgColor:'#dfe4e9' };
+
+const imgLayer = {
+  type:'image', off:null, baseW:0, baseH:0, baseX:0, baseY:0,
+  offX:0, offY:0, scale:1, rot:0, opacity:1, visible:true, invert:false,
+  file:'layer_25_gray_lt_102.tiff', srcW:0, srcH:0
+};
+const dxfLayer = {
+  type:'vector', off:null, baseW:0, baseH:0, baseX:0, baseY:0,
+  offX:0, offY:0, scale:1, rot:0, opacity:0.9, visible:true, color:'#16c0ff',
+  file:'layer_25_gray_lt_102.dxf', bbox:null, srcW:0, srcH:0
+};
+let initialized=false;
+
+/* ---------------- 工具 ---------------- */
+function b64ToU8(b){
+  const bin=atob(b), len=bin.length, arr=new Uint8Array(len);
+  for(let i=0;i<len;i++) arr[i]=bin.charCodeAt(i);
+  return arr;
+}
+function layerRect(L){
+  const cx=L.baseX+L.baseW/2+L.offX, cy=L.baseY+L.baseH/2+L.offY;
+  const w=L.baseW*L.scale, h=L.baseH*L.scale;
+  return {x:cx-w/2, y:cy-h/2, w:w, h:h};
+}
+// 把世界坐标反算回某图层的源坐标（图像=像素，DXF=原始单位）
+function layerLocal(L, wx, wy){
+  if(!L.off) return null;
+  const cx=L.baseX+L.baseW/2+L.offX, cy=L.baseY+L.baseH/2+L.offY;
+  const rot=L.rot||0, s=L.scale||1;
+  const cos=Math.cos(rot), sin=Math.sin(rot);
+  const dx=(wx-cx)/s, dy=(wy-cy)/s;            // 逆缩放
+  const u=(cos*dx + sin*dy)/L.baseW;           // 逆旋转
+  const v=(-sin*dx + cos*dy)/L.baseH;
+  if(L.type==='image') return {x:(u+0.5)*L.srcW, y:(v+0.5)*L.srcH};
+  // DXF 需要按 bbox 翻回原始单位
+  const [minx,miny,maxx,maxy]=L.bbox;
+  const bw=maxx-minx||1, bh=maxy-miny||1;
+  return { x:minx+(u+0.5)*bw, y:maxy-(v+0.5)*bh };
+}
+
+/* ---------------- 离屏渲染 ---------------- */
+function buildImageOff(img, invert){
+  const c=document.createElement('canvas');
+  c.width=img.naturalWidth||img.width;
+  c.height=img.naturalHeight||img.height;
+  const ctx=c.getContext('2d');
+  if(invert) ctx.filter='invert(1)';
+  ctx.drawImage(img,0,0);
+  return c;
+}
+function buildDxfOff(segs, bbox, color){
+  const W=2048, [minx,miny,maxx,maxy]=bbox;
+  const bw=maxx-minx||1, bh=maxy-miny||1;
+  const H=Math.max(2, Math.round(W*bh/bw));
+  const c=document.createElement('canvas');
+  c.width=W; c.height=H;
+  const ctx=c.getContext('2d');
+  ctx.clearRect(0,0,W,H);
+  ctx.strokeStyle=color; ctx.lineWidth=1; ctx.lineJoin='round'; ctx.lineCap='round';
+  ctx.beginPath();
+  const n=segs.length/4;
+  for(let k=0;k<n;k++){
+    const a=segs[k*4], b=segs[k*4+1], cc=segs[k*4+2], d=segs[k*4+3];
+    const x1=(a-minx)/bw*W, y1=(maxy-b)/bh*H;
+    const x2=(cc-minx)/bw*W, y2=(maxy-d)/bh*H;
+    ctx.moveTo(x1,y1); ctx.lineTo(x2,y2);
+  }
+  ctx.stroke();
+  return c;
+}
+
+/* ---------------- DXF 文本解析（导入用） ---------------- */
+function parseDxfText(text){
+  const lines=text.split(/\r?\n/);
+  let i=0; const entities=[]; let cur=null;
+  const update=(a,b)=>{};
+  let minx=1e18,miny=1e18,maxx=-1e18,maxy=-1e18;
+  const acc=(a,b)=>{ if(a<minx)minx=a; if(b<miny)miny=b; if(a>maxx)maxx=a; if(b>maxy)maxy=b; };
+  while(i<lines.length){
+    const gcLine=lines[i].trim(); i++;
+    if(i>=lines.length) break;
+    const valLine=lines[i]; i++;
+    const gc=parseInt(gcLine,10);
+    if(isNaN(gc)) continue;
+    const v=valLine.trim();
+    if(gc===0){
+      if(cur && cur.type) entities.push(cur);
+      const t=v.toUpperCase();
+      if(t==='EOF') break;
+      cur={type:t};
+      continue;
+    }
+    if(!cur) continue;
+    switch(cur.type){
+      case 'LINE':
+        if(gc===10)cur.x1=+v; else if(gc===20)cur.y1=+v;
+        else if(gc===11)cur.x2=+v; else if(gc===21)cur.y2=+v; break;
+      case 'LWPOLYLINE':
+      case 'POLYLINE':
+        if(gc===70)cur.flags=(+v)||0;
+        else if(gc===10){(cur.pts=cur.pts||[]).push([+v,null]);}
+        else if(gc===20){const p=cur.pts[cur.pts.length-1]; if(p&&p[1]===null)p[1]=+v;} break;
+      case 'VERTEX':
+        if(gc===10){(cur.pts=cur.pts||[]).push([+v,null]);}
+        else if(gc===20){const p=cur.pts[cur.pts.length-1]; if(p&&p[1]===null)p[1]=+v;} break;
+      case 'CIRCLE':
+        if(gc===10)cur.cx=+v; else if(gc===20)cur.cy=+v; else if(gc===40)cur.r=+v; break;
+      case 'ARC':
+        if(gc===10)cur.cx=+v; else if(gc===20)cur.cy=+v; else if(gc===40)cur.r=+v;
+        else if(gc===50)cur.a0=+v; else if(gc===51)cur.a1=+v; break;
+      case 'POINT':
+        if(gc===10)cur.px=+v; else if(gc===20)cur.py=+v; break;
+    }
+  }
+  if(cur && cur.type) entities.push(cur);
+
+  const segs=[];
+  const pushSeg=(x1,y1,x2,y2)=>{ segs.push(x1,y1,x2,y2); acc(x1,y1); acc(x2,y2); };
+  for(const e of entities){
+    if(e.type==='LINE'){ if(e.x1!=null&&e.x2!=null) pushSeg(e.x1,e.y1,e.x2,e.y2); }
+    else if(e.type==='LWPOLYLINE'||e.type==='POLYLINE'){
+      const pts=e.pts||[]; const closed=(e.flags&1)===1;
+      for(let k=0;k<pts.length-1;k++){
+        const a=pts[k], b=pts[k+1];
+        if(a[0]!=null&&a[1]!=null&&b[0]!=null&&b[1]!=null) pushSeg(a[0],a[1],b[0],b[1]);
+      }
+      if(closed&&pts.length>1){ const a=pts[pts.length-1], b=pts[0]; pushSeg(a[0],a[1],b[0],b[1]); }
+    }
+    else if(e.type==='CIRCLE'){
+      const N=72; let px,py;
+      for(let k=0;k<=N;k++){ const ang=2*Math.PI*k/N; const x=e.cx+e.r*Math.cos(ang), y=e.cy+e.r*Math.sin(ang);
+        if(k>0) pushSeg(px,py,x,y); px=x;py=y; }
+    }
+    else if(e.type==='ARC'){
+      const N=Math.max(8, Math.ceil(Math.abs((e.a1||0)-(e.a0||0))/4));
+      const a0=(e.a0||0)*Math.PI/180, a1=(e.a1||0)*Math.PI/180; let px,py;
+      for(let k=0;k<=N;k++){ const ang=a0+(a1-a0)*k/N; const x=e.cx+e.r*Math.cos(ang), y=e.cy+e.r*Math.sin(ang);
+        if(k>0) pushSeg(px,py,x,y); px=x;py=y; }
+    }
+    else if(e.type==='POINT'){
+      const s=0.5; pushSeg(e.px-s,e.py,e.px+s,e.py); pushSeg(e.px,e.py-s,e.px,e.py+s);
+    }
+  }
+  if(minx>maxx){ minx=miny=0; maxx=maxy=1; }
+  return { segs, bbox:[minx,miny,maxx,maxy], count:segs.length/4 };
+}
+
+/* ---------------- 适配 ---------------- */
+function fitLayer(L){
+  const cssW=cv.clientWidth, cssH=cv.clientHeight;
+  const fit=Math.min(cssW,cssH)*0.85;
+  const maxDim=Math.max(L.srcW, L.srcH)||1;
+  L.baseW=fit*L.srcW/maxDim;
+  L.baseH=fit*L.srcH/maxDim;
+  L.baseX=-L.baseW/2; L.baseY=-L.baseH/2;
+}
+function fitAll(){
+  if(imgLayer.off) fitLayer(imgLayer);
+  if(dxfLayer.off) fitLayer(dxfLayer);
+  view.zoom=1;
+  view.panX=cv.clientWidth/2;
+  view.panY=cv.clientHeight/2;
+  document.getElementById('zoom').value=100;
+  document.getElementById('zoomV').textContent='100%';
+}
+
+/* ---------------- 绘制 ---------------- */
+function paint(ctx, dpr, cssW, cssH, withGrid){
+  ctx.setTransform(1,0,0,1,0,0);
+  ctx.fillStyle=view.bgColor; ctx.fillRect(0,0,cssW*dpr,cssH*dpr);
+  ctx.setTransform(dpr*view.zoom,0,0,dpr*view.zoom, dpr*view.panX, dpr*view.panY);
+
+  if(withGrid && view.gridOn){ drawGrid(ctx, dpr, cssW, cssH); }
+
+  const bottom = view.topLayer==='dxf'? imgLayer : dxfLayer;
+  const top    = view.topLayer==='dxf'? dxfLayer : imgLayer;
+  drawLayer(ctx, bottom, false);
+  drawLayer(ctx, top, view.diffMode);
+
+  ctx.setTransform(1,0,0,1,0,0);
+}
+function drawGrid(ctx, dpr, cssW, cssH){
+  const x0=(0-view.panX)/view.zoom, y0=(0-view.panY)/view.zoom;
+  const x1=(cssW-view.panX)/view.zoom, y1=(cssH-view.panY)/view.zoom;
+  const step=50;
+  ctx.lineWidth=1/view.zoom; ctx.strokeStyle='rgba(120,130,140,0.22)';
+  ctx.beginPath();
+  for(let g=Math.floor(x0/step)*step; g<=x1; g+=step){ ctx.moveTo(g,y0); ctx.lineTo(g,y1); }
+  for(let g=Math.floor(y0/step)*step; g<=y1; g+=step){ ctx.moveTo(x0,g); ctx.lineTo(x1,g); }
+  ctx.stroke();
+  ctx.strokeStyle='rgba(210,80,80,0.55)'; ctx.lineWidth=1.4/view.zoom;
+  ctx.beginPath();
+  ctx.moveTo(0,y0); ctx.lineTo(0,y1); ctx.moveTo(x0,0); ctx.lineTo(x1,0);
+  ctx.stroke();
+}
+function drawLayer(ctx, L, useDiff){
+  if(!L.visible || !L.off) return;
+  const cx=L.baseX+L.baseW/2+L.offX, cy=L.baseY+L.baseH/2+L.offY;
+  ctx.save();
+  ctx.globalAlpha=L.opacity;
+  ctx.globalCompositeOperation = useDiff? 'difference':'source-over';
+  ctx.imageSmoothingEnabled = (L.type==='image');
+  ctx.translate(cx,cy);
+  ctx.rotate(L.rot||0);
+  ctx.scale(L.scale, L.scale);
+  ctx.drawImage(L.off, -L.baseW/2, -L.baseH/2, L.baseW, L.baseH);
+  ctx.restore();
+  ctx.globalCompositeOperation='source-over';
+  ctx.globalAlpha=1;
+}
+function draw(){
+  const dpr=window.devicePixelRatio||1;
+  const cssW=cv.clientWidth, cssH=cv.clientHeight;
+  if(cv.width!==Math.round(cssW*dpr)||cv.height!==Math.round(cssH*dpr)){
+    cv.width=Math.round(cssW*dpr); cv.height=Math.round(cssH*dpr);
+  }
+  paint(cv.getContext('2d'), dpr, cssW, cssH, true);
+}
+
+/* ---------------- 交互 ---------------- */
+let dragging=false, lastX=0, lastY=0;
+cv.addEventListener('pointerdown', e=>{ dragging=true; lastX=e.clientX; lastY=e.clientY; cv.classList.add('dragging'); cv.setPointerCapture(e.pointerId); });
+cv.addEventListener('pointerup', e=>{ dragging=false; cv.classList.remove('dragging'); });
+cv.addEventListener('pointermove', e=>{
+  if(dragging){ view.panX+=e.clientX-lastX; view.panY+=e.clientY-lastY; lastX=e.clientX; lastY=e.clientY; draw(); }
+  updateHud(e);
+});
+cv.addEventListener('wheel', e=>{
+  e.preventDefault();
+  const rect=cv.getBoundingClientRect();
+  const mx=e.clientX-rect.left, my=e.clientY-rect.top;
+  const factor=e.deltaY<0?1.12:1/1.12;
+  const wx=(mx-view.panX)/view.zoom, wy=(my-view.panY)/view.zoom;
+  view.zoom=Math.max(0.05, Math.min(8, view.zoom*factor));
+  view.panX=mx-wx*view.zoom; view.panY=my-wy*view.zoom;
+  document.getElementById('zoom').value=Math.round(view.zoom*100);
+  document.getElementById('zoomV').textContent=Math.round(view.zoom*100)+'%';
+  draw();
+},{passive:false});
+
+const hud=document.getElementById('hud');
+function updateHud(e){
+  const rect=cv.getBoundingClientRect();
+  const mx=e.clientX-rect.left, my=e.clientY-rect.top;
+  const wx=(mx-view.panX)/view.zoom, wy=(my-view.panY)/view.zoom;
+  const iL=layerLocal(imgLayer,wx,wy), dL=layerLocal(dxfLayer,wx,wy);
+  let s='世界坐标 X:'+wx.toFixed(1)+'  Y:'+wy.toFixed(1);
+  if(iL) s+='<br>图像像素 <b>'+iL.x.toFixed(0)+', '+iL.y.toFixed(0)+'</b>';
+  if(dL) s+='<br>DXF 单位 <b>'+dL.x.toFixed(3)+', '+dL.y.toFixed(3)+'</b>';
+  hud.innerHTML=s;
+}
+
+/* ---------------- 控件绑定 ---------------- */
+function bindRange(id, fn){
+  const el=document.getElementById(id);
+  el.addEventListener('input', ()=>{ fn(parseFloat(el.value)); draw(); });
+}
+bindRange('imgOpacity', v=>{ imgLayer.opacity=v/100; document.getElementById('imgOpacityV').textContent=v+'%'; });
+bindRange('imgOffX', v=>{ imgLayer.offX=v; document.getElementById('imgOffXV').textContent=v; });
+bindRange('imgOffY', v=>{ imgLayer.offY=v; document.getElementById('imgOffYV').textContent=v; });
+bindRange('imgScale', v=>{ imgLayer.scale=v/100; document.getElementById('imgScaleV').textContent=(v/100).toFixed(2)+'×'; });
+bindRange('imgRot', v=>{ imgLayer.rot=v*Math.PI/180; document.getElementById('imgRotV').textContent=v+'°'; });
+bindRange('dxfOpacity', v=>{ dxfLayer.opacity=v/100; document.getElementById('dxfOpacityV').textContent=v+'%'; });
+bindRange('dxfOffX', v=>{ dxfLayer.offX=v; document.getElementById('dxfOffXV').textContent=v; });
+bindRange('dxfOffY', v=>{ dxfLayer.offY=v; document.getElementById('dxfOffYV').textContent=v; });
+bindRange('dxfScale', v=>{ dxfLayer.scale=v/100; document.getElementById('dxfScaleV').textContent=(v/100).toFixed(2)+'×'; });
+bindRange('dxfRot', v=>{ dxfLayer.rot=v*Math.PI/180; document.getElementById('dxfRotV').textContent=v+'°'; });
+bindRange('zoom', v=>{ view.zoom=v/100; document.getElementById('zoomV').textContent=v+'%'; });
+
+document.getElementById('imgVisible').addEventListener('change', e=>{ imgLayer.visible=e.target.checked; draw(); });
+document.getElementById('dxfVisible').addEventListener('change', e=>{ dxfLayer.visible=e.target.checked; draw(); });
+document.getElementById('imgInvert').addEventListener('change', e=>{
+  imgLayer.invert=e.target.checked;
+  if(imgLayer._src){ imgLayer.off=buildImageOff(imgLayer._src, imgLayer.invert); fitLayer(imgLayer); draw(); }
+});
+document.getElementById('dxfColor').addEventListener('input', e=>{
+  dxfLayer.color=e.target.value;
+  document.getElementById('dxfDot').style.background=e.target.value;
+  if(dxfLayer.segs) dxfLayer.off=buildDxfOff(dxfLayer.segs, dxfLayer.bbox, dxfLayer.color);
+  draw();
+});
+document.getElementById('gridOn').addEventListener('change', e=>{ view.gridOn=e.target.checked; draw(); });
+document.getElementById('topLayer').addEventListener('change', e=>{ view.topLayer=e.target.value; draw(); });
+document.getElementById('diffMode').addEventListener('change', e=>{ view.diffMode=e.target.checked; draw(); });
+document.getElementById('bgColor').addEventListener('input', e=>{ view.bgColor=e.target.value; draw(); });
+document.getElementById('fitBtn').addEventListener('click', ()=>{ fitAll(); draw(); });
+document.getElementById('resetBtn').addEventListener('click', ()=>resetAll());
+document.getElementById('exportBtn').addEventListener('click', exportPng);
+document.getElementById('alignBtn').addEventListener('click', ()=>{
+  document.getElementById('hud').innerHTML='自动对齐计算中…（提取图像边缘 + 搜索缩放/旋转/平移）';
+  setTimeout(autoAlign, 30);
+});
+
+/* ---------------- 自动对齐 ---------------- */
+// 用 Sobel 提取图像边缘强度图，并返回边缘加权质心
+function computeEdgeMap(){
+  const off=imgLayer.off; if(!off) return null;
+  const w=off.width, h=off.height;
+  const data=off.getContext('2d').getImageData(0,0,w,h).data;
+  const gray=new Float32Array(w*h);
+  for(let i=0;i<w*h;i++) gray[i]=data[i*4];
+  const E=new Float32Array(w*h);
+  let maxE=1e-6;
+  for(let y=1;y<h-1;y++){
+    for(let x=1;x<w-1;x++){
+      const i=y*w+x;
+      const gx=gray[i-1-w]+2*gray[i-1]+gray[i-1+w]-gray[i+1-w]-2*gray[i+1]-gray[i+1+w];
+      const gy=gray[i-w-1]+2*gray[i-w]+gray[i-w+1]-gray[i+w-1]-2*gray[i+w]-gray[i+w+1];
+      const m=Math.sqrt(gx*gx+gy*gy);
+      E[i]=m; if(m>maxE)maxE=m;
+    }
+  }
+  for(let i=0;i<w*h;i++) E[i]/=maxE;
+  let sw=0,cx=0,cy=0;
+  for(let y=0;y<h;y++)for(let x=0;x<w;x++){const e=E[y*w+x];sw+=e;cx+=e*x;cy+=e*y;}
+  return {E,w,h,cenX:sw>0?cx/sw:w/2, cenY:sw>0?cy/sw:h/2};
+}
+// 在 DXF 线段上采样归一化点 (u,v)，并计算其质心
+function sampleDxfPoints(n){
+  const segs=dxfLayer.segs; if(!segs) return null;
+  const total=segs.length/4; const [minx,miny,maxx,maxy]=dxfLayer.bbox;
+  const bw=maxx-minx||1, bh=maxy-miny||1;
+  const stride=Math.max(1, Math.floor(total/n));
+  const cap=Math.ceil(total/stride)+1;
+  const pts=new Float32Array(cap*2);
+  let k=0;
+  for(let s=0;s<total;s+=stride){
+    const a=segs[s*4],b=segs[s*4+1],c=segs[s*4+2],d=segs[s*4+3];
+    pts[k*2]=((a+c)/2-minx)/bw-0.5;     // u: -0.5..0.5
+    pts[k*2+1]=(maxy-(b+d)/2)/bh-0.5;   // v: -0.5..0.5（y 翻向）
+    k++;
+  }
+  let mu=0,mv=0; for(let i=0;i<k;i++){mu+=pts[i*2];mv+=pts[i*2+1];} mu/=k; mv/=k;
+  return {pts,count:k,mu,mv};
+}
+// 给定候选变换，把 DXF 采样点投到图像像素并求边缘重合度评分
+function scoreCandidate(edge, P, baseW, baseH, cand, SW, SH){
+  const cos=Math.cos(cand.rot), sin=Math.sin(cand.rot), s=cand.scale;
+  const ox=cand.offX, oy=cand.offY, E=edge.E, W=edge.w, H=edge.h;
+  const pts=P.pts, n=P.count; let sum=0, cnt=0;
+  for(let i=0;i<n;i++){
+    const u=pts[i*2], v=pts[i*2+1];
+    const dx=u*baseW*s, dy=v*baseH*s;
+    const rx=ox+cos*dx-sin*dy, ry=oy+sin*dx+cos*dy;   // 相对世界坐标
+    const px=(rx/baseW+0.5)*SW, py=(ry/baseH+0.5)*SH; // 映射到图像像素
+    if(px<0||px>=W||py<0||py>=H){cnt++;continue;} // 越界点记 0 分（防止把图推到画面外刷高分）
+    const x0=px|0, y0=py|0;
+    const x1=Math.min(x0+1,W-1), y1=Math.min(y0+1,H-1);
+    const fx=px-x0, fy=py-y0;
+    const e=(E[y0*W+x0]*(1-fx)+E[y0*W+x1]*fx)*(1-fy)+(E[y1*W+x0]*(1-fx)+E[y1*W+x1]*fx)*fy;
+    sum+=e; cnt++;
+  }
+  return cnt>0?sum/cnt:0;
+}
+function autoAlign(){
+  const edge=computeEdgeMap(); if(!edge){alert('请先加载图像层');return;}
+  const P=sampleDxfPoints(9000); if(!P){alert('请先加载矢量层');return;}
+  const baseW=imgLayer.baseW, baseH=imgLayer.baseH, SW=imgLayer.srcW, SH=imgLayer.srcH;
+  // 图像边缘质心 -> 相对世界坐标（即 DXF 应平移到的目标中心）
+  const imgCxRel=(edge.cenX/SW-0.5)*baseW;
+  const imgCyRel=(edge.cenY/SH-0.5)*baseH;
+  // 给定 (scale,rot)，用质心对齐解析求出平移，再评分
+  function evalCand(sc,rt){
+    const cos=Math.cos(rt),sin=Math.sin(rt);
+    const dxC=P.mu*baseW*sc, dyC=P.mv*baseH*sc;
+    const offX=imgCxRel-(cos*dxC-sin*dyC);
+    const offY=imgCyRel-(sin*dxC+cos*dyC);
+    return {scale:sc,rot:rt,offX,offY,
+            score:scoreCandidate(edge,P,baseW,baseH,{scale:sc,rot:rt,offX,offY},SW,SH)};
+  }
+  let best=evalCand(1,0);
+  // 1) 粗搜：缩放/旋转网格（质心法求平移，仅用于给 (scale,rot) 排序定位量级与朝向）
+  for(let sc=0.6;sc<=1.6;sc+=0.05) for(let rd=-30;rd<=30;rd+=2){ const c=evalCand(sc,rd*Math.PI/180); if(c.score>best.score) best=c; }
+  // 2) 中搜：在粗搜最优附近细化
+  for(let sc=best.scale-0.12;sc<=best.scale+0.12;sc+=0.01) for(let rd=best.rot-0.10;rd<=best.rot+0.10;rd+=0.01){ const c=evalCand(sc,rd); if(c.score>best.score) best=c; }
+  // 3) 全局平移粗定位：覆盖大偏移（关键修复——真实栅格与矢量常存在显著平移错位）。
+  //    用较稀疏采样点加速；范围取图层尺寸的 0.7 倍，足以容纳把设计推出画面之外的极端错位。
+  const Pg=sampleDxfPoints(2500);
+  function globalTrans(sc,rt,R,st){
+    let b={scale:sc,rot:rt,offX:0,offY:0,score:0};
+    for(let ax=-R;ax<=R;ax+=st) for(let ay=-R;ay<=R;ay+=st){
+      const t={scale:sc,rot:rt,offX:ax,offY:ay};
+      t.score=scoreCandidate(edge,Pg,baseW,baseH,t,SW,SH);
+      if(t.score>b.score) b=t;
+    }
+    return b;
+  }
+  let c=globalTrans(best.scale,best.rot,0.7*Math.max(baseW,baseH),8);
+  // 4) 坐标下降：平移/缩放/旋转联合精修（从全局平移结果出发，已处于正确 basin）
+  function searchTrans(cand,R,st){
+    let b={...cand};
+    for(let ax=-R;ax<=R;ax+=st) for(let ay=-R;ay<=R;ay+=st){
+      const t={scale:cand.scale,rot:cand.rot,offX:cand.offX+ax,offY:cand.offY+ay};
+      t.score=scoreCandidate(edge,P,baseW,baseH,t,SW,SH);
+      if(t.score>b.score) b=t;
+    }
+    return b;
+  }
+  function search1D(cand,key,lo,hi,st){
+    let b={...cand};
+    for(let v=lo; v<=hi+1e-9; v+=st){
+      const t={scale:cand.scale,rot:cand.rot,offX:cand.offX,offY:cand.offY}; t[key]=v;
+      t.score=scoreCandidate(edge,P,baseW,baseH,t,SW,SH);
+      if(t.score>b.score) b=t;
+    }
+    return b;
+  }
+  let R=40, st=4;
+  for(let it=0; it<8 && R>=0.5; it++){
+    c=searchTrans(c,R,st);
+    c=search1D(c,'scale', c.scale*0.94, c.scale*1.06, Math.max(1e-3, c.scale*0.015));
+    c=search1D(c,'rot', c.rot-0.06, c.rot+0.06, 0.004);
+    R*=0.5; st*=0.5;
+  }
+  // 5) 最终细平移（step=1，锁定亚像素级平移）
+  c=searchTrans(c,12,1);
+  best=c;
+  dxfLayer.scale=best.scale; dxfLayer.rot=best.rot; dxfLayer.offX=best.offX; dxfLayer.offY=best.offY;
+  document.getElementById('dxfScale').value=Math.round(best.scale*100);
+  document.getElementById('dxfScaleV').textContent=best.scale.toFixed(2)+'×';
+  document.getElementById('dxfRot').value=Math.round(best.rot*180/Math.PI);
+  document.getElementById('dxfRotV').textContent=Math.round(best.rot*180/Math.PI)+'°';
+  document.getElementById('dxfOffX').value=Math.round(best.offX); document.getElementById('dxfOffXV').textContent=Math.round(best.offX);
+  document.getElementById('dxfOffY').value=Math.round(best.offY); document.getElementById('dxfOffYV').textContent=Math.round(best.offY);
+  draw();
+  document.getElementById('hud').innerHTML='自动对齐完成 · 缩放 '+best.scale.toFixed(3)+'× · 旋转 '+(best.rot*180/Math.PI).toFixed(1)+'° · 重合度评分 '+best.score.toFixed(3)+'<br>（可在滑块上继续微调）';
+}
+
+function resetAll(){
+  imgLayer.offX=dxfLayer.offX=0; imgLayer.offY=dxfLayer.offY=0;
+  imgLayer.scale=dxfLayer.scale=1; imgLayer.rot=dxfLayer.rot=0;
+  imgLayer.opacity=1; dxfLayer.opacity=0.9;
+  document.getElementById('imgOffX').value=0; document.getElementById('imgOffY').value=0;
+  document.getElementById('dxfOffX').value=0; document.getElementById('dxfOffY').value=0;
+  document.getElementById('imgScale').value=100; document.getElementById('dxfScale').value=100;
+  document.getElementById('imgRot').value=0; document.getElementById('dxfRot').value=0;
+  document.getElementById('imgOpacity').value=100; document.getElementById('dxfOpacity').value=90;
+  document.getElementById('imgScaleV').textContent='1.00×'; document.getElementById('dxfScaleV').textContent='1.00×';
+  document.getElementById('imgRotV').textContent='0°'; document.getElementById('dxfRotV').textContent='0°';
+  document.getElementById('imgOpacityV').textContent='100%'; document.getElementById('dxfOpacityV').textContent='90%';
+  view.topLayer='dxf'; document.getElementById('topLayer').value='dxf';
+  view.diffMode=false; document.getElementById('diffMode').checked=false;
+  fitAll(); draw();
+}
+
+function exportPng(){
+  const dpr=2, cssW=cv.clientWidth, cssH=cv.clientHeight;
+  const c=document.createElement('canvas'); c.width=cssW*dpr; c.height=cssH*dpr;
+  paint(c.getContext('2d'), dpr, cssW, cssH, false);
+  const a=document.createElement('a');
+  a.href=c.toDataURL('image/png');
+  a.download='overlay_'+Date.now()+'.png';
+  a.click();
+}
+
+/* ---------------- 导入 ---------------- */
+document.getElementById('imgImport').addEventListener('change', e=>{
+  const file=e.target.files[0]; if(!file) return;
+  const name=file.name.toLowerCase();
+  const url=URL.createObjectURL(file);
+  if(name.endsWith('.tif')||name.endsWith('.tiff')){
+    // 用 UTIF 解码
+    const reader=new FileReader();
+    reader.onload=()=>{
+      const ifds=UTIF.decode(reader.result);
+      UTIF.decodeImage(reader.result, ifds[0]);
+      const rgba=UTIF.toRGBA(ifds[0]);
+      const w=ifds[0].width, h=ifds[0].height;
+      const c=document.createElement('canvas'); c.width=w; c.height=h;
+      const id=new ImageData(new Uint8ClampedArray(rgba),w,h);
+      c.getContext('2d').putImageData(id,0,0);
+      // 转成可 drawImage 的图源
+      const out=document.createElement('canvas'); out.width=w; out.height=h;
+      out.getContext('2d').drawImage(c,0,0);
+      imgLayer._src=out; imgLayer.off=buildImageOff(out, imgLayer.invert);
+      imgLayer.srcW=w; imgLayer.srcH=h; fitLayer(imgLayer);
+      document.getElementById('imgFileLabel').textContent='已导入：'+file.name;
+      draw();
+    };
+    reader.readAsArrayBuffer(file);
+  } else {
+    const img=new Image();
+    img.onload=()=>{
+      imgLayer._src=img; imgLayer.off=buildImageOff(img, imgLayer.invert);
+      imgLayer.srcW=img.naturalWidth; imgLayer.srcH=img.naturalHeight; fitLayer(imgLayer);
+      document.getElementById('imgFileLabel').textContent='已导入：'+file.name;
+      draw();
+    };
+    img.src=url;
+  }
+});
+document.getElementById('dxfImport').addEventListener('change', e=>{
+  const file=e.target.files[0]; if(!file) return;
+  const reader=new FileReader();
+  reader.onload=()=>{
+    const res=parseDxfText(reader.result);
+    const f32=new Float32Array(res.segs);
+    dxfLayer.segs=f32; dxfLayer.bbox=res.bbox;
+    dxfLayer.off=buildDxfOff(f32, res.bbox, dxfLayer.color);
+    dxfLayer.srcW=dxfLayer.off.width; dxfLayer.srcH=dxfLayer.off.height;
+    fitLayer(dxfLayer);
+    document.getElementById('dxfFileLabel').textContent='已导入：'+file.name+' ('+res.count+' 段)';
+    draw();
+  };
+  reader.readAsText(file);
+});
+
+/* ---------------- 初始化默认值 ---------------- */
+function tryInit(){
+  if(imgLayer.off && dxfLayer.off && !initialized){ fitAll(); initialized=true; }
+  draw();
+}
+(function loadDefaults(){
+  // 图像
+  const img=new Image();
+  img.onload=()=>{
+    imgLayer._src=img; imgLayer.off=buildImageOff(img,false);
+    imgLayer.srcW=img.naturalWidth; imgLayer.srcH=img.naturalHeight;
+    tryInit();
+  };
+  img.src=window.DEFAULT_TIFF_PNG;
+  // DXF
+  const u8=b64ToU8(window.DEFAULT_DXF_LINES);
+  const f32=new Float32Array(u8.buffer);
+  dxfLayer.segs=f32; dxfLayer.bbox=window.DEFAULT_DXF_BBOX;
+  dxfLayer.off=buildDxfOff(f32, window.DEFAULT_DXF_BBOX, dxfLayer.color);
+  dxfLayer.srcW=dxfLayer.off.width; dxfLayer.srcH=dxfLayer.off.height;
+  tryInit();
+})();
+
+window.addEventListener('resize', draw);
+draw();
+</script>
+</body>
+</html>

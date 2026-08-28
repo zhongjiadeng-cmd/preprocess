@@ -33,11 +33,6 @@ public sealed class MainWindow : Window
         TextureImageInspection.GetMaximumBase64CharacterCount(
             TextureImageInspection.DefaultMaximumPreviewBytes) + InspectionJsonOverheadCharacters);
 
-    private sealed record TexturePreviewView(
-        Image Preview,
-        TextBlock Metadata,
-        TextBlock PhysicalSize);
-
     private sealed record SharedPreviewView(
         ToggleButton TextureTab,
         ToggleButton DxfTab,
@@ -81,21 +76,7 @@ public sealed class MainWindow : Window
     private readonly NumericUpDown _heightBox = MakeNumberBox(100, 0.01m, 100000, showButtons: false);
     private readonly NumericUpDown _spacingBox = MakeNumberBox(0.02m, 0.001m, 1000);
     private readonly TextBox _dpiBox = new() { Watermark = "可选；图片无 DPI 时填写" };
-    private readonly Image _hatchTexturePreview = new()
-    {
-        Stretch = Stretch.Uniform,
-        HorizontalAlignment = HorizontalAlignment.Stretch
-    };
-    private readonly TextBlock _hatchTextureMetadata = new()
-    {
-        Text = "尚未选择图片",
-        Foreground = UiTheme.TextSecondaryBrush
-    };
-    private readonly TextBlock _hatchTexturePhysicalSize = new()
-    {
-        Text = "物理尺寸：等待读取图片信息",
-        Foreground = UiTheme.TextSecondaryBrush
-    };
+    private readonly GrayscaleLayerPreviewControl _hatchTextureSurface = new();
     private readonly ComboBox _anchorBox = new()
     {
         ItemsSource = new[] { "居中裁剪", "左上角裁剪" },
@@ -128,21 +109,7 @@ public sealed class MainWindow : Window
     private readonly NumericUpDown _pipelineSpacingBox = MakeNumberBox(0.02m, 0.001m, 1000);
     private readonly NumericUpDown _pipelineHatchAngleStepBox = MakeNumberBox(0, 0.1m, 180, 2, showButtons: false);
     private readonly TextBox _pipelineDpiBox = new() { Watermark = "可选；图片无 DPI 时填写" };
-    private readonly Image _pipelineTexturePreview = new()
-    {
-        Stretch = Stretch.Uniform,
-        HorizontalAlignment = HorizontalAlignment.Stretch
-    };
-    private readonly TextBlock _pipelineTextureMetadata = new()
-    {
-        Text = "尚未选择图片",
-        Foreground = UiTheme.TextSecondaryBrush
-    };
-    private readonly TextBlock _pipelineTexturePhysicalSize = new()
-    {
-        Text = "物理尺寸：等待读取图片信息",
-        Foreground = UiTheme.TextSecondaryBrush
-    };
+    private readonly GrayscaleLayerPreviewControl _pipelineTextureSurface = new();
     private readonly ComboBox _pipelineAnchorBox = new()
     {
         ItemsSource = new[] { "居中裁剪", "左上角裁剪" },
@@ -206,8 +173,6 @@ public sealed class MainWindow : Window
     private readonly Button _pipelineSingleStepButton = new() { Content = "单步执行 ▾" };
     private readonly Button _pipelineOpenButton = new() { Content = "打开加工文件目录", IsEnabled = false };
     private readonly ProgressBar _pipelineProgress = UiTheme.CreateProgress();
-    private readonly TexturePreviewView _hatchTextureView;
-    private readonly TexturePreviewView _pipelineTextureView;
     private readonly TexturePreviewController _hatchPreviewController;
     private readonly TexturePreviewController _pipelinePreviewController;
     private readonly SharedPreviewView _hatchSharedPreview;
@@ -273,19 +238,11 @@ public sealed class MainWindow : Window
         MinHeight = 720;
         Background = UiTheme.RootBrush;
         WindowStartupLocation = WindowStartupLocation.CenterScreen;
-        _hatchTextureView = new TexturePreviewView(
-            _hatchTexturePreview,
-            _hatchTextureMetadata,
-            _hatchTexturePhysicalSize);
-        _pipelineTextureView = new TexturePreviewView(
-            _pipelineTexturePreview,
-            _pipelineTextureMetadata,
-            _pipelineTexturePhysicalSize);
         _hatchPreviewController = new TexturePreviewController(
-            source => _hatchTextureView.Preview.Source = source as Bitmap,
+            source => _hatchTextureSurface.SetImage(source as Bitmap),
             update => ApplyTextureSizeUpdate(update, _widthBox, _heightBox));
         _pipelinePreviewController = new TexturePreviewController(
-            source => _pipelineTextureView.Preview.Source = source as Bitmap,
+            source => _pipelineTextureSurface.SetImage(source as Bitmap),
             update => ApplyTextureSizeUpdate(
                 update,
                 _pipelineWidthBox,
@@ -302,7 +259,6 @@ public sealed class MainWindow : Window
                 _dpiBox.Text,
                 _widthBox.Minimum,
                 _widthBox.Maximum);
-            RenderTexturePreview(_hatchTextureView, _hatchPreviewController.State);
         };
         _pipelineDpiBox.TextChanged += (_, _) =>
         {
@@ -310,7 +266,6 @@ public sealed class MainWindow : Window
                 _pipelineDpiBox.Text,
                 _pipelineWidthBox.Minimum,
                 _pipelineWidthBox.Maximum);
-            RenderTexturePreview(_pipelineTextureView, _pipelinePreviewController.State);
         };
         Closed += (_, _) => DisposeTexturePreviews();
 
@@ -459,7 +414,7 @@ public sealed class MainWindow : Window
             }
         };
         var hatchPreviewPanel = MakeSharedPreviewPanel(
-            _hatchTextureView,
+            _hatchTextureSurface,
             _hatchDxfPreview,
             _hatchDxfPreviewStatus,
             hatchImportDxfButton,
@@ -702,7 +657,7 @@ public sealed class MainWindow : Window
             }
         };
         var pipelinePreviewPanel = MakeSharedPreviewPanel(
-            _pipelineTextureView,
+            _pipelineTextureSurface,
             _pipelineDxfPreview,
             _pipelineDxfPreviewStatus,
             pipelineImportDxfButton,
@@ -928,7 +883,7 @@ public sealed class MainWindow : Window
     }
 
     private static Control MakeSharedPreviewPanel(
-        TexturePreviewView texture,
+        GrayscaleLayerPreviewControl texture,
         DxfPreviewControl dxfPreview,
         TextBlock dxfStatus,
         Button importButton,
@@ -1002,20 +957,7 @@ public sealed class MainWindow : Window
         };
     }
 
-    private static Control MakeTexturePreviewContent(TexturePreviewView view) => new Grid
-    {
-        RowDefinitions = new RowDefinitions("*,Auto"),
-        RowSpacing = 10,
-        Children =
-        {
-            AtRow(UiTheme.CanvasCard(view.Preview), 0),
-            AtRow(new StackPanel
-            {
-                Spacing = 4,
-                Children = { view.Metadata, view.PhysicalSize }
-            }, 1)
-        }
-    };
+    private static Control MakeTexturePreviewContent(GrayscaleLayerPreviewControl view) => view;
 
     private Control MakePipelineLayerPreviewContent()
     {
@@ -1557,7 +1499,7 @@ public sealed class MainWindow : Window
 
         await LoadTexturePreviewAsync(
             path,
-            _pipelineTextureView,
+            _pipelineTextureSurface,
             _pipelineDpiBox,
             _pipelineWidthBox,
             _pipelineHeightBox,
@@ -2237,7 +2179,7 @@ public sealed class MainWindow : Window
 
     private static async Task LoadTexturePreviewAsync(
         string path,
-        TexturePreviewView view,
+        GrayscaleLayerPreviewControl view,
         TextBox dpiBox,
         NumericUpDown widthBox,
         NumericUpDown heightBox,
@@ -2247,7 +2189,6 @@ public sealed class MainWindow : Window
         var operation = controller.BeginImport();
         sharedPreview.Selection.BeginTextureImport();
         SelectSharedPreview(sharedPreview, SharedPreviewKind.Texture);
-        RenderTexturePreview(view, controller.State);
 
         Bitmap? candidateBitmap = null;
         try
@@ -2276,7 +2217,6 @@ public sealed class MainWindow : Window
 
             sharedPreview.Selection.CompleteTextureImport();
             SelectSharedPreview(sharedPreview, SharedPreviewKind.Texture);
-            RenderTexturePreview(view, controller.State);
         }
         catch (OperationCanceledException) when (operation.CancellationToken.IsCancellationRequested)
         {
@@ -2288,7 +2228,6 @@ public sealed class MainWindow : Window
             {
                 sharedPreview.Selection.FailTextureImport();
                 SelectSharedPreview(sharedPreview, SharedPreviewKind.Texture);
-                RenderTexturePreview(view, controller.State);
             }
         }
         finally
@@ -2309,23 +2248,15 @@ public sealed class MainWindow : Window
         heightBox.Value = update.Height;
     }
 
-    private static void RenderTexturePreview(
-        TexturePreviewView view,
-        TexturePreviewState state)
-    {
-        view.Metadata.Text = state.MetadataText;
-        view.PhysicalSize.Text = state.PhysicalSizeText;
-        if (state.Phase == TexturePreviewPhase.Failed)
-            view.Metadata.Foreground = Brushes.OrangeRed;
-        else
-            view.Metadata.ClearValue(TextBlock.ForegroundProperty);
-    }
-
     private void DisposeTexturePreviews()
     {
         _pipelineLayerPreview.Dispose();
         _hatchPreviewController.Dispose();
         _pipelinePreviewController.Dispose();
+        // 控制器在 Close 中已让各自的 Surface 卸载 Bitmap（ownsBitmap=false，
+        // 释放所有权走控制器自己），这里把内部的画布资源释放掉即可。
+        _hatchTextureSurface.Dispose();
+        _pipelineTextureSurface.Dispose();
         _hatchDxfPreview.Dispose();
         _pipelineDxfPreview.Dispose();
     }
@@ -2374,7 +2305,7 @@ public sealed class MainWindow : Window
 
         await LoadTexturePreviewAsync(
             path,
-            _hatchTextureView,
+            _hatchTextureSurface,
             _dpiBox,
             _widthBox,
             _heightBox,
