@@ -285,40 +285,11 @@ internal static class UiTheme
     };
 
     /// <summary>
-    /// 日志面板卡片：标题 + 清空按钮 + 控制台风格日志框。
+    /// 日志面板卡片：标题 + 最新一条日志（折叠时） + 清空按钮 + 折叠按钮 + 控制台风格日志框。
+    /// 折叠后只显示最新一条日志；需要根据折叠状态调整行高的宿主可订阅
+    /// <see cref="LogPanelView.CollapsedChanged"/>。
     /// </summary>
-    public static Control LogPanel(TextBox log, string title)
-    {
-        var clearButton = new Button { Content = "清空" };
-        ApplyGhostStyle(clearButton, small: true);
-        clearButton.Click += (_, _) => log.Clear();
-        return new Border
-        {
-            Padding = new Thickness(14, 10, 14, 12),
-            BorderBrush = BorderSubtleBrush,
-            BorderThickness = new Thickness(1),
-            CornerRadius = CardRadius,
-            Background = PanelBrush,
-            Child = new Grid
-            {
-                RowDefinitions = new RowDefinitions("Auto,*"),
-                RowSpacing = 6,
-                Children =
-                {
-                    AtRow(new Grid
-                    {
-                        ColumnDefinitions = new ColumnDefinitions("*,Auto"),
-                        Children =
-                        {
-                            Place(PanelLabel(title), 0),
-                            Place(clearButton, 1)
-                        }
-                    }, 0),
-                    AtRow(log, 1)
-                }
-            }
-        };
-    }
+    public static LogPanelView LogPanel(TextBox log, string title) => new(log, title);
 
     /// <summary>把可折叠分组包成圆角卡片（浮起表面 + 细描边）。</summary>
     public static Control CardExpander(string title, Control content)
@@ -400,16 +371,4 @@ internal static class UiTheme
         ClipToBounds = true,
         Child = child
     };
-
-    private static T Place<T>(T control, int column) where T : Control
-    {
-        Grid.SetColumn(control, column);
-        return control;
-    }
-
-    private static T AtRow<T>(T control, int row) where T : Control
-    {
-        Grid.SetRow(control, row);
-        return control;
-    }
 }
