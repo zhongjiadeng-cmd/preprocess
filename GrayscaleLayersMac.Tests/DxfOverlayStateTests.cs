@@ -20,13 +20,13 @@ public sealed class DxfOverlayStateTests
     }
 
     [TestMethod]
-    public void IsometricSuppressesTextureWithoutLosingSelection()
+    public void AvailableSelectedTextureRemainsVisibleOutsideTopView()
     {
         var state = new DxfOverlayState();
         state.SetTextureAvailable(true);
         state.IsTopView = false;
 
-        Assert.IsFalse(state.ShouldDrawTexture);
+        Assert.IsTrue(state.ShouldDrawTexture);
         Assert.IsTrue(state.ShowTexture);
 
         state.IsTopView = true;

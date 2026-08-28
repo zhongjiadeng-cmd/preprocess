@@ -64,9 +64,7 @@ public sealed class DxfPreviewControl : Control, IDisposable
     public bool HasTexture => _textureBitmap is not null;
     public string TextureStatus => !HasTexture
         ? "此 DXF 没有配对纹理"
-        : _overlay.IsTopView
-            ? "已加载配准纹理"
-            : "纹理对齐仅在顶视图显示";
+        : "已加载配准纹理";
     public bool ShowTexture
     {
         get => _overlay.ShowTexture;

@@ -26,7 +26,7 @@ public sealed class DxfOverlayState
         }
     }
 
-    public bool ShouldDrawTexture => TextureAvailable && ShowTexture && IsTopView;
+    public bool ShouldDrawTexture => TextureAvailable && ShowTexture;
     public bool ShouldDrawDirectionArrows => ShowLines && ShowDirectionArrows;
 
     public void SetTextureAvailable(bool available) => TextureAvailable = available;
