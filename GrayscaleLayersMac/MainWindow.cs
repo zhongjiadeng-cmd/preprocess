@@ -37,6 +37,15 @@ public sealed class MainWindow : Window
         SharedPreviewSelection Selection,
         Action UpdateDxfOverlayControls);
 
+    private sealed record WorkspaceColumns(
+        ColumnDefinition Preview,
+        ColumnDefinition Inspector);
+
+    private readonly WorkspaceSplitSettings _workspaceSplitSettings =
+        WorkspaceSplitSettings.CreateDefault();
+    private readonly List<WorkspaceColumns> _workspaceColumns = [];
+    private double _workspacePreviewRatio = WorkspaceSplitSettings.DefaultPreviewRatio;
+
     private readonly TextBox _inputBox = new() { Watermark = "请选择一张灰度纹理图", IsReadOnly = true };
     private readonly TextBox _outputBox = new() { Watermark = "请选择结果保存目录", IsReadOnly = true };
     private readonly NumericUpDown _layersBox = new()
@@ -268,6 +277,7 @@ public sealed class MainWindow : Window
                 _pipelineHeightBox));
         Styles.Add(UiTheme.CreateGlobalStyles());
         UiTheme.ApplyFluentResourceOverrides(this);
+        _workspacePreviewRatio = _workspaceSplitSettings.LoadPreviewRatio();
         foreach (var primaryButton in new[] { _pipelineRunButton, _hatchRunButton, _runButton })
             UiTheme.ApplyPrimaryStyle(primaryButton);
         ConfigurePipelineDxfSelector();
@@ -850,9 +860,18 @@ public sealed class MainWindow : Window
 
     private static Control MakeInspectorSection(string title, params Control[] controls)
     {
-        var content = new StackPanel { Spacing = 14 };
+        var content = new Grid
+        {
+            RowSpacing = 14,
+            HorizontalAlignment = HorizontalAlignment.Stretch
+        };
         foreach (var control in controls)
+        {
+            control.HorizontalAlignment = HorizontalAlignment.Stretch;
+            Grid.SetRow(control, content.RowDefinitions.Count);
+            content.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
             content.Children.Add(control);
+        }
         return UiTheme.CardExpander(title, content);
     }
 
@@ -1213,7 +1232,7 @@ public sealed class MainWindow : Window
         view.DxfTab.IsChecked = kind == SharedPreviewKind.Dxf;
     }
 
-    private static Control MakeWorkspace(
+    private Control MakeWorkspace(
         StackPanel inspector,
         Control previewPanel,
         TextBox log,
@@ -1225,6 +1244,7 @@ public sealed class MainWindow : Window
         inspector.Children.RemoveAt(inspector.Children.Count - 1);
         inspector.Margin = new Thickness(18, 16, 18, 16);
         inspector.Spacing = 14;
+        inspector.HorizontalAlignment = HorizontalAlignment.Stretch;
         var inspectorSurface = new Border
         {
             Padding = new Thickness(0),
@@ -1238,6 +1258,8 @@ public sealed class MainWindow : Window
                 {
                     AtRow(new ScrollViewer
                     {
+                        HorizontalAlignment = HorizontalAlignment.Stretch,
+                        HorizontalContentAlignment = HorizontalAlignment.Stretch,
                         HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
                         VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
                         Content = inspector
@@ -1257,16 +1279,58 @@ public sealed class MainWindow : Window
                 }
             }
         };
-        Grid.SetColumn(inspectorSurface, 1);
-        Grid.SetRowSpan(inspectorSurface, 2);
-
         var logSurface = UiTheme.LogPanel(log, logTitle);
         logSurface.Margin = new Thickness(0, 0, 12, 0);
+
+        previewPanel.MinWidth = 420;
+
+        var previewColumn = new ColumnDefinition
+        {
+            Width = new GridLength(_workspacePreviewRatio, GridUnitType.Star),
+            MinWidth = 420
+        };
+        var inspectorColumn = new ColumnDefinition
+        {
+            Width = new GridLength(1 - _workspacePreviewRatio, GridUnitType.Star),
+            MinWidth = 460
+        };
+        var splitter = UiTheme.WorkspaceSplitter();
+        splitter.DragCompleted += (_, _) =>
+            CompleteWorkspaceSplitDrag(previewColumn, inspectorColumn);
+
+        _workspaceColumns.Add(new WorkspaceColumns(previewColumn, inspectorColumn));
+
+        return AssembleWorkspaceGrid(
+            previewColumn,
+            inspectorColumn,
+            previewPanel,
+            logSurface,
+            splitter,
+            inspectorSurface);
+    }
+
+    internal static Grid AssembleWorkspaceGrid(
+        ColumnDefinition previewColumn,
+        ColumnDefinition inspectorColumn,
+        Control previewPanel,
+        Control logSurface,
+        GridSplitter splitter,
+        Control inspectorSurface)
+    {
         Grid.SetRow(logSurface, 1);
+        Grid.SetColumn(splitter, 1);
+        Grid.SetRowSpan(splitter, 2);
+        Grid.SetColumn(inspectorSurface, 2);
+        Grid.SetRowSpan(inspectorSurface, 2);
 
         return new Grid
         {
-            ColumnDefinitions = new ColumnDefinitions("*,510"),
+            ColumnDefinitions =
+            {
+                previewColumn,
+                new ColumnDefinition(new GridLength(8)),
+                inspectorColumn
+            },
             RowDefinitions = new RowDefinitions("*,224"),
             ColumnSpacing = 0,
             RowSpacing = 12,
@@ -1274,15 +1338,43 @@ public sealed class MainWindow : Window
             {
                 previewPanel,
                 logSurface,
+                splitter,
                 inspectorSurface
             }
         };
     }
 
+    private void CompleteWorkspaceSplitDrag(
+        ColumnDefinition previewColumn,
+        ColumnDefinition inspectorColumn)
+    {
+        var availableWidth = previewColumn.ActualWidth + inspectorColumn.ActualWidth;
+        if (!double.IsFinite(availableWidth) || availableWidth <= 0)
+            return;
+
+        var ratio = previewColumn.ActualWidth / availableWidth;
+        if (!double.IsFinite(ratio))
+            return;
+
+        _workspacePreviewRatio = Math.Clamp(
+            ratio,
+            WorkspaceSplitSettings.MinimumPreviewRatio,
+            WorkspaceSplitSettings.MaximumPreviewRatio);
+        foreach (var columns in _workspaceColumns)
+        {
+            columns.Preview.Width = new GridLength(_workspacePreviewRatio, GridUnitType.Star);
+            columns.Inspector.Width = new GridLength(1 - _workspacePreviewRatio, GridUnitType.Star);
+        }
+
+        _workspaceSplitSettings.TrySavePreviewRatio(_workspacePreviewRatio);
+    }
+
     private static Control MakeField(string label, Control field, Button button)
     {
+        field.HorizontalAlignment = HorizontalAlignment.Stretch;
         var grid = new Grid
         {
+            HorizontalAlignment = HorizontalAlignment.Stretch,
             ColumnDefinitions = new ColumnDefinitions("*,Auto"),
             ColumnSpacing = 10
         };
@@ -1291,19 +1383,23 @@ public sealed class MainWindow : Window
         return new StackPanel
         {
             Spacing = 7,
+            HorizontalAlignment = HorizontalAlignment.Stretch,
             Children = { UiTheme.FieldLabel(label), grid }
         };
     }
 
     private static Control MakeLabeledControl(string label, Control control, int column)
     {
-        var panel = new StackPanel
+        control.HorizontalAlignment = HorizontalAlignment.Stretch;
+        var grid = new Grid
         {
-            Spacing = 7,
-            Children = { UiTheme.FieldLabel(label), control }
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            RowDefinitions = new RowDefinitions("Auto,*"),
+            RowSpacing = 7,
+            Children = { UiTheme.FieldLabel(label), AtRow(control, 1) }
         };
-        Grid.SetColumn(panel, column);
-        return panel;
+        Grid.SetColumn(grid, column);
+        return grid;
     }
 
     private static T Place<T>(T control, int column) where T : Control

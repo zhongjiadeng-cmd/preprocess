@@ -2,6 +2,7 @@ using System;
 using Avalonia;
 using Avalonia.Animation;
 using Avalonia.Controls;
+using Avalonia.Input;
 using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Styling;
@@ -322,6 +323,7 @@ internal static class UiTheme
     /// <summary>把可折叠分组包成圆角卡片（浮起表面 + 细描边）。</summary>
     public static Control CardExpander(string title, Control content)
     {
+        content.HorizontalAlignment = HorizontalAlignment.Stretch;
         var expander = new Expander
         {
             Header = new TextBlock
@@ -335,10 +337,13 @@ internal static class UiTheme
             IsExpanded = true,
             Background = Brushes.Transparent,
             Padding = new Thickness(16, 12, 16, 16),
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            HorizontalContentAlignment = HorizontalAlignment.Stretch,
             Content = content
         };
         return new Border
         {
+            HorizontalAlignment = HorizontalAlignment.Stretch,
             Background = CardBrush,
             BorderBrush = BorderSubtleBrush,
             BorderThickness = new Thickness(1),
@@ -346,6 +351,43 @@ internal static class UiTheme
             ClipToBounds = true,
             Child = expander
         };
+    }
+
+    /// <summary>双栏工作区的原生分隔条；必须直接放进需要调整的 Grid。</summary>
+    public static GridSplitter WorkspaceSplitter()
+    {
+        var control = new GridSplitter
+        {
+            Background = Brushes.Transparent,
+            Cursor = new Cursor(StandardCursorType.SizeWestEast),
+            ResizeDirection = GridResizeDirection.Columns,
+            ResizeBehavior = GridResizeBehavior.PreviousAndNext,
+            ShowsPreview = false,
+            DragIncrement = 1,
+            KeyboardIncrement = 8,
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            VerticalAlignment = VerticalAlignment.Stretch
+        };
+
+        var isDragging = false;
+        control.PointerEntered += (_, _) => control.Background = AccentBrush;
+        control.PointerExited += (_, _) =>
+        {
+            if (!isDragging)
+                control.Background = Brushes.Transparent;
+        };
+        control.DragStarted += (_, _) =>
+        {
+            isDragging = true;
+            control.Background = AccentBrush;
+        };
+        control.DragCompleted += (_, _) =>
+        {
+            isDragging = false;
+            control.Background = control.IsPointerOver ? AccentBrush : Brushes.Transparent;
+        };
+
+        return control;
     }
 
     /// <summary>预览画布外框（圆角卡片容器，承载 DXF 预览控件）。</summary>
