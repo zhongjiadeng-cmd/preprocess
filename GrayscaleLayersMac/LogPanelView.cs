@@ -16,12 +16,7 @@ namespace GrayscaleLayersMac;
 /// </summary>
 internal sealed class LogPanelView
 {
-    /// <summary>24×24 viewbox 的实心人字箭头（朝下 = 收起），笔画约 2px。</summary>
-    private const string ChevronDownGeometry =
-        "M12 16.5 L19.5 9 L18 7.5 L12 13.5 L6 7.5 L4.5 9 Z";
-
     private static readonly TimeSpan PanelMotion = TimeSpan.FromMilliseconds(260);
-    private static readonly TimeSpan IconMotion = TimeSpan.FromMilliseconds(320);
     private static readonly TimeSpan FadeMotion = TimeSpan.FromMilliseconds(150);
     private static readonly Easing Motion = new CubicEaseOut();
 
@@ -30,8 +25,7 @@ internal sealed class LogPanelView
     private readonly Border _card;
     private readonly Grid _layout;
     private readonly TextBlock _summary;
-    private readonly Button _handle;
-    private readonly RotateTransform _chevronRotation;
+    private readonly CollapseHandle _handle;
     private bool _collapsed;
     private bool _motionAttached;
 
@@ -44,41 +38,17 @@ internal sealed class LogPanelView
             RowSpacing = 6
         };
 
-        _chevronRotation = new RotateTransform { Angle = 0 };
-
-        var chevron = new PathIcon
-        {
-            Width = 15,
-            Height = 15,
-            RenderTransform = _chevronRotation,
-            RenderTransformOrigin = new RelativePoint(0.5, 0.5, RelativeUnit.Relative)
-        };
-
         // 抽屉把手：水平居中、骑在卡片上边框上，折叠/展开时箭头旋转 180°。
-        _handle = new Button
+        _handle = new CollapseHandle(
+            CollapseHandleOrientation.Horizontal,
+            "下缩，只显示最新一条日志",
+            "上拉展开完整日志")
         {
-            Content = chevron,
-            Width = 56,
-            Height = 20,
-            Padding = new Thickness(0),
-            BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(10),
-            HorizontalContentAlignment = HorizontalAlignment.Center,
-            VerticalContentAlignment = VerticalAlignment.Center,
             HorizontalAlignment = HorizontalAlignment.Center,
             VerticalAlignment = VerticalAlignment.Top,
-            Margin = new Thickness(0, -10, 0, 0),
-            ZIndex = 1
+            Margin = new Thickness(0, -10, 0, 0)
         };
-        _handle.Classes.Add("panel-handle");
-        UiTheme.AttachButtonTransitions(_handle);
-        // 光标与路径几何都依赖平台服务，等真正挂到可视化树上再设置，便于无头环境单测。
-        _handle.AttachedToVisualTree += (_, _) =>
-        {
-            _handle.Cursor = new Cursor(StandardCursorType.Hand);
-            chevron.Data = StreamGeometry.Parse(ChevronDownGeometry);
-        };
-        _handle.Click += (_, _) => SetCollapsed(!_collapsed);
+        _handle.Toggled += (_, _) => SetCollapsed(_handle.IsCollapsed);
 
         _summary = new TextBlock
         {
@@ -94,7 +64,8 @@ internal sealed class LogPanelView
         };
         _summary.AttachedToVisualTree += (_, _) =>
             _summary.Cursor = new Cursor(StandardCursorType.Hand);
-        _summary.PointerReleased += (_, _) => SetCollapsed(false);
+        // 走把手的 SetCollapsed 再由 Toggled 回调，保证箭头角度与面板状态一起翻转。
+        _summary.PointerReleased += (_, _) => _handle.SetCollapsed(false);
 
         var clearButton = new Button { Content = "清空" };
         UiTheme.ApplyGhostStyle(clearButton, small: true);
@@ -148,7 +119,6 @@ internal sealed class LogPanelView
             if (args.Property == TextBox.TextProperty)
                 RefreshSummary();
         };
-        ApplyTooltip();
         RefreshSummary();
     }
 
@@ -168,7 +138,7 @@ internal sealed class LogPanelView
     public double LogAreaOpacity => _logArea.Opacity;
 
     /// <summary>把手箭头的目标旋转角：展开 0°（朝下）、折叠 180°（朝上）。</summary>
-    public double ChevronAngle => _chevronRotation.Angle;
+    public double ChevronAngle => _handle.ChevronAngle;
 
     /// <summary>最新一条日志文字的目标不透明度。</summary>
     public double SummaryOpacity => _summary.Opacity;
@@ -177,7 +147,7 @@ internal sealed class LogPanelView
     public bool LogAreaHitTestVisible => _logArea.IsHitTestVisible;
 
     /// <summary>把手当前提示文案。</summary>
-    public string HandleTooltip => ToolTip.GetTip(_handle)?.ToString() ?? string.Empty;
+    public string HandleTooltip => _handle.TooltipText;
 
     /// <summary>折叠状态变化时触发。</summary>
     public event EventHandler? CollapsedChanged;
@@ -196,13 +166,15 @@ internal sealed class LogPanelView
         _layout.RowSpacing = value ? 0 : 6;
         _summary.Opacity = value ? 1 : 0;
         _summary.IsHitTestVisible = value;
-        _chevronRotation.Angle = value ? 180 : 0;
         _card.Background = value ? UiTheme.BarBrush : UiTheme.PanelBrush;
         _card.BorderBrush = value ? UiTheme.BorderMediumBrush : UiTheme.BorderSubtleBrush;
-        ApplyTooltip();
 
         if (value)
             RefreshSummary();
+
+        // 把手状态未变时不会回调，因此由外部（点击摘要行、恢复持久化状态）进入
+        // 本方法的路径也能同步到箭头角度，不会产生来回触发。
+        _handle.SetCollapsed(value);
 
         CollapsedChanged?.Invoke(this, EventArgs.Empty);
     }
@@ -218,16 +190,6 @@ internal sealed class LogPanelView
             return;
 
         _motionAttached = true;
-
-        _chevronRotation.Transitions = new Transitions
-        {
-            new DoubleTransition
-            {
-                Property = RotateTransform.AngleProperty,
-                Duration = IconMotion,
-                Easing = Motion
-            }
-        };
 
         _logArea.Transitions = new Transitions
         {
@@ -256,9 +218,6 @@ internal sealed class LogPanelView
             new BrushTransition { Property = Border.BorderBrushProperty, Duration = PanelMotion }
         };
     }
-
-    private void ApplyTooltip() =>
-        ToolTip.SetTip(_handle, _collapsed ? "上拉展开完整日志" : "下缩，只显示最新一条日志");
 
     private void RefreshSummary()
     {

@@ -1,4 +1,6 @@
 using Avalonia;
+using Avalonia.Animation;
+using Avalonia.Animation.Easings;
 using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
 using Avalonia.Layout;
@@ -55,16 +57,29 @@ public sealed class GrayscaleLayerPreviewControl : Grid, IDisposable
     private const string InteractionHint =
         "滚轮滚动 · ⌘/Ctrl+滚轮缩放 · 拖动或空格+拖动平移 · 双击适应窗口/100%";
 
+    /// <summary>缩略图列展开 / 收起后的卡片宽度，收拢动画在这两个数值之间过渡。</summary>
+    private const double ThumbnailExpandedWidth = 180;
+    private const double ThumbnailCompactWidth = 44;
+
+    /// <summary>把手骑在缩略图卡片右边框上、一半探出卡片的像素数。</summary>
+    private const double HandleOverhang = 10;
+
+    private static readonly TimeSpan PanelMotion = TimeSpan.FromMilliseconds(260);
+    private static readonly Easing Motion = new CubicEaseOut();
+
     private readonly Func<string, CancellationToken, Task<TextureImageInspection>>? _loadPreview;
     private readonly bool _supportsLayers;
 
     private readonly GrayscaleLayerPreviewCanvas _canvas = new();
     private readonly GrayscaleLayerThumbnailCanvas? _thumbnails;
     private readonly ColumnDefinition? _thumbnailColumn;
-    private readonly Button? _collapseButton;
+    private readonly CollapseHandle? _collapseHandle;
+    // 在 MakeThumbnailColumn 里组装后回填，因此不能是 readonly。
+    private Border? _thumbnailCard;
     private readonly Button? _prevButton;
     private readonly Button? _nextButton;
     private readonly CheckBox? _keepViewBox;
+    private bool _motionAttached;
 
     private readonly TextBlock _zoomLabel = new()
     {
@@ -139,8 +154,13 @@ public sealed class GrayscaleLayerPreviewControl : Grid, IDisposable
         if (_supportsLayers)
         {
             _thumbnails = new GrayscaleLayerThumbnailCanvas();
-            _thumbnailColumn = new ColumnDefinition(new GridLength(0, GridUnitType.Pixel));
-            _collapseButton = new Button { Content = "‹", Width = 34, Height = 28 };
+            // 列宽交给 Auto：真正被动画的是卡片自身的 Width，列只是跟着测量结果长，
+            // GridLength 本身没有过渡动画可用。
+            _thumbnailColumn = new ColumnDefinition(GridLength.Auto);
+            _collapseHandle = new CollapseHandle(
+                CollapseHandleOrientation.Vertical,
+                "收起图层缩略图",
+                "展开图层缩略图");
             _keepViewBox = new CheckBox
             {
                 Content = "切层保持视图",
@@ -175,10 +195,7 @@ public sealed class GrayscaleLayerPreviewControl : Grid, IDisposable
         if (_supportsLayers)
         {
             _thumbnails!.LayerClicked += (_, index) => TrySelect(index);
-            UiTheme.ApplyGhostStyle(_collapseButton!, small: true);
-            _collapseButton!.HorizontalAlignment = HorizontalAlignment.Center;
-            ToolTip.SetTip(_collapseButton, "折叠图层缩略图");
-            _collapseButton.Click += (_, _) => ToggleThumbnailPanel();
+            _collapseHandle!.Toggled += (_, _) => ToggleThumbnailPanel();
             _prevButton = MakeButton("上一层", () => TrySelect(_controller.SelectedIndex - 1));
             _nextButton = MakeButton("下一层", () => TrySelect(_controller.SelectedIndex + 1));
             ToolTip.SetTip(_keepViewBox!, "开启后切换图层保留当前缩放与位置，便于逐层对照；关闭则回到 100% 居中。");
@@ -229,8 +246,36 @@ public sealed class GrayscaleLayerPreviewControl : Grid, IDisposable
             Children.Add(mainColumn);
         }
 
+        AttachedToVisualTree += (_, _) => AttachMotion();
+
         SyncItems();
         UpdateZoomLabel();
+    }
+
+    /// <summary>
+    /// 装配缩略图卡片宽度的收拢过渡。过渡依赖 IGlobalClock，无头环境没有这个服务，
+    /// 一旦带 Transitions 的属性变化就会抛异常，因此推迟到真正挂上可视化树时再装。
+    /// 宽度初值在装配前已通过 <see cref="UpdateThumbnailVisibility"/> 写好。
+    /// </summary>
+    private void AttachMotion()
+    {
+        if (_motionAttached)
+            return;
+
+        _motionAttached = true;
+
+        if (_thumbnailCard is null)
+            return;
+
+        _thumbnailCard.Transitions = new Transitions
+        {
+            new DoubleTransition
+            {
+                Property = Layoutable.WidthProperty,
+                Duration = PanelMotion,
+                Easing = Motion
+            }
+        };
     }
 
     /// <summary>
@@ -351,20 +396,28 @@ public sealed class GrayscaleLayerPreviewControl : Grid, IDisposable
             HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
             VerticalScrollBarVisibility = ScrollBarVisibility.Auto
         };
-        return new Border
+
+        // 宽度写在卡片上而不是列上：Width 是 double，能挂 DoubleTransition 做出收拢动画；
+        // 列用 Auto 跟着卡片的测量结果长。ClipToBounds 让收拢时溢出的缩略图被裁掉。
+        _thumbnailCard = new Border
         {
             Padding = new Thickness(6),
             Background = UiTheme.CardBrush,
-            Child = new Grid
-            {
-                RowDefinitions = new RowDefinitions("Auto,*"),
-                RowSpacing = 6,
-                Children =
-                {
-                    AtRow(_collapseButton!, 0),
-                    AtRow(thumbnailScroll, 1)
-                }
-            }
+            CornerRadius = UiTheme.CardRadius,
+            ClipToBounds = true,
+            Width = ThumbnailExpandedWidth,
+            Child = thumbnailScroll
+        };
+
+        // 把手骑在卡片右边框、垂直居中：一半探出卡片，正好落在列间距里，
+        // 箭头朝左表示"收起"、朝右表示"展开"，与水平收拢方向一致。
+        _collapseHandle!.HorizontalAlignment = HorizontalAlignment.Right;
+        _collapseHandle.VerticalAlignment = VerticalAlignment.Center;
+        _collapseHandle.Margin = new Thickness(0, 0, -HandleOverhang, 0);
+
+        return new Grid
+        {
+            Children = { _thumbnailCard, _collapseHandle }
         };
     }
 
@@ -443,11 +496,21 @@ public sealed class GrayscaleLayerPreviewControl : Grid, IDisposable
         // 只有源纹理（还没有分层）时缩略图列表没有信息量，收起来把宽度留给画布。
         var visible = _controller.Items.Count > 1;
         ColumnSpacing = visible ? 12 : 0;
-        _thumbnailColumn.Width = new GridLength(visible ? (_compactThumbnails ? 44 : 180) : 0);
+        // 无分层时直接隐藏：IsVisible 为 false 的控件不参与测量，Auto 列自然收到 0。
+        _thumbnailCard!.IsVisible = visible;
+        _thumbnailCard.Width = visible ? CurrentThumbnailWidth() : 0;
         _thumbnails!.SetCompact(_compactThumbnails);
-        if (_collapseButton is not null)
-            _collapseButton.IsEnabled = visible;
+        if (_collapseHandle is not null)
+        {
+            // 把手与卡片一起显隐——无分层时缩略图区域整体不可见，把手孤零零地
+            // 探在主画布左边反而像 UI bug。
+            _collapseHandle.IsVisible = visible;
+            _collapseHandle.IsEnabled = visible;
+        }
     }
+
+    private double CurrentThumbnailWidth() =>
+        _compactThumbnails ? ThumbnailCompactWidth : ThumbnailExpandedWidth;
 
     private void UpdateNavigation(int itemCount)
     {
@@ -510,16 +573,15 @@ public sealed class GrayscaleLayerPreviewControl : Grid, IDisposable
 
     private void ToggleThumbnailPanel()
     {
-        if (_thumbnailColumn is null || _collapseButton is null)
+        if (_collapseHandle is null || _thumbnailCard is null)
             return;
         if (_controller.Items.Count <= 1)
             return;
 
-        _compactThumbnails = !_compactThumbnails;
-        _thumbnailColumn.Width = new GridLength(_compactThumbnails ? 44 : 180);
+        // 把手已经自己翻好箭头，这里只跟进宽度；卡片的 Width 变动由过渡动画接管。
+        _compactThumbnails = _collapseHandle.IsCollapsed;
+        _thumbnailCard.Width = CurrentThumbnailWidth();
         _thumbnails!.SetCompact(_compactThumbnails);
-        _collapseButton.Content = _compactThumbnails ? "›" : "‹";
-        ToolTip.SetTip(_collapseButton, _compactThumbnails ? "展开图层缩略图" : "折叠图层缩略图");
     }
 
     private static Button MakeButton(string text, Action action)
