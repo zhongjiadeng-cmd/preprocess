@@ -18,6 +18,14 @@ namespace GrayscaleLayersMac;
 
 public sealed class MainWindow : Window
 {
+    private enum PipelineRunMode
+    {
+        All,
+        GrayscaleOnly,
+        DxfOnly,
+        MachineOnly
+    }
+
     private const int InspectionJsonOverheadCharacters = 4 * 1024;
     private const int MaximumInspectionStandardErrorCharacters = 1024 * 1024;
     private static readonly int MaximumInspectionStandardOutputCharacters = checked(
@@ -190,7 +198,8 @@ public sealed class MainWindow : Window
         PlaceholderText = "生成后选择要预览的层"
     };
     private readonly TextBox _pipelineLogBox = MakeLogBox();
-    private readonly Button _pipelineRunButton = new() { Content = "开始三步处理", HorizontalAlignment = HorizontalAlignment.Stretch };
+    private readonly Button _pipelineRunButton = new() { Content = "全部执行", HorizontalAlignment = HorizontalAlignment.Stretch };
+    private readonly Button _pipelineSingleStepButton = new() { Content = "单步执行 ▾" };
     private readonly Button _pipelineOpenButton = new() { Content = "打开加工文件目录", IsEnabled = false };
     private readonly ProgressBar _pipelineProgress = UiTheme.CreateProgress();
     private readonly TexturePreviewView _hatchTextureView;
@@ -347,7 +356,7 @@ public sealed class MainWindow : Window
                 _progress,
                 new Grid
                 {
-                    ColumnDefinitions = new ColumnDefinitions("*,Auto,Auto"),
+                    ColumnDefinitions = new ColumnDefinitions("*,Auto"),
                     ColumnSpacing = 10,
                     Children =
                     {
@@ -474,10 +483,33 @@ public sealed class MainWindow : Window
             if (_cancellation is null)
             {
                 pipelineCancelButton.IsEnabled = true;
-                await RunPipelineAsync();
+                await RunPipelineAsync(PipelineRunMode.All);
                 pipelineCancelButton.IsEnabled = false;
             }
         };
+        var singleStepFlyout = new Flyout
+        {
+            Content = new StackPanel
+            {
+                Spacing = 4,
+                Children =
+                {
+                    CreatePipelineStepMenuButton(
+                        "第 1 步：灰度分层",
+                        PipelineRunMode.GrayscaleOnly,
+                        pipelineCancelButton),
+                    CreatePipelineStepMenuButton(
+                        "第 2 步：生成 DXF",
+                        PipelineRunMode.DxfOnly,
+                        pipelineCancelButton),
+                    CreatePipelineStepMenuButton(
+                        "第 3 步：生成加工文件",
+                        PipelineRunMode.MachineOnly,
+                        pipelineCancelButton)
+                }
+            }
+        };
+        _pipelineSingleStepButton.Flyout = singleStepFlyout;
         pipelineCancelButton.Click += (_, _) => _cancellation?.Cancel();
         _pipelineOpenButton.Click += (_, _) => OpenDirectory(_lastMachineOutputPath);
         pipelineImportDxfButton.Click += async (_, _) =>
@@ -649,9 +681,17 @@ public sealed class MainWindow : Window
                     ColumnSpacing = 10,
                     Children =
                     {
-                        Place(_pipelineRunButton, 0),
-                        Place(pipelineCancelButton, 1),
-                        Place(_pipelineOpenButton, 2)
+                        Place(new StackPanel
+                        {
+                            Orientation = Orientation.Horizontal,
+                            Spacing = 8,
+                            Children =
+                            {
+                                _pipelineRunButton,
+                                _pipelineSingleStepButton
+                            }
+                        }, 0),
+                        Place(_pipelineOpenButton, 1)
                     }
                 }
             }
@@ -1493,6 +1533,30 @@ public sealed class MainWindow : Window
             _pipelineSharedPreview);
     }
 
+    private Button CreatePipelineStepMenuButton(
+        string label,
+        PipelineRunMode mode,
+        Button cancelButton)
+    {
+        var button = new Button
+        {
+            Content = label,
+            HorizontalContentAlignment = HorizontalAlignment.Left,
+            HorizontalAlignment = HorizontalAlignment.Stretch
+        };
+        button.Click += async (_, _) =>
+        {
+            _pipelineSingleStepButton.Flyout?.Hide();
+            if (_cancellation is null)
+            {
+                cancelButton.IsEnabled = true;
+                await RunPipelineAsync(mode);
+                cancelButton.IsEnabled = false;
+            }
+        };
+        return button;
+    }
+
     private async Task PickPipelineFolderAsync(TextBox target, string title)
     {
         var folders = await StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions
@@ -1505,40 +1569,53 @@ public sealed class MainWindow : Window
             target.Text = path;
     }
 
-    private async Task RunPipelineAsync()
+    private async Task RunPipelineAsync(PipelineRunMode mode)
     {
         var input = _pipelineInputBox.Text?.Trim();
         var layerOutput = _pipelineLayerOutputBox.Text?.Trim();
         var dxfOutput = _pipelineDxfOutputBox.Text?.Trim();
         var machineName = _pipelineMachineNameBox.Text?.Trim();
-        if (string.IsNullOrWhiteSpace(machineName))
+        var needsLayers = mode is PipelineRunMode.All or PipelineRunMode.GrayscaleOnly;
+        var needsDxf = mode is PipelineRunMode.All or PipelineRunMode.DxfOnly;
+        var needsMachine = mode is PipelineRunMode.All or PipelineRunMode.MachineOnly;
+        if (needsMachine && string.IsNullOrWhiteSpace(machineName))
         {
             machineName = $"machine_file_{DateTime.Now:yyyyMMdd_HHmmss}";
             _pipelineMachineNameBox.Text = machineName;
         }
 
-        if (string.IsNullOrWhiteSpace(input) || !File.Exists(input))
+        if (needsLayers &&
+            (string.IsNullOrWhiteSpace(input) || !File.Exists(input)))
         {
             await ShowMessageAsync("请先选择有效的原始灰度图。");
             return;
         }
-        if (string.IsNullOrWhiteSpace(layerOutput) || string.IsNullOrWhiteSpace(dxfOutput))
+        if (((needsLayers || needsDxf) && string.IsNullOrWhiteSpace(layerOutput)) ||
+            ((needsDxf || needsMachine) && string.IsNullOrWhiteSpace(dxfOutput)))
         {
-            await ShowMessageAsync("请同时选择分层 TIFF 和 DXF 的输出目录。");
+            await ShowMessageAsync(
+                needsLayers && needsDxf && needsMachine
+                    ? "请同时选择分层 TIFF 和 DXF 的输出目录。"
+                    : needsLayers || needsDxf
+                        ? "请先选择分层 TIFF 输出目录。"
+                        : "请先选择 DXF 输出目录。");
             return;
         }
-        if (machineName is "." or ".." || machineName.Contains('/') || machineName.Contains('\\'))
+        if (needsMachine &&
+            (machineName is "." or ".." ||
+             machineName?.Contains('/') == true ||
+             machineName?.Contains('\\') == true))
         {
             await ShowMessageAsync("加工文件名不能是“.”或“..”，且不能包含 / 或 \\。");
             return;
         }
 
         var layerStep = _pipelineLayerStepBox.Value;
-        if (
-            !layerStep.HasValue ||
-            layerStep.Value < 1m ||
-            layerStep.Value > 100000m ||
-            layerStep.Value != decimal.Truncate(layerStep.Value))
+        if (needsMachine &&
+            (!layerStep.HasValue ||
+             layerStep.Value < 1m ||
+             layerStep.Value > 100000m ||
+             layerStep.Value != decimal.Truncate(layerStep.Value)))
         {
             await ShowMessageAsync(
                 "每层下降深度必须是 1–100000 μm 的整数，才能与 0.001 mm 的机器坐标精度一致。");
@@ -1548,7 +1625,9 @@ public sealed class MainWindow : Window
         var layerScript = Path.Combine(AppContext.BaseDirectory, "grayscale_layers.py");
         var hatchScript = Path.Combine(AppContext.BaseDirectory, "texture_to_hatch_dxf.py");
         var machineScript = Path.Combine(AppContext.BaseDirectory, "dxf_to_machine_file.py");
-        if (!File.Exists(layerScript) || !File.Exists(hatchScript) || !File.Exists(machineScript))
+        if ((needsLayers && !File.Exists(layerScript)) ||
+            (needsDxf && !File.Exists(hatchScript)) ||
+            (needsMachine && !File.Exists(machineScript)))
         {
             await ShowMessageAsync(
                 "找不到流程所需的 Python 脚本（grayscale_layers.py、texture_to_hatch_dxf.py、" +
@@ -1562,20 +1641,24 @@ public sealed class MainWindow : Window
             await ShowMessageAsync("找不到带有 numpy 和 Pillow 的 Python 3。");
             return;
         }
-        if (!TextureFallbackDpi.TryParseOptional(_pipelineDpiBox.Text, out var dpi))
+        double? dpi = null;
+        if (needsDxf && !TextureFallbackDpi.TryParseOptional(_pipelineDpiBox.Text, out dpi))
         {
             await ShowMessageAsync("DPI 必须留空或填写有限且大于 0 的数字。");
             return;
         }
 
         var layers = (int)(_pipelineLayersBox.Value ?? 10);
-        if (!TryReadGrayLevelRange(
+        var minLevel = 0;
+        var maxLevel = 255;
+        var rangeError = "";
+        if (needsLayers && !TryReadGrayLevelRange(
                 _pipelineMinLevelBox,
                 _pipelineMaxLevelBox,
                 layers,
-                out var minLevel,
-                out var maxLevel,
-                out var rangeError))
+                out minLevel,
+                out maxLevel,
+                out rangeError))
         {
             await ShowMessageAsync(rangeError);
             return;
@@ -1584,51 +1667,72 @@ public sealed class MainWindow : Window
         var height = _pipelineHeightBox.Value ?? 100;
         var spacing = _pipelineSpacingBox.Value ?? 0.02m;
         var hatchAngleStep = _pipelineHatchAngleStepBox.Value ?? 0;
-        if (!TryValidateVoronoiSettings(
+        var voronoiError = "";
+        if (needsDxf && !TryValidateVoronoiSettings(
                 _pipelineBlocksBox,
                 _pipelineMinBlockPercentBox,
                 _pipelineMaxBlockPercentBox,
                 _pipelineBoundaryCorrelationBox,
-                out var voronoiError))
+                out voronoiError))
         {
             await ShowMessageAsync(voronoiError);
             return;
         }
 
-        if (!TryGetNonNegativeInt(_pipelinePowerBox, "功率（power）", out var power, out var laserError) ||
-            !TryGetNonNegativeInt(_pipelineFrequencyBox, "频率（frequency）", out var frequency, out laserError) ||
-            !TryGetNonNegativeInt(_pipelinePulseWidthIdxBox, "脉宽索引（pulseWidthIdx）", out var pulseWidthIdx, out laserError) ||
-            !TryGetNonNegativeInt(_pipelineScanSpeedBox, "扫描速度（scanSpeed）", out var scanSpeed, out laserError) ||
-            !TryGetNonNegativeInt(_pipelineJumpVelocityBox, "跳转速度（jump_vel）", out var jumpVelocity, out laserError) ||
-            !TryGetNonNegativeInt(_pipelineJumpDelayBox, "跳转延迟（jump_delay）", out var jumpDelay, out laserError) ||
-            !TryGetNonNegativeInt(_pipelineAccScaleBox, "加速度比例（accScale）", out var accScale, out laserError) ||
-            !TryGetNonNegativeInt(_pipelineCornerScaleBox, "转角比例（cornerScale）", out var cornerScale, out laserError) ||
-            !TryGetNonNegativeInt(_pipelineEndScaleBox, "结束比例（endScale）", out var endScale, out laserError) ||
-            !TryGetNonNegativeInt(_pipelineTimeLagBox, "时间滞后（timeLag）", out var timeLag, out laserError) ||
-            !TryGetNonNegativeInt(_pipelineLaserOnShiftBox, "开光偏移（laserOnShift）", out var laserOnShift, out laserError) ||
-            !TryGetNonNegativeInt(_pipelineDelayLaserOffBox, "关光延迟（delaseroff）", out var delayLaserOff, out laserError) ||
-            !TryGetNonNegativeInt(_pipelineDelayLaserOnBox, "开光延迟（delaseron）", out var delayLaserOn, out laserError))
+        var power = 0;
+        var frequency = 0;
+        var pulseWidthIdx = 0;
+        var scanSpeed = 0;
+        var jumpVelocity = 0;
+        var jumpDelay = 0;
+        var accScale = 0;
+        var cornerScale = 0;
+        var endScale = 0;
+        var timeLag = 0;
+        var laserOnShift = 0;
+        var delayLaserOff = 0;
+        var delayLaserOn = 0;
+        var laserError = "";
+        if (needsMachine && (!TryGetNonNegativeInt(_pipelinePowerBox, "功率（power）", out power, out laserError) ||
+            !TryGetNonNegativeInt(_pipelineFrequencyBox, "频率（frequency）", out frequency, out laserError) ||
+            !TryGetNonNegativeInt(_pipelinePulseWidthIdxBox, "脉宽索引（pulseWidthIdx）", out pulseWidthIdx, out laserError) ||
+            !TryGetNonNegativeInt(_pipelineScanSpeedBox, "扫描速度（scanSpeed）", out scanSpeed, out laserError) ||
+            !TryGetNonNegativeInt(_pipelineJumpVelocityBox, "跳转速度（jump_vel）", out jumpVelocity, out laserError) ||
+            !TryGetNonNegativeInt(_pipelineJumpDelayBox, "跳转延迟（jump_delay）", out jumpDelay, out laserError) ||
+            !TryGetNonNegativeInt(_pipelineAccScaleBox, "加速度比例（accScale）", out accScale, out laserError) ||
+            !TryGetNonNegativeInt(_pipelineCornerScaleBox, "转角比例（cornerScale）", out cornerScale, out laserError) ||
+            !TryGetNonNegativeInt(_pipelineEndScaleBox, "结束比例（endScale）", out endScale, out laserError) ||
+            !TryGetNonNegativeInt(_pipelineTimeLagBox, "时间滞后（timeLag）", out timeLag, out laserError) ||
+            !TryGetNonNegativeInt(_pipelineLaserOnShiftBox, "开光偏移（laserOnShift）", out laserOnShift, out laserError) ||
+            !TryGetNonNegativeInt(_pipelineDelayLaserOffBox, "关光延迟（delaseroff）", out delayLaserOff, out laserError) ||
+            !TryGetNonNegativeInt(_pipelineDelayLaserOnBox, "开光延迟（delaseron）", out delayLaserOn, out laserError)))
         {
             await ShowMessageAsync(laserError);
             return;
         }
 
-        string dxfOutputAbsolute;
-        string machineOutputPath;
-        string machineTempPath;
-        string machineLockPath;
+        var dxfOutputAbsolute = "";
+        string machineOutputPath = "";
+        string machineTempPath = "";
+        string machineLockPath = "";
         try
         {
-            dxfOutputAbsolute = Path.GetFullPath(dxfOutput);
-            var dxfParent = new DirectoryInfo(dxfOutputAbsolute).Parent?.FullName;
-            if (string.IsNullOrWhiteSpace(dxfParent))
+            if (!string.IsNullOrWhiteSpace(dxfOutput))
             {
-                await ShowMessageAsync("DXF 输出目录必须有可用的父目录。");
-                return;
+                dxfOutputAbsolute = Path.GetFullPath(dxfOutput);
+                if (needsMachine)
+                {
+                    var dxfParent = new DirectoryInfo(dxfOutputAbsolute).Parent?.FullName;
+                    if (string.IsNullOrWhiteSpace(dxfParent))
+                    {
+                        await ShowMessageAsync("DXF 输出目录必须有可用的父目录。");
+                        return;
+                    }
+                    machineOutputPath = Path.Combine(dxfParent, machineName!);
+                    machineTempPath = Path.Combine(dxfParent, $".{machineName}.building");
+                    machineLockPath = Path.Combine(dxfParent, $".{machineName}.lock");
+                }
             }
-            machineOutputPath = Path.Combine(dxfParent, machineName);
-            machineTempPath = Path.Combine(dxfParent, $".{machineName}.building");
-            machineLockPath = Path.Combine(dxfParent, $".{machineName}.lock");
         }
         catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
         {
@@ -1638,7 +1742,7 @@ public sealed class MainWindow : Window
 
         _lastMachineOutputPath = null;
         _pipelineOpenButton.IsEnabled = false;
-        if (string.Equals(
+        if (needsMachine && string.Equals(
                 Path.TrimEndingDirectorySeparator(machineOutputPath),
                 Path.TrimEndingDirectorySeparator(dxfOutputAbsolute),
                 StringComparison.OrdinalIgnoreCase))
@@ -1647,7 +1751,9 @@ public sealed class MainWindow : Window
             return;
         }
 
-        foreach (var collisionPath in new[] { machineOutputPath, machineTempPath, machineLockPath })
+        foreach (var collisionPath in needsMachine
+                     ? new[] { machineOutputPath, machineTempPath, machineLockPath }
+                     : Array.Empty<string>())
         {
             if (File.Exists(collisionPath) || Directory.Exists(collisionPath))
             {
@@ -1668,48 +1774,92 @@ public sealed class MainWindow : Window
         _pipelineSharedPreview.UpdateDxfOverlayControls();
         _pipelineSharedPreview.Selection.ClearDxf();
         _pipelineDxfFiles.Clear();
+        var pipelineStartButtons = new[]
+        {
+            _pipelineRunButton,
+            _pipelineSingleStepButton
+        };
+        foreach (var button in pipelineStartButtons)
+            button.IsEnabled = false;
 
+        string[] layerFiles = [];
+        var currentRunDxfFiles = new List<string>();
+        var progressWindow = new ProcessingProgressWindow(
+            mode == PipelineRunMode.All ? "执行全部流程" : "执行单步流程",
+            mode == PipelineRunMode.All
+                ? "正在执行全部流程，请稍候…"
+                : "正在执行所选步骤，请稍候…");
+        progressWindow.CancelRequested += (_, _) => _cancellation?.Cancel();
+        progressWindow.Show(this);
         try
         {
-            Directory.CreateDirectory(layerOutput);
-            Directory.CreateDirectory(dxfOutput);
-            AppendPipelineLog("步骤 1/3：开始生成灰度分层 TIFF…");
-            AppendPipelineLog($"输入：{input}");
-            AppendPipelineLog($"分层目录：{layerOutput}");
-            AppendPipelineLog($"灰阶区间：[{minLevel}, {maxLevel}]，分层数量：{layers}\n");
-
-            var layerStartedAt = DateTime.UtcNow.AddSeconds(-2);
-            var layerInfo = CreatePythonProcess(python);
-            foreach (var argument in new[]
+            if (needsLayers)
             {
-                layerScript, input, layerOutput,
-                "--layers", layers.ToString(CultureInfo.InvariantCulture)
-            })
-                layerInfo.ArgumentList.Add(argument);
-            GrayLevelRange.AppendArguments(layerInfo.ArgumentList, minLevel, maxLevel);
-            if (_pipelineBelowIsWhite.IsChecked == true)
-                layerInfo.ArgumentList.Add("--below-is-white");
+                progressWindow.UpdateMessage("正在执行第 1 步：灰度分层…");
+                Directory.CreateDirectory(layerOutput!);
+                AppendPipelineLog(mode == PipelineRunMode.All
+                    ? "步骤 1/3：开始生成灰度分层 TIFF…"
+                    : "第 1 步：开始生成灰度分层 TIFF…");
+                AppendPipelineLog($"输入：{input}");
+                AppendPipelineLog($"分层目录：{layerOutput}");
+                AppendPipelineLog($"灰阶区间：[{minLevel}, {maxLevel}]，分层数量：{layers}\n");
 
-            var layerExitCode = await RunProcessAsync(
-                layerInfo,
-                AppendPipelineLog,
-                _cancellation.Token);
-            if (layerExitCode != 0)
-                throw new InvalidOperationException($"灰度分层失败，退出代码：{layerExitCode}");
+                var layerStartedAt = DateTime.UtcNow.AddSeconds(-2);
+                var layerInfo = CreatePythonProcess(python);
+                foreach (var argument in new[]
+                {
+                    layerScript, input!, layerOutput!,
+                    "--layers", layers.ToString(CultureInfo.InvariantCulture)
+                })
+                    layerInfo.ArgumentList.Add(argument);
+                GrayLevelRange.AppendArguments(layerInfo.ArgumentList, minLevel, maxLevel);
+                if (_pipelineBelowIsWhite.IsChecked == true)
+                    layerInfo.ArgumentList.Add("--below-is-white");
 
-            var layerFiles = Directory
-                .EnumerateFiles(layerOutput, "layer_*.tiff")
-                .Where(path => File.GetLastWriteTimeUtc(path) >= layerStartedAt)
-                .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
-                .ToArray();
-            if (layerFiles.Length != layers)
-                throw new InvalidOperationException(
-                    $"预期生成 {layers} 个分层 TIFF，实际找到 {layerFiles.Length} 个。");
+                var layerExitCode = await RunProcessAsync(
+                    layerInfo,
+                    AppendPipelineLog,
+                    _cancellation.Token);
+                if (layerExitCode != 0)
+                    throw new InvalidOperationException($"灰度分层失败，退出代码：{layerExitCode}");
 
-            AppendPipelineLog($"\n步骤 1/3 完成：共生成 {layerFiles.Length} 个 TIFF。");
-            AppendPipelineLog("步骤 2/3：开始逐层生成 Hatch DXF…\n");
+                layerFiles = Directory
+                    .EnumerateFiles(layerOutput!, "layer_*.tiff")
+                    .Where(path => File.GetLastWriteTimeUtc(path) >= layerStartedAt)
+                    .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
+                    .ToArray();
+                if (layerFiles.Length != layers)
+                    throw new InvalidOperationException(
+                        $"预期生成 {layers} 个分层 TIFF，实际找到 {layerFiles.Length} 个。");
+
+                AppendPipelineLog(mode == PipelineRunMode.All
+                    ? $"\n步骤 1/3 完成：共生成 {layerFiles.Length} 个 TIFF。"
+                    : $"\n第 1 步完成：共生成 {layerFiles.Length} 个 TIFF。");
+                if (mode == PipelineRunMode.GrayscaleOnly)
+                    return;
+            }
+
+            if (needsDxf)
+            {
+                progressWindow.UpdateMessage("正在执行第 2 步：生成 DXF…");
+                if (layerFiles.Length == 0)
+                {
+                    layerFiles = Directory
+                        .EnumerateFiles(layerOutput!, "layer_*.tiff")
+                        .Where(IsRegularNonEmptyFile)
+                        .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
+                        .ToArray();
+                    if (layerFiles.Length == 0)
+                        throw new InvalidOperationException(
+                            "第 2 步需要先在分层 TIFF 输出目录中生成至少一个 layer_*.tiff 文件。");
+                }
+
+                Directory.CreateDirectory(dxfOutput!);
+                AppendPipelineLog(mode == PipelineRunMode.All
+                    ? "步骤 2/3：开始逐层生成 Hatch DXF…\n"
+                    : "第 2 步：开始逐层生成 Hatch DXF…\n");
             var baseVoronoiSeed = (int)(_pipelineVoronoiSeedBox.Value ?? 12345);
-            var currentRunDxfFiles = new List<string>(layerFiles.Length);
+                currentRunDxfFiles = new List<string>(layerFiles.Length);
 
             for (var index = 0; index < layerFiles.Length; index++)
             {
@@ -1795,10 +1945,32 @@ public sealed class MainWindow : Window
                 _pipelineDxfSelector.SelectedItem = previewItem;
             }
 
-            AppendPipelineLog($"\n步骤 2/3 完成：共生成 {layerFiles.Length} 个 DXF。");
-            AppendPipelineLog($"DXF 目录：{dxfOutput}");
+                AppendPipelineLog(mode == PipelineRunMode.All
+                    ? $"\n步骤 2/3 完成：共生成 {layerFiles.Length} 个 DXF。"
+                    : $"\n第 2 步完成：共生成 {layerFiles.Length} 个 DXF。");
+                AppendPipelineLog($"DXF 目录：{dxfOutput}");
+            }
 
-            var pathComparer = StringComparer.OrdinalIgnoreCase;
+            if (mode == PipelineRunMode.DxfOnly)
+                return;
+
+            if (needsMachine)
+            {
+                progressWindow.UpdateMessage("正在执行第 3 步：生成加工文件…");
+                if (currentRunDxfFiles.Count == 0)
+                {
+                    currentRunDxfFiles = Directory
+                        .EnumerateFiles(dxfOutput!, "*.dxf")
+                        .Where(IsRegularNonEmptyFile)
+                        .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
+                        .Select(Path.GetFullPath)
+                        .ToList();
+                    if (currentRunDxfFiles.Count == 0)
+                        throw new InvalidOperationException(
+                            "第 3 步需要先在 DXF 输出目录中生成至少一个有效的 .dxf 文件。");
+                }
+
+                var pathComparer = StringComparer.OrdinalIgnoreCase;
             var expectedDxfFiles = new HashSet<string>(currentRunDxfFiles, pathComparer);
             var missingDxfFiles = expectedDxfFiles
                 .Where(path => !IsRegularNonEmptyFile(path))
@@ -1816,7 +1988,9 @@ public sealed class MainWindow : Window
             }
             AppendPipelineLog($"已验证本次 DXF 清单：{expectedDxfFiles.Count} 个文件。");
 
-            AppendPipelineLog("\n步骤 3/3：开始生成机器加工文件…");
+            AppendPipelineLog(mode == PipelineRunMode.All
+                ? "\n步骤 3/3：开始生成机器加工文件…"
+                : "\n第 3 步：开始生成机器加工文件…");
             var useBlockCenterMotion =
                 (_pipelineBlocksBox.Value ?? 0) > 0 &&
                 _pipelineBlockCenterMotionBox.IsChecked == true;
@@ -1826,9 +2000,9 @@ public sealed class MainWindow : Window
             var machineInfo = CreatePythonProcess(python);
             foreach (var argument in new[]
             {
-                machineScript, dxfOutputAbsolute, machineName,
+                machineScript, dxfOutputAbsolute, machineName!,
                 "--owner-token", ownerToken,
-                "--layer-step-um", Invariant(layerStep.Value),
+                "--layer-step-um", Invariant(layerStep!.Value),
                 "--power", power.ToString(CultureInfo.InvariantCulture),
                 "--frequency", frequency.ToString(CultureInfo.InvariantCulture),
                 "--pulse-width-idx", pulseWidthIdx.ToString(CultureInfo.InvariantCulture),
@@ -1868,11 +2042,15 @@ public sealed class MainWindow : Window
                 throw new InvalidOperationException($"加工文件生成结束，但未找到输出目录：{machineOutputPath}");
 
             _lastMachineOutputPath = machineOutputPath;
-            AppendPipelineLog("\n步骤 3/3 完成：加工文件生成成功。");
+            AppendPipelineLog(mode == PipelineRunMode.All
+                ? "\n步骤 3/3 完成：加工文件生成成功。"
+                : "\n第 3 步完成：加工文件生成成功。");
             AppendPipelineLog($"加工文件目录：{machineOutputPath}");
-            AppendPipelineLog(
-                $"三步流程完成：已生成 {layerFiles.Length} 个 TIFF、{layerFiles.Length} 个 DXF 和 1 个加工文件。");
+            if (mode == PipelineRunMode.All)
+                AppendPipelineLog(
+                    $"三步流程完成：已生成 {layerFiles.Length} 个 TIFF、{layerFiles.Length} 个 DXF 和 1 个加工文件。");
             _pipelineOpenButton.IsEnabled = true;
+            }
         }
         catch (OperationCanceledException)
         {
@@ -1890,9 +2068,11 @@ public sealed class MainWindow : Window
         }
         finally
         {
+            progressWindow.CloseFromOwner();
             _cancellation.Dispose();
             _cancellation = null;
-            _pipelineRunButton.IsEnabled = true;
+            foreach (var button in pipelineStartButtons)
+                button.IsEnabled = true;
             _pipelineBlocksBox.IsEnabled = pipelineBlocksBoxWasEnabled;
             UpdateBlockCenterMotionAvailability();
             _pipelineProgress.IsIndeterminate = false;
