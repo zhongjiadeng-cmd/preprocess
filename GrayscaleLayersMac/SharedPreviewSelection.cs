@@ -3,7 +3,8 @@ namespace GrayscaleLayersMac;
 public enum SharedPreviewKind
 {
     Texture,
-    Dxf
+    Dxf,
+    Layer
 }
 
 public sealed class SharedPreviewSelection
@@ -11,6 +12,7 @@ public sealed class SharedPreviewSelection
     public SharedPreviewKind Current { get; private set; } = SharedPreviewKind.Texture;
     public bool HasTexture { get; private set; }
     public bool HasDxf { get; private set; }
+    public bool HasLayers { get; private set; }
 
     public void BeginTextureImport()
     {
@@ -37,6 +39,10 @@ public sealed class SharedPreviewSelection
     }
 
     public void ClearDxf() => HasDxf = false;
+
+    public void CompleteLayers() => HasLayers = true;
+
+    public void ClearLayers() => HasLayers = false;
 
     public void Select(SharedPreviewKind kind) => Current = kind;
 }

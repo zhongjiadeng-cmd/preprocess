@@ -5,6 +5,7 @@ using System.Text;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
+using Avalonia.Controls.Templates;
 using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Layout;
@@ -40,8 +41,10 @@ public sealed class MainWindow : Window
     private sealed record SharedPreviewView(
         ToggleButton TextureTab,
         ToggleButton DxfTab,
+        ToggleButton LayerTab,
         Control TextureContent,
         Control DxfContent,
+        Control LayerContent,
         SharedPreviewSelection Selection,
         Action UpdateDxfOverlayControls);
 
@@ -191,6 +194,7 @@ public sealed class MainWindow : Window
     private readonly DxfPreviewControl _pipelineDxfPreview = new(startInTopView: true);
     private readonly TextBlock _pipelineDxfPreviewStatus = new() { Foreground = UiTheme.TextSecondaryBrush };
     private readonly ObservableCollection<DxfLayerPreviewItem> _pipelineDxfFiles = [];
+    private readonly GrayscaleLayerPreviewControl _pipelineLayerPreview = new(InspectTextureImageAsync);
     private readonly ComboBox _pipelineDxfSelector = new()
     {
         MinWidth = 240,
@@ -461,6 +465,7 @@ public sealed class MainWindow : Window
             hatchImportDxfButton,
             fileSelector: null,
             enableLayerOverlay: false,
+            layerContent: null,
             out _hatchSharedPreview);
         var hatchContent = MakeWorkspace(
             hatchInspector,
@@ -703,6 +708,7 @@ public sealed class MainWindow : Window
             pipelineImportDxfButton,
             _pipelineDxfSelector,
             enableLayerOverlay: true,
+            MakePipelineLayerPreviewContent(),
             out _pipelineSharedPreview);
         var pipelineContent = MakeWorkspace(
             pipelineInspector,
@@ -928,6 +934,7 @@ public sealed class MainWindow : Window
         Button importButton,
         ComboBox? fileSelector,
         bool enableLayerOverlay,
+        Control? layerContent,
         out SharedPreviewView view)
     {
         var textureContent = MakeTexturePreviewContent(texture);
@@ -953,15 +960,19 @@ public sealed class MainWindow : Window
         }
         var textureTab = new ToggleButton { Content = "纹理" };
         var dxfTab = new ToggleButton { Content = "DXF" };
+        var layerTab = new ToggleButton { Content = "分层", IsVisible = layerContent is not null };
         var sharedView = new SharedPreviewView(
             textureTab,
             dxfTab,
+            layerTab,
             textureContent,
             dxfContent,
+            layerContent ?? new TextBlock { Text = "当前页面不支持分层预览。" },
             new SharedPreviewSelection(),
             updateDxfOverlayControls);
         textureTab.Click += (_, _) => SelectSharedPreview(sharedView, SharedPreviewKind.Texture);
         dxfTab.Click += (_, _) => SelectSharedPreview(sharedView, SharedPreviewKind.Dxf);
+        layerTab.Click += (_, _) => SelectSharedPreview(sharedView, SharedPreviewKind.Layer);
         SelectSharedPreview(sharedView, SharedPreviewKind.Texture);
         view = sharedView;
 
@@ -974,17 +985,18 @@ public sealed class MainWindow : Window
             {
                 AtRow(new Grid
                 {
-                    ColumnDefinitions = new ColumnDefinitions("*,Auto,Auto"),
+                    ColumnDefinitions = new ColumnDefinitions("*,Auto,Auto,Auto"),
                     ColumnSpacing = 8,
                     Children =
                     {
                         Place(textureTab, 1),
-                        Place(dxfTab, 2)
+                        Place(dxfTab, 2),
+                        Place(layerTab, 3)
                     }
                 }, 0),
                 AtRow(new Grid
                 {
-                    Children = { textureContent, dxfContent }
+                    Children = { textureContent, dxfContent, sharedView.LayerContent }
                 }, 1)
             }
         };
@@ -1004,6 +1016,24 @@ public sealed class MainWindow : Window
             }, 1)
         }
     };
+
+    private Control MakePipelineLayerPreviewContent()
+    {
+        return _pipelineLayerPreview;
+    }
+
+    private async Task RefreshPipelineLayerPreviewAsync(
+        string directory,
+        CancellationToken cancellationToken,
+        bool selectTab = true)
+    {
+        await _pipelineLayerPreview.LoadAsync(directory, cancellationToken);
+        if (selectTab)
+        {
+            _pipelineSharedPreview.Selection.CompleteLayers();
+            SelectSharedPreview(_pipelineSharedPreview, SharedPreviewKind.Layer);
+        }
+    }
 
     private static Control MakeDxfPreviewContent(
         DxfPreviewControl preview,
@@ -1274,8 +1304,10 @@ public sealed class MainWindow : Window
         view.Selection.Select(kind);
         view.TextureContent.IsVisible = kind == SharedPreviewKind.Texture;
         view.DxfContent.IsVisible = kind == SharedPreviewKind.Dxf;
+        view.LayerContent.IsVisible = kind == SharedPreviewKind.Layer;
         view.TextureTab.IsChecked = kind == SharedPreviewKind.Texture;
         view.DxfTab.IsChecked = kind == SharedPreviewKind.Dxf;
+        view.LayerTab.IsChecked = kind == SharedPreviewKind.Layer;
     }
 
     private Control MakeWorkspace(
@@ -1835,6 +1867,9 @@ public sealed class MainWindow : Window
                 AppendPipelineLog(mode == PipelineRunMode.All
                     ? $"\n步骤 1/3 完成：共生成 {layerFiles.Length} 个 TIFF。"
                     : $"\n第 1 步完成：共生成 {layerFiles.Length} 个 TIFF。");
+                await RefreshPipelineLayerPreviewAsync(
+                    layerOutput!,
+                    _cancellation.Token);
                 if (mode == PipelineRunMode.GrayscaleOnly)
                     return;
             }
@@ -2288,6 +2323,7 @@ public sealed class MainWindow : Window
 
     private void DisposeTexturePreviews()
     {
+        _pipelineLayerPreview.Dispose();
         _hatchPreviewController.Dispose();
         _pipelinePreviewController.Dispose();
         _hatchDxfPreview.Dispose();
