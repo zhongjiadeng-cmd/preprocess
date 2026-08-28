@@ -2508,8 +2508,15 @@ class AvaloniaTextureOverlaySourceContractTests(unittest.TestCase):
         self.assertIn("_textureBitmap?.Dispose()", source)
         render = source[source.index("public override void Render"):]
         self.assertLess(render.index("DrawTextureOverlay"), render.index("DrawDxfSegments"))
-        self.assertIn("ProjectTextureBounds(_textureBounds, scale, center)", source)
-        self.assertIn("ProjectTextureBounds(_textureFrameBounds, scale, center)", source)
+        draw_texture = source[
+            source.index("private void DrawTextureOverlay"):
+            source.index("private static StreamGeometry CreateClipGeometry")
+        ]
+        self.assertIn("projection.TryCreateTextureDrawPlan(", draw_texture)
+        self.assertIn("_textureBounds", draw_texture)
+        self.assertIn("_textureFrameBounds", draw_texture)
+        self.assertIn("_textureBitmap.Size", draw_texture)
+        self.assertIn("plan.ImageToScreenTransform", draw_texture)
 
     def test_loading_dxf_after_texture_keeps_paired_processing_bounds(self) -> None:
         source = (ROOT / "GrayscaleLayersMac" / "DxfPreviewControl.cs").read_text()

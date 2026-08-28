@@ -257,47 +257,39 @@ public sealed class DxfPreviewControl : Control, IDisposable
             return;
         }
 
-        var scale = CalculateScale();
-        var center = Bounds.Center + _pan;
+        var projection = CreateProjection(CalculateScale(), Bounds.Center + _pan);
         var viewport = new Rect(Bounds.Size);
-        DrawGrid(context, scale, center);
+        DrawGrid(context, projection);
 
         if (_overlay.ShouldDrawTexture)
-            DrawTextureOverlay(context, scale, center);
+            DrawTextureOverlay(context, projection);
         if (_overlay.ShowLines)
-            DrawDxfSegments(context, scale, center, viewport);
+            DrawDxfSegments(context, projection, viewport);
     }
 
-    private void DrawTextureOverlay(DrawingContext context, double scale, Point center)
+    private void DrawTextureOverlay(
+        DrawingContext context,
+        PlanarOverlayProjection projection)
     {
         if (_textureBitmap is null)
             return;
 
-        var textureQuad = ProjectTextureBounds(_textureBounds, scale, center);
-        var frameQuad = ProjectTextureBounds(_textureFrameBounds, scale, center);
-        if (!textureQuad.IsFinite || !frameQuad.IsFinite)
+        if (!projection.TryCreateTextureDrawPlan(
+                _textureBounds,
+                _textureFrameBounds,
+                _textureBitmap.Size,
+                out var plan))
             return;
-        var imageTransform = textureQuad.CreateImageToScreenTransform(_textureBitmap.Size);
-        var clipGeometry = CreateClipGeometry(frameQuad);
+        var clipGeometry = CreateClipGeometry(plan.FrameQuad);
         using (context.PushGeometryClip(clipGeometry))
         using (context.PushOpacity(_overlay.TextureOpacity))
-        using (context.PushTransform(imageTransform))
+        using (context.PushTransform(plan.ImageToScreenTransform))
         {
             context.DrawImage(
                 _textureBitmap,
                 new Rect(_textureBitmap.Size),
                 new Rect(_textureBitmap.Size));
         }
-    }
-
-    private ProjectedTextureQuad ProjectTextureBounds(Rect bounds, double scale, Point center)
-    {
-        var corners = ProjectedTextureQuad.ModelCorners(bounds);
-        return new ProjectedTextureQuad(
-            ToScreen(corners.RasterTopLeft.X, corners.RasterTopLeft.Y, 0, scale, center),
-            ToScreen(corners.RasterTopRight.X, corners.RasterTopRight.Y, 0, scale, center),
-            ToScreen(corners.RasterBottomRight.X, corners.RasterBottomRight.Y, 0, scale, center),
-            ToScreen(corners.RasterBottomLeft.X, corners.RasterBottomLeft.Y, 0, scale, center));
     }
 
     private static StreamGeometry CreateClipGeometry(ProjectedTextureQuad quad)
@@ -314,8 +306,7 @@ public sealed class DxfPreviewControl : Control, IDisposable
 
     private void DrawDxfSegments(
         DrawingContext context,
-        double scale,
-        Point center,
+        PlanarOverlayProjection projection,
         Rect viewport)
     {
         if (_segments.Count == 0)
@@ -338,7 +329,8 @@ public sealed class DxfPreviewControl : Control, IDisposable
         {
             if (!group.IsBorder && IsTopView)
             {
-                var screenY = center.Y - (group.Y - _modelBounds.Center.Y) * scale;
+                var screenY = projection.ScreenCenter.Y -
+                    (group.Y - _modelBounds.Center.Y) * projection.Scale;
                 if (screenY < -2 || screenY > Bounds.Height + 2)
                     continue;
                 if (lastRenderedScreenY.TryGetValue(group.BlockIndex, out var previousScreenY) &&
@@ -351,8 +343,8 @@ public sealed class DxfPreviewControl : Control, IDisposable
             for (var index = group.StartIndex; index < endIndex; index++)
             {
                 var segment = _segments[index];
-                var start = ToScreen(segment.X1, segment.Y1, segment.Z1, scale, center);
-                var end = ToScreen(segment.X2, segment.Y2, segment.Z2, scale, center);
+                var start = projection.ToScreen(segment.X1, segment.Y1, segment.Z1);
+                var end = projection.ToScreen(segment.X2, segment.Y2, segment.Z2);
                 var clippedStart = start;
                 var clippedEnd = end;
                 if (TryClipLine(ref clippedStart, ref clippedEnd, viewport))
@@ -460,26 +452,24 @@ public sealed class DxfPreviewControl : Control, IDisposable
 
     private Size ProjectedModelSize()
     {
+        var projection = CreateProjection(1, default);
         var corners = new List<Vector>();
         foreach (var x in new[] { _modelBounds.Left, _modelBounds.Right })
         foreach (var y in new[] { _modelBounds.Top, _modelBounds.Bottom })
         foreach (var z in new[] { _minZ, _maxZ })
-            corners.Add(Project(x, y, z));
+            corners.Add(projection.Project(x, y, z));
         return new Size(
             corners.Max(point => point.X) - corners.Min(point => point.X),
             corners.Max(point => point.Y) - corners.Min(point => point.Y));
     }
 
-    private Vector Project(double x, double y, double z)
-    {
-        var dx = x - _modelBounds.Center.X;
-        var dy = y - _modelBounds.Center.Y;
-        var dz = z - (_minZ + _maxZ) / 2;
-        var horizontal = Math.Cos(_yaw) * dx - Math.Sin(_yaw) * dy;
-        var away = Math.Sin(_yaw) * dx + Math.Cos(_yaw) * dy;
-        var vertical = away * Math.Cos(_tilt) + dz * Math.Sin(_tilt);
-        return new Vector(horizontal, vertical);
-    }
+    private PlanarOverlayProjection CreateProjection(double scale, Point screenCenter) => new(
+        _modelBounds.Center,
+        (_minZ + _maxZ) / 2,
+        _yaw,
+        _tilt,
+        scale,
+        screenCenter);
 
     private static double NormalizeAngle(double angle)
     {
@@ -488,12 +478,6 @@ public sealed class DxfPreviewControl : Control, IDisposable
         while (angle < -Math.PI)
             angle += Math.PI * 2;
         return angle;
-    }
-
-    private Point ToScreen(double x, double y, double z, double scale, Point center)
-    {
-        var projected = Project(x, y, z);
-        return new Point(center.X + projected.X * scale, center.Y - projected.Y * scale);
     }
 
     private static void DrawEndpointDirectionArrows(
@@ -523,12 +507,14 @@ public sealed class DxfPreviewControl : Control, IDisposable
         DrawClippedLine(context, pen, end, endBase - normal * halfWidth, viewport);
     }
 
-    private void DrawGrid(DrawingContext context, double scale, Point center)
+    private void DrawGrid(DrawingContext context, PlanarOverlayProjection projection)
     {
-        DrawThreeDimensionalGrid(context, scale, center);
+        DrawThreeDimensionalGrid(context, projection);
     }
 
-    private void DrawThreeDimensionalGrid(DrawingContext context, double scale, Point center)
+    private void DrawThreeDimensionalGrid(
+        DrawingContext context,
+        PlanarOverlayProjection projection)
     {
         var pen = new Pen(new SolidColorBrush(Color.FromArgb(32, 255, 255, 255)), 1);
         var viewport = new Rect(Bounds.Size);
@@ -540,14 +526,14 @@ public sealed class DxfPreviewControl : Control, IDisposable
             DrawClippedLine(
                 context,
                 pen,
-                ToScreen(x, _modelBounds.Top, _minZ, scale, center),
-                ToScreen(x, _modelBounds.Bottom, _minZ, scale, center),
+                projection.ToScreen(x, _modelBounds.Top, _minZ),
+                projection.ToScreen(x, _modelBounds.Bottom, _minZ),
                 viewport);
             DrawClippedLine(
                 context,
                 pen,
-                ToScreen(_modelBounds.Left, y, _minZ, scale, center),
-                ToScreen(_modelBounds.Right, y, _minZ, scale, center),
+                projection.ToScreen(_modelBounds.Left, y, _minZ),
+                projection.ToScreen(_modelBounds.Right, y, _minZ),
                 viewport);
         }
     }
