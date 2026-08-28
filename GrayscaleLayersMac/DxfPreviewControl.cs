@@ -273,25 +273,43 @@ public sealed class DxfPreviewControl : Control, IDisposable
         if (_textureBitmap is null)
             return;
 
-        // PNG image Y increases downwards while DXF model Y increases upwards.
-        var topLeft = ToScreen(_textureBounds.Left, _textureBounds.Bottom, 0, scale, center);
-        var bottomRight = ToScreen(_textureBounds.Right, _textureBounds.Top, 0, scale, center);
-        var destination = new Rect(topLeft, bottomRight);
-        var clipTopLeft = ToScreen(
-            _textureFrameBounds.Left,
-            _textureFrameBounds.Bottom,
-            0,
-            scale,
-            center);
-        var clipBottomRight = ToScreen(
-            _textureFrameBounds.Right,
-            _textureFrameBounds.Top,
-            0,
-            scale,
-            center);
-        using (context.PushClip(new Rect(clipTopLeft, clipBottomRight)))
+        var textureQuad = ProjectTextureBounds(_textureBounds, scale, center);
+        var frameQuad = ProjectTextureBounds(_textureFrameBounds, scale, center);
+        if (!textureQuad.IsFinite || !frameQuad.IsFinite)
+            return;
+        var imageTransform = textureQuad.CreateImageToScreenTransform(_textureBitmap.Size);
+        var clipGeometry = CreateClipGeometry(frameQuad);
+        using (context.PushGeometryClip(clipGeometry))
         using (context.PushOpacity(_overlay.TextureOpacity))
-            context.DrawImage(_textureBitmap, new Rect(_textureBitmap.Size), destination);
+        using (context.PushTransform(imageTransform))
+        {
+            context.DrawImage(
+                _textureBitmap,
+                new Rect(_textureBitmap.Size),
+                new Rect(_textureBitmap.Size));
+        }
+    }
+
+    private ProjectedTextureQuad ProjectTextureBounds(Rect bounds, double scale, Point center)
+    {
+        var corners = ProjectedTextureQuad.ModelCorners(bounds);
+        return new ProjectedTextureQuad(
+            ToScreen(corners.RasterTopLeft.X, corners.RasterTopLeft.Y, 0, scale, center),
+            ToScreen(corners.RasterTopRight.X, corners.RasterTopRight.Y, 0, scale, center),
+            ToScreen(corners.RasterBottomRight.X, corners.RasterBottomRight.Y, 0, scale, center),
+            ToScreen(corners.RasterBottomLeft.X, corners.RasterBottomLeft.Y, 0, scale, center));
+    }
+
+    private static StreamGeometry CreateClipGeometry(ProjectedTextureQuad quad)
+    {
+        var geometry = new StreamGeometry();
+        using var drawing = geometry.Open();
+        drawing.BeginFigure(quad.RasterTopLeft, isFilled: true);
+        drawing.LineTo(quad.RasterTopRight);
+        drawing.LineTo(quad.RasterBottomRight);
+        drawing.LineTo(quad.RasterBottomLeft);
+        drawing.EndFigure(isClosed: true);
+        return geometry;
     }
 
     private void DrawDxfSegments(

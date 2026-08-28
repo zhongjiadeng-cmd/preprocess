@@ -8,6 +8,12 @@ internal readonly record struct ProjectedTextureQuad(
     Point RasterBottomRight,
     Point RasterBottomLeft)
 {
+    public static ProjectedTextureQuad ModelCorners(Rect bounds) => new(
+        new Point(bounds.Left, bounds.Bottom),
+        new Point(bounds.Right, bounds.Bottom),
+        new Point(bounds.Right, bounds.Top),
+        new Point(bounds.Left, bounds.Top));
+
     public bool IsFinite =>
         double.IsFinite(RasterTopLeft.X) && double.IsFinite(RasterTopLeft.Y) &&
         double.IsFinite(RasterTopRight.X) && double.IsFinite(RasterTopRight.Y) &&

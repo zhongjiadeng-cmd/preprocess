@@ -9,6 +9,17 @@ namespace GrayscaleLayersMac.Tests;
 public sealed class PlanarTextureProjectionTests
 {
     [TestMethod]
+    public void ModelCornersUseHigherModelYForRasterTop()
+    {
+        var corners = ProjectedTextureQuad.ModelCorners(new Rect(-10, -20, 30, 50));
+
+        Assert.AreEqual(new Point(-10, 30), corners.RasterTopLeft);
+        Assert.AreEqual(new Point(20, 30), corners.RasterTopRight);
+        Assert.AreEqual(new Point(20, -20), corners.RasterBottomRight);
+        Assert.AreEqual(new Point(-10, -20), corners.RasterBottomLeft);
+    }
+
+    [TestMethod]
     public void ImageTransformMapsAllRasterCornersToProjectedQuad()
     {
         var quad = new ProjectedTextureQuad(
