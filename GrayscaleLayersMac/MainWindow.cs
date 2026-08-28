@@ -36,10 +36,8 @@ public sealed class MainWindow : Window
     private sealed record SharedPreviewView(
         ToggleButton TextureTab,
         ToggleButton DxfTab,
-        ToggleButton LayerTab,
         Control TextureContent,
         Control DxfContent,
-        Control LayerContent,
         SharedPreviewSelection Selection,
         Action UpdateDxfOverlayControls);
 
@@ -109,7 +107,9 @@ public sealed class MainWindow : Window
     private readonly NumericUpDown _pipelineSpacingBox = MakeNumberBox(0.02m, 0.001m, 1000);
     private readonly NumericUpDown _pipelineHatchAngleStepBox = MakeNumberBox(0, 0.1m, 180, 2, showButtons: false);
     private readonly TextBox _pipelineDpiBox = new() { Watermark = "可选；图片无 DPI 时填写" };
-    private readonly GrayscaleLayerPreviewControl _pipelineTextureSurface = new();
+    // 三步流程页的纹理界面：第 0 层是导入的源纹理，之后是各灰度分层。
+    private readonly GrayscaleLayerPreviewControl _pipelineTextureSurface =
+        new(InspectTextureImageAsync);
     private readonly ComboBox _pipelineAnchorBox = new()
     {
         ItemsSource = new[] { "居中裁剪", "左上角裁剪" },
@@ -161,7 +161,6 @@ public sealed class MainWindow : Window
     private readonly DxfPreviewControl _pipelineDxfPreview = new(startInTopView: true);
     private readonly TextBlock _pipelineDxfPreviewStatus = new() { Foreground = UiTheme.TextSecondaryBrush };
     private readonly ObservableCollection<DxfLayerPreviewItem> _pipelineDxfFiles = [];
-    private readonly GrayscaleLayerPreviewControl _pipelineLayerPreview = new(InspectTextureImageAsync);
     private readonly ComboBox _pipelineDxfSelector = new()
     {
         MinWidth = 240,
@@ -239,10 +238,10 @@ public sealed class MainWindow : Window
         Background = UiTheme.RootBrush;
         WindowStartupLocation = WindowStartupLocation.CenterScreen;
         _hatchPreviewController = new TexturePreviewController(
-            source => _hatchTextureSurface.SetImage(source as Bitmap),
+            source => _hatchTextureSurface.SetSourceTexture(source as TexturePreviewPayload),
             update => ApplyTextureSizeUpdate(update, _widthBox, _heightBox));
         _pipelinePreviewController = new TexturePreviewController(
-            source => _pipelineTextureSurface.SetImage(source as Bitmap),
+            source => _pipelineTextureSurface.SetSourceTexture(source as TexturePreviewPayload),
             update => ApplyTextureSizeUpdate(
                 update,
                 _pipelineWidthBox,
@@ -259,6 +258,7 @@ public sealed class MainWindow : Window
                 _dpiBox.Text,
                 _widthBox.Minimum,
                 _widthBox.Maximum);
+            RenderTexturePreview(_hatchTextureSurface, _hatchPreviewController.State);
         };
         _pipelineDpiBox.TextChanged += (_, _) =>
         {
@@ -266,6 +266,7 @@ public sealed class MainWindow : Window
                 _pipelineDpiBox.Text,
                 _pipelineWidthBox.Minimum,
                 _pipelineWidthBox.Maximum);
+            RenderTexturePreview(_pipelineTextureSurface, _pipelinePreviewController.State);
         };
         Closed += (_, _) => DisposeTexturePreviews();
 
@@ -420,7 +421,6 @@ public sealed class MainWindow : Window
             hatchImportDxfButton,
             fileSelector: null,
             enableLayerOverlay: false,
-            layerContent: null,
             out _hatchSharedPreview);
         var hatchContent = MakeWorkspace(
             hatchInspector,
@@ -663,7 +663,6 @@ public sealed class MainWindow : Window
             pipelineImportDxfButton,
             _pipelineDxfSelector,
             enableLayerOverlay: true,
-            MakePipelineLayerPreviewContent(),
             out _pipelineSharedPreview);
         var pipelineContent = MakeWorkspace(
             pipelineInspector,
@@ -882,6 +881,10 @@ public sealed class MainWindow : Window
         return UiTheme.CardExpander(title, content);
     }
 
+    /// <summary>
+    /// 预览区只有「纹理」与「DXF」两个标签页：纹理界面内部用第 0 层承载源纹理，
+    /// 1..N 承载灰度分层，所以不再需要单独的分层标签页。
+    /// </summary>
     private static Control MakeSharedPreviewPanel(
         GrayscaleLayerPreviewControl texture,
         DxfPreviewControl dxfPreview,
@@ -889,7 +892,6 @@ public sealed class MainWindow : Window
         Button importButton,
         ComboBox? fileSelector,
         bool enableLayerOverlay,
-        Control? layerContent,
         out SharedPreviewView view)
     {
         var textureContent = MakeTexturePreviewContent(texture);
@@ -915,19 +917,15 @@ public sealed class MainWindow : Window
         }
         var textureTab = new ToggleButton { Content = "纹理" };
         var dxfTab = new ToggleButton { Content = "DXF" };
-        var layerTab = new ToggleButton { Content = "分层", IsVisible = layerContent is not null };
         var sharedView = new SharedPreviewView(
             textureTab,
             dxfTab,
-            layerTab,
             textureContent,
             dxfContent,
-            layerContent ?? new TextBlock { Text = "当前页面不支持分层预览。" },
             new SharedPreviewSelection(),
             updateDxfOverlayControls);
         textureTab.Click += (_, _) => SelectSharedPreview(sharedView, SharedPreviewKind.Texture);
         dxfTab.Click += (_, _) => SelectSharedPreview(sharedView, SharedPreviewKind.Dxf);
-        layerTab.Click += (_, _) => SelectSharedPreview(sharedView, SharedPreviewKind.Layer);
         SelectSharedPreview(sharedView, SharedPreviewKind.Texture);
         view = sharedView;
 
@@ -940,18 +938,17 @@ public sealed class MainWindow : Window
             {
                 AtRow(new Grid
                 {
-                    ColumnDefinitions = new ColumnDefinitions("*,Auto,Auto,Auto"),
+                    ColumnDefinitions = new ColumnDefinitions("*,Auto,Auto"),
                     ColumnSpacing = 8,
                     Children =
                     {
                         Place(textureTab, 1),
-                        Place(dxfTab, 2),
-                        Place(layerTab, 3)
+                        Place(dxfTab, 2)
                     }
                 }, 0),
                 AtRow(new Grid
                 {
-                    Children = { textureContent, dxfContent, sharedView.LayerContent }
+                    Children = { textureContent, dxfContent }
                 }, 1)
             }
         };
@@ -959,22 +956,25 @@ public sealed class MainWindow : Window
 
     private static Control MakeTexturePreviewContent(GrayscaleLayerPreviewControl view) => view;
 
-    private Control MakePipelineLayerPreviewContent()
+    /// <summary>
+    /// 把分层结果接到纹理界面里（第 1..N 层），第 0 层的源纹理保持不变。
+    /// 分层跑完自动切回纹理界面，让用户直接看到结果。
+    /// </summary>
+    private async Task RefreshPipelineLayersAsync(
+        string directory,
+        CancellationToken cancellationToken)
     {
-        return _pipelineLayerPreview;
+        await _pipelineTextureSurface.LoadLayersAsync(directory, cancellationToken);
+        SelectSharedPreview(_pipelineSharedPreview, SharedPreviewKind.Texture);
     }
 
-    private async Task RefreshPipelineLayerPreviewAsync(
-        string directory,
-        CancellationToken cancellationToken,
-        bool selectTab = true)
+    /// <summary>把纹理导入状态（尺寸、DPI、物理尺寸、错误）写到纹理界面。</summary>
+    private static void RenderTexturePreview(
+        GrayscaleLayerPreviewControl view,
+        TexturePreviewState state)
     {
-        await _pipelineLayerPreview.LoadAsync(directory, cancellationToken);
-        if (selectTab)
-        {
-            _pipelineSharedPreview.Selection.CompleteLayers();
-            SelectSharedPreview(_pipelineSharedPreview, SharedPreviewKind.Layer);
-        }
+        view.SetMetadata(state.MetadataText, isError: state.Phase == TexturePreviewPhase.Failed);
+        view.SetPhysicalSize(state.PhysicalSizeText);
     }
 
     private static Control MakeDxfPreviewContent(
@@ -1246,10 +1246,8 @@ public sealed class MainWindow : Window
         view.Selection.Select(kind);
         view.TextureContent.IsVisible = kind == SharedPreviewKind.Texture;
         view.DxfContent.IsVisible = kind == SharedPreviewKind.Dxf;
-        view.LayerContent.IsVisible = kind == SharedPreviewKind.Layer;
         view.TextureTab.IsChecked = kind == SharedPreviewKind.Texture;
         view.DxfTab.IsChecked = kind == SharedPreviewKind.Dxf;
-        view.LayerTab.IsChecked = kind == SharedPreviewKind.Layer;
     }
 
     private Control MakeWorkspace(
@@ -1809,7 +1807,7 @@ public sealed class MainWindow : Window
                 AppendPipelineLog(mode == PipelineRunMode.All
                     ? $"\n步骤 1/3 完成：共生成 {layerFiles.Length} 个 TIFF。"
                     : $"\n第 1 步完成：共生成 {layerFiles.Length} 个 TIFF。");
-                await RefreshPipelineLayerPreviewAsync(
+                await RefreshPipelineLayersAsync(
                     layerOutput!,
                     _cancellation.Token);
                 if (mode == PipelineRunMode.GrayscaleOnly)
@@ -2189,23 +2187,30 @@ public sealed class MainWindow : Window
         var operation = controller.BeginImport();
         sharedPreview.Selection.BeginTextureImport();
         SelectSharedPreview(sharedPreview, SharedPreviewKind.Texture);
+        RenderTexturePreview(view, controller.State);
 
-        Bitmap? candidateBitmap = null;
         try
         {
             var inspection = await InspectTextureImageAsync(path, operation.CancellationToken);
             operation.CancellationToken.ThrowIfCancellationRequested();
-            using var stream = new MemoryStream(inspection.PreviewPng, writable: false);
-            candidateBitmap = new Bitmap(stream);
-            if (candidateBitmap.PixelSize.Width != inspection.Info.PixelWidth ||
-                candidateBitmap.PixelSize.Height != inspection.Info.PixelHeight)
-                throw new InvalidOperationException("图片预览像素尺寸与源图片不一致。");
 
-            var completedPreview = candidateBitmap;
-            candidateBitmap = null;
+            // 先解码一次确认预览 PNG 可用且尺寸自洽，再把它交给纹理界面作为第 0 层。
+            using (var stream = new MemoryStream(inspection.PreviewPng, writable: false))
+            using (var decoded = new Bitmap(stream))
+            {
+                if (decoded.PixelSize.Width != inspection.Info.PixelWidth ||
+                    decoded.PixelSize.Height != inspection.Info.PixelHeight)
+                    throw new InvalidOperationException("图片预览像素尺寸与源图片不一致。");
+            }
+
+            // 所有权移交给控制器；纹理界面内部会再解码一份自己持有的副本。
+            var payload = new TexturePreviewPayload(
+                inspection.PreviewPng,
+                inspection.Info.PixelWidth,
+                inspection.Info.PixelHeight);
             if (!controller.TryCompleteImport(
                     operation,
-                    completedPreview,
+                    payload,
                     inspection.Info,
                     dpiBox.Text,
                     widthBox.Minimum,
@@ -2217,6 +2222,7 @@ public sealed class MainWindow : Window
 
             sharedPreview.Selection.CompleteTextureImport();
             SelectSharedPreview(sharedPreview, SharedPreviewKind.Texture);
+            RenderTexturePreview(view, controller.State);
         }
         catch (OperationCanceledException) when (operation.CancellationToken.IsCancellationRequested)
         {
@@ -2228,11 +2234,8 @@ public sealed class MainWindow : Window
             {
                 sharedPreview.Selection.FailTextureImport();
                 SelectSharedPreview(sharedPreview, SharedPreviewKind.Texture);
+                RenderTexturePreview(view, controller.State);
             }
-        }
-        finally
-        {
-            candidateBitmap?.Dispose();
         }
     }
 
@@ -2250,11 +2253,9 @@ public sealed class MainWindow : Window
 
     private void DisposeTexturePreviews()
     {
-        _pipelineLayerPreview.Dispose();
+        // 控制器 Close 时会通知纹理界面卸下第 0 层，这里再释放画布与图层资源。
         _hatchPreviewController.Dispose();
         _pipelinePreviewController.Dispose();
-        // 控制器在 Close 中已让各自的 Surface 卸载 Bitmap（ownsBitmap=false，
-        // 释放所有权走控制器自己），这里把内部的画布资源释放掉即可。
         _hatchTextureSurface.Dispose();
         _pipelineTextureSurface.Dispose();
         _hatchDxfPreview.Dispose();

@@ -171,7 +171,7 @@ public sealed class GrayscaleLayerPreviewCanvas : Control, IDisposable
 
         if (_bitmap is null)
         {
-            DrawHint(context, viewport, "运行分层后在这里预览图层");
+            DrawHint(context, viewport, "导入纹理图后在这里预览");
             return;
         }
 

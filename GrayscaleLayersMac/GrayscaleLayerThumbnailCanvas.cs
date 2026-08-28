@@ -6,6 +6,9 @@ using Avalonia.Media;
 
 namespace GrayscaleLayersMac;
 
+/// <summary>
+/// 纹理界面的图层列表：第 0 行是源纹理，其后是各灰度分层。
+/// </summary>
 public sealed class GrayscaleLayerThumbnailCanvas : Control
 {
     private const double RowHeight = 112;
@@ -60,7 +63,7 @@ public sealed class GrayscaleLayerThumbnailCanvas : Control
                 if (IsCompact)
                 {
                     var layerText = new FormattedText(
-                        $"{index + 1:D2}",
+                        $"{item.Index:D2}",
                         CultureInfo.CurrentCulture,
                         FlowDirection.LeftToRight,
                         Typeface.Default,
@@ -92,13 +95,13 @@ public sealed class GrayscaleLayerThumbnailCanvas : Control
                     context.DrawRectangle(UiTheme.SunkenBrush, null, imageRect);
                 }
 
-                var text = new FormattedText(
+                if (item.IsSourceTexture)
+                    DrawSourceBadge(context, imageRect);
+
+                var text = FitText(
                     item.DisplayName,
-                    CultureInfo.CurrentCulture,
-                    FlowDirection.LeftToRight,
-                    Typeface.Default,
-                    10,
-                    UiTheme.TextSecondaryBrush);
+                    Math.Max(0, Bounds.Width - 16),
+                    selected ? UiTheme.TextPrimaryBrush : UiTheme.TextSecondaryBrush);
                 context.DrawText(text, new Point(8, row.Y + 83));
             }
         }
@@ -106,6 +109,56 @@ public sealed class GrayscaleLayerThumbnailCanvas : Control
         {
             // A damaged thumbnail must not escape Avalonia's render loop.
         }
+    }
+
+    /// <summary>
+    /// 把层名压进可用宽度。Avalonia 11 的 <see cref="FormattedText"/> 只有带 CultureInfo 的
+    /// 构造函数、没有约束参数，所以这里自己按宽度裁剪，避免长文件名把整行撑破。
+    /// </summary>
+    private static FormattedText FitText(string text, double maxWidth, IBrush foreground)
+    {
+        var formatted = Measure(text, foreground);
+        if (formatted.Width <= maxWidth || maxWidth <= 0)
+            return formatted;
+
+        var low = 0;
+        var high = text.Length;
+        while (low < high)
+        {
+            var middle = (low + high + 1) / 2;
+            if (Measure(text[..middle] + "…", foreground).Width <= maxWidth)
+                low = middle;
+            else
+                high = middle - 1;
+        }
+
+        return low <= 0
+            ? Measure("…", foreground)
+            : Measure(text[..low] + "…", foreground);
+    }
+
+    private static FormattedText Measure(string text, IBrush foreground) => new(
+        text,
+        CultureInfo.CurrentCulture,
+        FlowDirection.LeftToRight,
+        Typeface.Default,
+        10,
+        foreground);
+
+    private static void DrawSourceBadge(DrawingContext context, Rect imageRect)
+    {
+        var badge = new Rect(imageRect.Right - 24, imageRect.Y + 4, 20, 15);
+        context.DrawRectangle(UiTheme.AccentBrush, null, badge);
+        var label = new FormattedText(
+            "源",
+            CultureInfo.CurrentCulture,
+            FlowDirection.LeftToRight,
+            Typeface.Default,
+            10,
+            Brushes.White);
+        context.DrawText(
+            label,
+            new Point(badge.X + (badge.Width - label.Width) / 2, badge.Y + 2));
     }
 
     protected override void OnPointerPressed(PointerPressedEventArgs e)
