@@ -8,7 +8,7 @@ Add a draggable vertical divider between the preview area and parameter inspecto
 
 `MakeWorkspace` will use three grid columns: preview, splitter, and inspector. The preview and inspector columns use star sizing so the stored value represents a ratio rather than a fixed pixel width. The default is approximately 58% preview and 42% inspector, matching the existing layout at the default window size.
 
-The preview retains a 420 px minimum width. The inspector receives a 460 px minimum width so its multi-column parameter rows remain usable. The splitter occupies an 8 px interaction region with a thin centered rule. Pointer-over and drag states make the rule more visible, and the pointer uses the horizontal resize cursor.
+The preview retains a 420 px minimum width. The inspector receives a 460 px minimum width so its multi-column parameter rows remain usable. The splitter occupies an 8 px interaction region. It must be a direct child of the three-column workspace grid so Avalonia resolves the preview and inspector columns as the definitions to resize. The inspector's existing left border provides the resting divider line; pointer-over and drag states highlight the splitter region, and the pointer uses the horizontal resize cursor.
 
 ## Interaction
 
@@ -26,12 +26,13 @@ Missing files, malformed JSON, unsupported versions, non-finite values, and out-
 
 - `WorkspaceSplitSettings`: validates, loads, and atomically saves the normalized ratio without depending on Avalonia controls.
 - `MainWindow`: owns the current shared ratio and registered workspace column pairs.
-- `MakeWorkspace`: creates the three-column layout, native splitter, minimum-width constraints, and drag-completion synchronization.
-- `UiTheme`: supplies the splitter's restrained normal and highlighted visual states.
+- `MakeWorkspace`: creates the three-column layout, inserts the native splitter directly into its middle column, applies minimum-width constraints, and handles drag-completion synchronization.
+- `UiTheme`: creates and styles the direct `GridSplitter` without wrapping it in another panel.
 
 ## Verification
 
 - Unit-test valid round trips and fallback behavior for missing, corrupt, unsupported, and out-of-range settings.
+- Add a structural regression check that the splitter's immediate parent is the three-column workspace grid.
 - Build the Avalonia project and run the complete C# test suite.
 - Launch the application and verify dragging in either shared-layout tab resizes both sides without clipping.
 - Switch tabs and confirm the adjusted ratio is shared.
