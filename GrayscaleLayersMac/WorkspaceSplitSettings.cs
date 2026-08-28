@@ -63,13 +63,24 @@ internal sealed class WorkspaceSplitSettings
         return TrySaveDocument(document with { LogCollapsed = states });
     }
 
+    /// <summary>读取三步流程页的图层缩略图侧栏上次的收起状态，没有记录时按展开处理。</summary>
+    public bool LoadThumbnailCollapsed() => LoadDocument().ThumbnailCollapsed;
+
+    /// <summary>写入三步流程页的图层缩略图侧栏的收起状态，分栏比例与日志面板状态保持不变。</summary>
+    public bool TrySaveThumbnailCollapsed(bool collapsed) =>
+        TrySaveDocument(LoadDocument() with { ThumbnailCollapsed = collapsed });
+
     public static bool IsValidPreviewRatio(double ratio) =>
         double.IsFinite(ratio) &&
         ratio >= MinimumPreviewRatio &&
         ratio <= MaximumPreviewRatio;
 
     private static Settings DefaultDocument() =>
-        new(CurrentVersion, DefaultPreviewRatio, new Dictionary<string, bool>(StringComparer.Ordinal));
+        new(
+            CurrentVersion,
+            DefaultPreviewRatio,
+            new Dictionary<string, bool>(StringComparer.Ordinal),
+            ThumbnailCollapsed: false);
 
     private Settings LoadDocument()
     {
@@ -86,14 +97,15 @@ internal sealed class WorkspaceSplitSettings
                 return DefaultDocument();
             }
 
-            // 老版本文件没有 LogCollapsed 字段，反序列化后为 null，这里补齐成空表，
-            // 让上层拿到的永远是一个非空的字典。
+            // 老版本文件没有 LogCollapsed / ThumbnailCollapsed 字段，反序列化后可能为 null，
+            // 这里统一补齐默认值，让上层拿到的永远是非空结构。
             return new Settings(
                 document.Version,
                 document.PreviewRatio,
                 document.LogCollapsed is null
                     ? new Dictionary<string, bool>(StringComparer.Ordinal)
-                    : new Dictionary<string, bool>(document.LogCollapsed, StringComparer.Ordinal));
+                    : new Dictionary<string, bool>(document.LogCollapsed, StringComparer.Ordinal),
+                document.ThumbnailCollapsed ?? false);
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException or JsonException)
         {
@@ -141,15 +153,17 @@ internal sealed class WorkspaceSplitSettings
         }
     }
 
-    /// <summary>读进内存并补全默认值后的设置；LogCollapsed 保证非空。</summary>
+    /// <summary>读进内存并补全默认值后的设置；非集合字段保证非默认值。</summary>
     private sealed record Settings(
         int Version,
         double PreviewRatio,
-        Dictionary<string, bool> LogCollapsed);
+        Dictionary<string, bool> LogCollapsed,
+        bool ThumbnailCollapsed);
 
-    /// <summary>磁盘上的 JSON 形状。LogCollapsed 可空，兼容没有该字段的旧文件。</summary>
+    /// <summary>磁盘上的 JSON 形状。LogCollapsed / ThumbnailCollapsed 可空，兼容老版本文件。</summary>
     private sealed record SettingsDocument(
         int Version,
         double PreviewRatio,
-        Dictionary<string, bool>? LogCollapsed);
+        Dictionary<string, bool>? LogCollapsed,
+        bool? ThumbnailCollapsed);
 }

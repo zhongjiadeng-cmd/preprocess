@@ -254,6 +254,13 @@ public sealed class MainWindow : Window
         Styles.Add(UiTheme.CreateGlobalStyles());
         UiTheme.ApplyFluentResourceOverrides(this);
         _workspacePreviewRatio = _workspaceSplitSettings.LoadPreviewRatio();
+        // 三步流程页的图层缩略图侧栏恢复上次收起状态。
+        // 先恢复、再订阅，恢复动作本身不会触发一次多余的写入。
+        _pipelineTextureSurface.SetThumbnailsCollapsed(
+            _workspaceSplitSettings.LoadThumbnailCollapsed());
+        _pipelineTextureSurface.ThumbnailsCollapsedChanged += (_, _) =>
+            _workspaceSplitSettings.TrySaveThumbnailCollapsed(
+                _pipelineTextureSurface.IsThumbnailsCollapsed);
         foreach (var primaryButton in new[] { _pipelineRunButton, _hatchRunButton, _runButton })
             UiTheme.ApplyPrimaryStyle(primaryButton);
         ConfigurePipelineDxfSelector();

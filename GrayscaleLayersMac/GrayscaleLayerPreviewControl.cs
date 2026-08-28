@@ -81,6 +81,10 @@ public sealed class GrayscaleLayerPreviewControl : Grid, IDisposable
     private readonly CheckBox? _keepViewBox;
     private bool _motionAttached;
 
+    /// <summary>缩略图侧栏的折叠态始终由把手的 IsCollapsed 持有，不再保留独立的镜像字段，
+    /// 避免持久化恢复时"两个状态不同步"的隐患。</summary>
+    private bool IsThumbnailsCollapsedState => _collapseHandle?.IsCollapsed ?? false;
+
     private readonly TextBlock _zoomLabel = new()
     {
         FontFamily = UiTheme.MonoFont,
@@ -133,7 +137,6 @@ public sealed class GrayscaleLayerPreviewControl : Grid, IDisposable
     };
 
     private GrayscaleLayerPreviewController _controller;
-    private bool _compactThumbnails;
 
     /// <summary>只预览源纹理（不做灰度分层的页面）。</summary>
     public GrayscaleLayerPreviewControl()
@@ -373,6 +376,24 @@ public sealed class GrayscaleLayerPreviewControl : Grid, IDisposable
         _canvas.Dispose();
     }
 
+    /// <summary>缩略图侧栏是否处于收起态（不分层时把手被隐藏，本属性随之下发为 false）。</summary>
+    public bool IsThumbnailsCollapsed =>
+        _collapseHandle is { IsVisible: true } && _collapseHandle.IsCollapsed;
+
+    /// <summary>用户点击把手切换缩略图侧栏的展开 / 收起后触发，供宿主持久化。</summary>
+    public event EventHandler? ThumbnailsCollapsedChanged;
+
+    /// <summary>
+    /// 程序化设置缩略图侧栏的折叠态：把手的 <see cref="CollapseHandle.SetCollapsed"/>
+    /// 会同步箭头角度，状态未变时早返回，所以从持久化恢复时不会多余触发回调。
+    /// </summary>
+    public void SetThumbnailsCollapsed(bool collapsed)
+    {
+        if (_collapseHandle is null)
+            return;
+        _collapseHandle.SetCollapsed(collapsed);
+    }
+
     private IEnumerable<Control> BuildToolbarChildren(
         Button? prev, Button? next,
         Button minus, Button plus, Button fit, Button actual)
@@ -499,7 +520,7 @@ public sealed class GrayscaleLayerPreviewControl : Grid, IDisposable
         // 无分层时直接隐藏：IsVisible 为 false 的控件不参与测量，Auto 列自然收到 0。
         _thumbnailCard!.IsVisible = visible;
         _thumbnailCard.Width = visible ? CurrentThumbnailWidth() : 0;
-        _thumbnails!.SetCompact(_compactThumbnails);
+        _thumbnails!.SetCompact(IsThumbnailsCollapsedState);
         if (_collapseHandle is not null)
         {
             // 把手与卡片一起显隐——无分层时缩略图区域整体不可见，把手孤零零地
@@ -510,7 +531,7 @@ public sealed class GrayscaleLayerPreviewControl : Grid, IDisposable
     }
 
     private double CurrentThumbnailWidth() =>
-        _compactThumbnails ? ThumbnailCompactWidth : ThumbnailExpandedWidth;
+        IsThumbnailsCollapsedState ? ThumbnailCompactWidth : ThumbnailExpandedWidth;
 
     private void UpdateNavigation(int itemCount)
     {
@@ -578,10 +599,10 @@ public sealed class GrayscaleLayerPreviewControl : Grid, IDisposable
         if (_controller.Items.Count <= 1)
             return;
 
-        // 把手已经自己翻好箭头，这里只跟进宽度；卡片的 Width 变动由过渡动画接管。
-        _compactThumbnails = _collapseHandle.IsCollapsed;
+        // 把手已经自己翻好箭头与状态，这里只跟进宽度；卡片的 Width 变动由过渡动画接管。
         _thumbnailCard.Width = CurrentThumbnailWidth();
-        _thumbnails!.SetCompact(_compactThumbnails);
+        _thumbnails!.SetCompact(IsThumbnailsCollapsedState);
+        ThumbnailsCollapsedChanged?.Invoke(this, EventArgs.Empty);
     }
 
     private static Button MakeButton(string text, Action action)

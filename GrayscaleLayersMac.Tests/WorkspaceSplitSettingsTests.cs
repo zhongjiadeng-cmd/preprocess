@@ -158,6 +158,65 @@ public sealed class WorkspaceSplitSettingsTests
         });
     }
 
+    [TestMethod]
+    public void LoadThumbnailCollapsed_MissingFileIsExpanded() => WithSettings(settings =>
+        Assert.IsFalse(settings.LoadThumbnailCollapsed()));
+
+    [TestMethod]
+    public void SaveAndLoadThumbnailCollapsed_RoundTrips() => WithSettings(settings =>
+    {
+        Assert.IsTrue(settings.TrySaveThumbnailCollapsed(true));
+        Assert.IsTrue(settings.LoadThumbnailCollapsed());
+
+        Assert.IsTrue(settings.TrySaveThumbnailCollapsed(false));
+        Assert.IsFalse(settings.LoadThumbnailCollapsed());
+    });
+
+    [TestMethod]
+    public void SaveThumbnailCollapsed_PreservesLogCollapsed() => WithSettings((settings, path) =>
+    {
+        Assert.IsTrue(settings.TrySaveLogCollapsed("layer", true));
+        Assert.IsTrue(settings.TrySaveThumbnailCollapsed(true));
+
+        var reloaded = new WorkspaceSplitSettings(path);
+        Assert.IsTrue(reloaded.LoadLogCollapsed("layer"));
+        Assert.IsTrue(reloaded.LoadThumbnailCollapsed());
+    });
+
+    [TestMethod]
+    public void SaveThumbnailCollapsed_PreservesPreviewRatio() => WithSettings((settings, path) =>
+    {
+        Assert.IsTrue(settings.TrySavePreviewRatio(0.7));
+        Assert.IsTrue(settings.TrySaveThumbnailCollapsed(true));
+
+        var reloaded = new WorkspaceSplitSettings(path);
+        Assert.AreEqual(0.7, reloaded.LoadPreviewRatio(), 1e-9);
+        Assert.IsTrue(reloaded.LoadThumbnailCollapsed());
+    });
+
+    [TestMethod]
+    public void LoadThumbnailCollapsed_LegacyFileWithoutTheFieldIsExpanded() => WithSettings(
+        (settings, path) =>
+        {
+            File.WriteAllText(path,
+                "{\"Version\":1,\"PreviewRatio\":0.6,\"LogCollapsed\":{\"layer\":true}}");
+            var reloaded = new WorkspaceSplitSettings(path);
+
+            Assert.IsTrue(reloaded.LoadLogCollapsed("layer"));
+            Assert.IsFalse(reloaded.LoadThumbnailCollapsed(),
+                "旧版本文件无 ThumbnailCollapsed 字段时应按展开处理");
+        });
+
+    [TestMethod]
+    public void LoadThumbnailCollapsed_InvalidJsonFallsBackToExpanded() => WithSettings(
+        (settings, path) =>
+        {
+            File.WriteAllText(path, "{ not valid json");
+            var reloaded = new WorkspaceSplitSettings(path);
+
+            Assert.IsFalse(reloaded.LoadThumbnailCollapsed());
+        });
+
     private static void WithSettings(Action<WorkspaceSplitSettings> action) =>
         WithSettings((settings, _) => action(settings));
 
