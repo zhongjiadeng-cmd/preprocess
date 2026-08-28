@@ -54,6 +54,8 @@ public sealed class MainWindow : Window
         ShowButtonSpinner = false,
         HorizontalAlignment = HorizontalAlignment.Stretch
     };
+    private readonly NumericUpDown _minLevelBox = MakeNumberBox(0, 1, 254, 0, showButtons: false);
+    private readonly NumericUpDown _maxLevelBox = MakeNumberBox(255, 1, 255, 0, showButtons: false);
     private readonly CheckBox _belowIsWhite = new()
     {
         Content = "低于阈值的区域设为白色（默认设为黑色）"
@@ -67,7 +69,6 @@ public sealed class MainWindow : Window
     private readonly NumericUpDown _widthBox = MakeNumberBox(100, 0.01m, 100000, showButtons: false);
     private readonly NumericUpDown _heightBox = MakeNumberBox(100, 0.01m, 100000, showButtons: false);
     private readonly NumericUpDown _spacingBox = MakeNumberBox(0.02m, 0.001m, 1000);
-    private readonly NumericUpDown _thresholdBox = MakeNumberBox(128, 1, 255, 0);
     private readonly TextBox _dpiBox = new() { Watermark = "可选；图片无 DPI 时填写" };
     private readonly Image _hatchTexturePreview = new()
     {
@@ -108,12 +109,13 @@ public sealed class MainWindow : Window
     private readonly TextBox _pipelineLayerOutputBox = new() { Watermark = "请选择分层 TIFF 保存目录", IsReadOnly = true };
     private readonly TextBox _pipelineDxfOutputBox = new() { Watermark = "请选择 DXF 保存目录", IsReadOnly = true };
     private readonly NumericUpDown _pipelineLayersBox = MakeNumberBox(10, 1, 255, 0, showButtons: false);
+    private readonly NumericUpDown _pipelineMinLevelBox = MakeNumberBox(0, 1, 254, 0, showButtons: false);
+    private readonly NumericUpDown _pipelineMaxLevelBox = MakeNumberBox(255, 1, 255, 0, showButtons: false);
     private readonly CheckBox _pipelineBelowIsWhite = new() { Content = "低于阈值的区域设为白色（默认设为黑色）" };
     private readonly NumericUpDown _pipelineWidthBox = MakeNumberBox(100, 0.01m, 100000, showButtons: false);
     private readonly NumericUpDown _pipelineHeightBox = MakeNumberBox(100, 0.01m, 100000, showButtons: false);
     private readonly NumericUpDown _pipelineSpacingBox = MakeNumberBox(0.02m, 0.001m, 1000);
     private readonly NumericUpDown _pipelineHatchAngleStepBox = MakeNumberBox(0, 0.1m, 180, 2, showButtons: false);
-    private readonly NumericUpDown _pipelineThresholdBox = MakeNumberBox(128, 1, 255, 0);
     private readonly TextBox _pipelineDpiBox = new() { Watermark = "可选；图片无 DPI 时填写" };
     private readonly Image _pipelineTexturePreview = new()
     {
@@ -316,6 +318,8 @@ public sealed class MainWindow : Window
         };
         cancelButton.Click += (_, _) => _cancellation?.Cancel();
         _openOutputButton.Click += (_, _) => OpenOutputDirectory();
+        LinkGrayLevelBounds(_minLevelBox, _maxLevelBox);
+        LinkGrayLevelBounds(_pipelineMinLevelBox, _pipelineMaxLevelBox);
 
         var layerContent = new StackPanel
         {
@@ -323,21 +327,23 @@ public sealed class MainWindow : Window
             Children =
             {
                 UiTheme.PageTitle("灰度图分层"),
-                UiTheme.PageSubtitle("将灰度纹理图按累计阈值生成多张黑白 TIFF 图像。"),
+                UiTheme.PageSubtitle("将灰度纹理图按累计阈值生成多张黑白 TIFF 图像；可限定灰阶上下限，只让区间内的灰阶参与分层。"),
                 MakeInspectorSection(
                     "输入与参数",
                     MakeField("输入图片", _inputBox, inputButton),
                     MakeField("输出目录", _outputBox, outputButton),
                     new Grid
                     {
-                        ColumnDefinitions = new ColumnDefinitions("180,*"),
-                        ColumnSpacing = 16,
+                        ColumnDefinitions = new ColumnDefinitions("*,*"),
+                        ColumnSpacing = 12,
                         Children =
                         {
-                            MakeLabeledControl("分层数量（1–255）", _layersBox, 0),
-                            MakeLabeledControl("像素方向", _belowIsWhite, 1)
+                            MakeLabeledControl("灰阶下限（0–254）", _minLevelBox, 0),
+                            MakeLabeledControl("灰阶上限（1–255）", _maxLevelBox, 1),
+                            MakeLabeledControl("分层数量（1–255）", _layersBox, 2)
                         }
-                    }),
+                    },
+                    new StackPanel { Children = { _belowIsWhite } }),
                 _progress,
                 new Grid
                 {
@@ -408,9 +414,8 @@ public sealed class MainWindow : Window
                         ColumnSpacing = 16,
                         Children =
                         {
-                            MakeLabeledControl("黑色阈值（0–255）", _thresholdBox, 0),
-                            MakeLabeledControl("设置 DPI", _dpiBox, 1),
-                            MakeLabeledControl("单元阵列对齐", _anchorBox, 2)
+                            MakeLabeledControl("设置 DPI", _dpiBox, 0),
+                            MakeLabeledControl("单元阵列对齐", _anchorBox, 1)
                         }
                     },
                     new StackPanel
@@ -497,14 +502,16 @@ public sealed class MainWindow : Window
                     MakeField("分层 TIFF 输出目录", _pipelineLayerOutputBox, pipelineLayerOutputButton),
                     new Grid
                     {
-                        ColumnDefinitions = new ColumnDefinitions("180,*"),
-                        ColumnSpacing = 16,
+                        ColumnDefinitions = new ColumnDefinitions("*,*,*"),
+                        ColumnSpacing = 12,
                         Children =
                         {
-                            MakeLabeledControl("分层数量（1–255）", _pipelineLayersBox, 0),
-                            MakeLabeledControl("像素方向", _pipelineBelowIsWhite, 1)
+                            MakeLabeledControl("灰阶下限（0–254）", _pipelineMinLevelBox, 0),
+                            MakeLabeledControl("灰阶上限（1–255）", _pipelineMaxLevelBox, 1),
+                            MakeLabeledControl("分层数量（1–255）", _pipelineLayersBox, 2)
                         }
-                    }),
+                    },
+                    new StackPanel { Children = { _pipelineBelowIsWhite } }),
                 MakeInspectorSection(
                     "Hatch 与 DXF",
                     MakeField("DXF 输出目录", _pipelineDxfOutputBox, pipelineDxfOutputButton),
@@ -521,14 +528,13 @@ public sealed class MainWindow : Window
                     },
                     new Grid
                     {
-                        ColumnDefinitions = new ColumnDefinitions("*,*,*,*"),
+                        ColumnDefinitions = new ColumnDefinitions("*,*,*"),
                         ColumnSpacing = 16,
                         Children =
                         {
-                            MakeLabeledControl("黑色阈值（0–255）", _pipelineThresholdBox, 0),
-                            MakeLabeledControl("设置 DPI", _pipelineDpiBox, 1),
-                            MakeLabeledControl("单元阵列对齐", _pipelineAnchorBox, 2),
-                            MakeLabeledControl("层间角度递进（°）", _pipelineHatchAngleStepBox, 3)
+                            MakeLabeledControl("设置 DPI", _pipelineDpiBox, 0),
+                            MakeLabeledControl("单元阵列对齐", _pipelineAnchorBox, 1),
+                            MakeLabeledControl("层间角度递进（°）", _pipelineHatchAngleStepBox, 2)
                         }
                     },
                     new StackPanel
@@ -698,7 +704,7 @@ public sealed class MainWindow : Window
                         Padding = new Thickness(28),
                         Content = new Border
                         {
-                            MaxWidth = 920,
+                            MaxWidth = 1240,
                             HorizontalAlignment = HorizontalAlignment.Center,
                             Child = layerContent
                         }
@@ -1563,11 +1569,21 @@ public sealed class MainWindow : Window
         }
 
         var layers = (int)(_pipelineLayersBox.Value ?? 10);
+        if (!TryReadGrayLevelRange(
+                _pipelineMinLevelBox,
+                _pipelineMaxLevelBox,
+                layers,
+                out var minLevel,
+                out var maxLevel,
+                out var rangeError))
+        {
+            await ShowMessageAsync(rangeError);
+            return;
+        }
         var width = _pipelineWidthBox.Value ?? 100;
         var height = _pipelineHeightBox.Value ?? 100;
         var spacing = _pipelineSpacingBox.Value ?? 0.02m;
         var hatchAngleStep = _pipelineHatchAngleStepBox.Value ?? 0;
-        var threshold = (int)(_pipelineThresholdBox.Value ?? 128);
         if (!TryValidateVoronoiSettings(
                 _pipelineBlocksBox,
                 _pipelineMinBlockPercentBox,
@@ -1659,7 +1675,8 @@ public sealed class MainWindow : Window
             Directory.CreateDirectory(dxfOutput);
             AppendPipelineLog("步骤 1/3：开始生成灰度分层 TIFF…");
             AppendPipelineLog($"输入：{input}");
-            AppendPipelineLog($"分层目录：{layerOutput}\n");
+            AppendPipelineLog($"分层目录：{layerOutput}");
+            AppendPipelineLog($"灰阶区间：[{minLevel}, {maxLevel}]，分层数量：{layers}\n");
 
             var layerStartedAt = DateTime.UtcNow.AddSeconds(-2);
             var layerInfo = CreatePythonProcess(python);
@@ -1669,6 +1686,7 @@ public sealed class MainWindow : Window
                 "--layers", layers.ToString(CultureInfo.InvariantCulture)
             })
                 layerInfo.ArgumentList.Add(argument);
+            GrayLevelRange.AppendArguments(layerInfo.ArgumentList, minLevel, maxLevel);
             if (_pipelineBelowIsWhite.IsChecked == true)
                 layerInfo.ArgumentList.Add("--below-is-white");
 
@@ -1719,7 +1737,6 @@ public sealed class MainWindow : Window
                     "--height", Invariant(height),
                     "--spacing", Invariant(spacing),
                     "--angle", Invariant(layerHatchAngle),
-                    "--threshold", threshold.ToString(CultureInfo.InvariantCulture),
                     "--anchor", _pipelineAnchorBox.SelectedIndex == 1 ? "top-left" : "center"
                 })
                     hatchInfo.ArgumentList.Add(argument);
@@ -2226,7 +2243,6 @@ public sealed class MainWindow : Window
         var width = _widthBox.Value ?? 100;
         var height = _heightBox.Value ?? 100;
         var spacing = _spacingBox.Value ?? 0.02m;
-        var threshold = (int)(_thresholdBox.Value ?? 128);
         if (!TryValidateVoronoiSettings(
                 _blocksBox,
                 _minBlockPercentBox,
@@ -2261,7 +2277,6 @@ public sealed class MainWindow : Window
                 "--width", Invariant(width),
                 "--height", Invariant(height),
                 "--spacing", Invariant(spacing),
-                "--threshold", threshold.ToString(CultureInfo.InvariantCulture),
                 "--anchor", _anchorBox.SelectedIndex == 1 ? "top-left" : "center"
             })
                 info.ArgumentList.Add(argument);
@@ -2332,6 +2347,40 @@ public sealed class MainWindow : Window
             _hatchRunButton.IsEnabled = true;
             _hatchProgress.IsIndeterminate = false;
         }
+    }
+
+    // 上下限联动：始终保留至少一级灰阶差，避免出现下限 ≥ 上限的无效区间。
+    private static void LinkGrayLevelBounds(NumericUpDown lowerBox, NumericUpDown upperBox)
+    {
+        lowerBox.ValueChanged += (_, _) =>
+        {
+            var lower = (int)(lowerBox.Value ?? GrayLevelRange.Minimum);
+            var upper = (int)(upperBox.Value ?? GrayLevelRange.Maximum);
+            var corrected = GrayLevelRange.EnsureUpperAbove(lower, upper);
+            if (corrected != upper)
+                upperBox.Value = corrected;
+        };
+        upperBox.ValueChanged += (_, _) =>
+        {
+            var lower = (int)(lowerBox.Value ?? GrayLevelRange.Minimum);
+            var upper = (int)(upperBox.Value ?? GrayLevelRange.Maximum);
+            var corrected = GrayLevelRange.EnsureLowerBelow(lower, upper);
+            if (corrected != lower)
+                lowerBox.Value = corrected;
+        };
+    }
+
+    private static bool TryReadGrayLevelRange(
+        NumericUpDown lowerBox,
+        NumericUpDown upperBox,
+        int layers,
+        out int lower,
+        out int upper,
+        out string error)
+    {
+        lower = (int)(lowerBox.Value ?? GrayLevelRange.Minimum);
+        upper = (int)(upperBox.Value ?? GrayLevelRange.Maximum);
+        return GrayLevelRange.TryValidate(lower, upper, layers, out error);
     }
 
     private static bool TryValidateVoronoiSettings(
@@ -2412,6 +2461,19 @@ public sealed class MainWindow : Window
             return;
         }
 
+        var layers = (int)(_layersBox.Value ?? 10);
+        if (!TryReadGrayLevelRange(
+                _minLevelBox,
+                _maxLevelBox,
+                layers,
+                out var minLevel,
+                out var maxLevel,
+                out var rangeError))
+        {
+            await ShowMessageAsync(rangeError);
+            return;
+        }
+
         var script = Path.Combine(AppContext.BaseDirectory, "grayscale_layers.py");
         if (!File.Exists(script))
         {
@@ -2433,7 +2495,8 @@ public sealed class MainWindow : Window
         _logBox.Text = "";
         AppendLog($"Python：{python}");
         AppendLog($"输入：{input}");
-        AppendLog($"输出：{output}\n");
+        AppendLog($"输出：{output}");
+        AppendLog($"灰阶区间：[{minLevel}, {maxLevel}]，分层数量：{layers}\n");
 
         try
         {
@@ -2450,7 +2513,8 @@ public sealed class MainWindow : Window
             info.ArgumentList.Add(input);
             info.ArgumentList.Add(output);
             info.ArgumentList.Add("--layers");
-            info.ArgumentList.Add(((int)(_layersBox.Value ?? 10)).ToString());
+            info.ArgumentList.Add(layers.ToString(CultureInfo.InvariantCulture));
+            GrayLevelRange.AppendArguments(info.ArgumentList, minLevel, maxLevel);
             if (_belowIsWhite.IsChecked == true)
                 info.ArgumentList.Add("--below-is-white");
 
