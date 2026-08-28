@@ -2,8 +2,6 @@ using System;
 using System.IO;
 using System.Globalization;
 using System.Text;
-using Avalonia;
-using Avalonia.Headless;
 using GrayscaleLayersMac;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 
@@ -13,14 +11,6 @@ namespace GrayscaleLayersMac.Tests;
 public sealed class DxfPreviewControlTests
 {
     private string _root = null!;
-
-    [ClassInitialize]
-    public static void InitializeAvalonia(TestContext _)
-    {
-        AppBuilder.Configure<App>()
-            .UseHeadless(new AvaloniaHeadlessPlatformOptions())
-            .SetupWithoutStarting();
-    }
 
     [TestInitialize]
     public void CreateRoot()

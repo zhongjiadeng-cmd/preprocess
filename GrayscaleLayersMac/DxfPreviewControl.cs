@@ -113,7 +113,6 @@ public sealed class DxfPreviewControl : Control, IDisposable
         HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch;
         VerticalAlignment = Avalonia.Layout.VerticalAlignment.Stretch;
         ClipToBounds = true;
-        Cursor = new Cursor(StandardCursorType.Arrow);
         if (startInTopView)
         {
             _yaw = 0;
