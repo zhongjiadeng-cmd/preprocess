@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using System.Globalization;
+using System.Linq;
 using System.Text;
 using GrayscaleLayersMac;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
@@ -42,9 +43,16 @@ public sealed class DxfPreviewControlTests
     public void ValidCompanionReportsDeclaredBlocksIncludingEmptyBlock()
     {
         var dxf = Path.Combine(_root, "blocked.dxf");
-        WriteDxf(dxf, (0d, 0d, 10d, 0d), (0d, 1d, 10d, 1d), (0d, 2d, 10d, 2d));
+        WriteDxf(
+            dxf,
+            (0d, 0d, 10d, 0d),
+            (0d, 1d, 10d, 1d),
+            (0d, 2d, 10d, 2d),
+            (0d, 3d, 10d, 3d),
+            (0d, 4d, 10d, 4d),
+            (0d, 5d, 10d, 5d));
         File.WriteAllText(Path.ChangeExtension(dxf, ".blocks.json"), """
-            {"version":1,"border_line_count":1,"blocks":[
+            {"version":1,"border_line_count":4,"blocks":[
               {"block_index":4,"center_x":0,"center_y":0,"line_count":1},
               {"block_index":8,"center_x":1,"center_y":1,"line_count":0},
               {"block_index":2,"center_x":2,"center_y":2,"line_count":1}]}
@@ -53,7 +61,7 @@ public sealed class DxfPreviewControlTests
 
         preview.LoadFile(dxf);
 
-        Assert.AreEqual("blocked.dxf · 3 条 LINE · 加工块 3 个", preview.Summary);
+        Assert.AreEqual("blocked.dxf · 6 条 LINE · 加工块 3 个", preview.Summary);
     }
 
     [TestMethod]
@@ -68,6 +76,34 @@ public sealed class DxfPreviewControlTests
         using var preview = new DxfPreviewControl();
 
         Assert.ThrowsExactly<InvalidDataException>(() => preview.LoadFile(dxf));
+    }
+
+    [TestMethod]
+    public void SamplingAcrossBlockBoundaryKeepsSourceOrdinalClassifications()
+    {
+        var dxf = Path.Combine(_root, "sampled.dxf");
+        WriteDxf(
+            dxf,
+            (0d, 0d, 10d, 0d),
+            (0d, 1d, 10d, 1d),
+            (0d, 2d, 10d, 2d),
+            (0d, 3d, 10d, 3d),
+            (0d, 4d, 10d, 4d),
+            (0d, 5d, 10d, 5d));
+        File.WriteAllText(Path.ChangeExtension(dxf, ".blocks.json"), """
+            {"version":1,"border_line_count":0,"blocks":[
+              {"block_index":7,"center_x":0,"center_y":0,"line_count":2},
+              {"block_index":3,"center_x":1,"center_y":1,"line_count":4}]}
+            """);
+        var metadata = DxfBlockMetadata.LoadForDxf(dxf);
+
+        var scan = DxfPreviewControl.ScanFile(dxf, collectEvery: 2, metadata);
+
+        Assert.AreEqual(6, scan.Count);
+        CollectionAssert.AreEqual(
+            new[] { 7, 3, 3 },
+            scan.Segments.Select(segment => segment.BlockIndex).ToArray());
+        Assert.IsFalse(scan.Segments.Any(segment => segment.IsBorder));
     }
 
     private static void WriteDxf(

@@ -60,7 +60,7 @@ layer_01_gray_lt_255.blocks.json
 
 - 顶层字段和每个块字段必须与 v1 契约完全一致。
 - `version` 必须为整数 `1`。
-- `border_line_count` 和 `line_count` 必须为非负整数。
+- `border_line_count` 必须为整数 `0` 或 `4`；`line_count` 必须为非负整数。
 - `blocks` 必须为非空数组。
 - `block_index` 必须为非负且唯一的整数。
 - `center_x` 和 `center_y` 必须为有限数值，确保预览端接受与机器加工端相同的有效文档。

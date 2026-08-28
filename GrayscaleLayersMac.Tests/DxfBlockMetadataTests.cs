@@ -39,15 +39,15 @@ public sealed class DxfBlockMetadataTests
         var metadata = DxfBlockMetadata.LoadForDxf(dxf);
 
         Assert.IsNotNull(metadata);
-        metadata.ValidateLineCount(5);
+        metadata.ValidateLineCount(7);
         Assert.AreEqual(3, metadata.Blocks.Count);
         Assert.AreEqual(new DxfBlockDefinition(7, 1.5, -2, 2), metadata.Blocks[0]);
         Assert.AreEqual(new DxfBlockDefinition(9, 3, 4.5, 0), metadata.Blocks[1]);
         Assert.AreEqual(new DxfBlockDefinition(3, 5, 6, 1), metadata.Blocks[2]);
         Assert.AreEqual(new DxfLineClassification(0, true), metadata.ClassifyLine(0));
-        Assert.AreEqual(new DxfLineClassification(7, false), metadata.ClassifyLine(2));
-        Assert.AreEqual(new DxfLineClassification(7, false), metadata.ClassifyLine(3));
-        Assert.AreEqual(new DxfLineClassification(3, false), metadata.ClassifyLine(4));
+        Assert.AreEqual(new DxfLineClassification(7, false), metadata.ClassifyLine(4));
+        Assert.AreEqual(new DxfLineClassification(7, false), metadata.ClassifyLine(5));
+        Assert.AreEqual(new DxfLineClassification(3, false), metadata.ClassifyLine(6));
     }
 
     [TestMethod]
@@ -55,8 +55,8 @@ public sealed class DxfBlockMetadataTests
     {
         var metadata = LoadHappyFixture();
 
-        Assert.AreEqual(7, metadata.ClassifyLine(2).BlockIndex);
-        Assert.AreEqual(3, metadata.ClassifyLine(4).BlockIndex);
+        Assert.AreEqual(7, metadata.ClassifyLine(4).BlockIndex);
+        Assert.AreEqual(3, metadata.ClassifyLine(6).BlockIndex);
     }
 
     [TestMethod]
@@ -65,6 +65,8 @@ public sealed class DxfBlockMetadataTests
     [DataRow("{\"version\":2,\"border_line_count\":0,\"blocks\":[{\"block_index\":0,\"center_x\":0,\"center_y\":0,\"line_count\":1}]}", "unsupported version")]
     [DataRow("{\"version\":1,\"border_line_count\":true,\"blocks\":[{\"block_index\":0,\"center_x\":0,\"center_y\":0,\"line_count\":1}]}", "boolean border count")]
     [DataRow("{\"version\":1,\"border_line_count\":-1,\"blocks\":[{\"block_index\":0,\"center_x\":0,\"center_y\":0,\"line_count\":1}]}", "negative border count")]
+    [DataRow("{\"version\":1,\"border_line_count\":1,\"blocks\":[{\"block_index\":0,\"center_x\":0,\"center_y\":0,\"line_count\":1}]}", "unsupported border count one")]
+    [DataRow("{\"version\":1,\"border_line_count\":2,\"blocks\":[{\"block_index\":0,\"center_x\":0,\"center_y\":0,\"line_count\":1}]}", "unsupported border count two")]
     [DataRow("{\"version\":1,\"border_line_count\":0}", "missing top-level field")]
     [DataRow("{\"version\":1,\"border_line_count\":0,\"blocks\":[{\"block_index\":0,\"center_x\":0,\"center_y\":0,\"line_count\":1}],\"extra\":true}", "extra top-level field")]
     [DataRow("{\"version\":1,\"border_line_count\":0,\"blocks\":[]}", "empty blocks")]
@@ -121,7 +123,7 @@ public sealed class DxfBlockMetadataTests
     {
         var metadata = LoadHappyFixture();
 
-        Assert.ThrowsExactly<InvalidDataException>(() => metadata.ValidateLineCount(4));
+        Assert.ThrowsExactly<InvalidDataException>(() => metadata.ValidateLineCount(6));
     }
 
     [TestMethod]
@@ -130,7 +132,7 @@ public sealed class DxfBlockMetadataTests
         var metadata = LoadHappyFixture();
 
         Assert.ThrowsExactly<ArgumentOutOfRangeException>(() => metadata.ClassifyLine(-1));
-        Assert.ThrowsExactly<ArgumentOutOfRangeException>(() => metadata.ClassifyLine(5));
+        Assert.ThrowsExactly<ArgumentOutOfRangeException>(() => metadata.ClassifyLine(7));
     }
 
     private DxfBlockMetadata LoadHappyFixture()
@@ -141,7 +143,7 @@ public sealed class DxfBlockMetadataTests
     }
 
     private const string HappyJson = """
-        {"version":1,"border_line_count":2,"blocks":[
+        {"version":1,"border_line_count":4,"blocks":[
           {"block_index":7,"center_x":1.5,"center_y":-2,"line_count":2},
           {"block_index":9,"center_x":3,"center_y":4.5,"line_count":0},
           {"block_index":3,"center_x":5,"center_y":6,"line_count":1}

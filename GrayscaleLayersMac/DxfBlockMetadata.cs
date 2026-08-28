@@ -119,8 +119,8 @@ internal sealed class DxfBlockMetadata
             throw Invalid(sidecarPath, "version 必须为 1");
 
         var borderLineCount = ReadInt32(sidecarPath, document["border_line_count"], "border_line_count");
-        if (borderLineCount < 0)
-            throw Invalid(sidecarPath, "border_line_count 不能为负数");
+        if (borderLineCount is not 0 and not 4)
+            throw Invalid(sidecarPath, "border_line_count 必须为 0 或 4");
 
         if (document["blocks"].ValueKind != JsonValueKind.Array)
             throw Invalid(sidecarPath, "blocks 必须是数组");

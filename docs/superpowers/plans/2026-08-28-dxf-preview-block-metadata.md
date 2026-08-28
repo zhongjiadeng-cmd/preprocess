@@ -13,7 +13,7 @@
 - Do not change the existing `*.blocks.json` v1 producer or machine-export consumer contract.
 - Missing JSON is valid and produces a one-color preview; present but invalid or inconsistent JSON fails preview.
 - JSON keys exactly match the v1 contract and duplicates are invalid.
-- Counts and indices are non-negative JSON integers, block indices are unique, centers are finite JSON numbers, and `blocks` is non-empty.
+- `border_line_count` is JSON integer `0` or `4`; other counts and indices are non-negative JSON integers, block indices are unique, centers are finite JSON numbers, and `blocks` is non-empty.
 - `border_line_count + sum(line_count)` exactly equals the DXF LINE count.
 - Empty blocks remain in the displayed count and consume no entities.
 - Sampled entities are classified by original DXF LINE ordinal.
@@ -58,7 +58,7 @@ public void ReadsV1DocumentAndClassifiesOriginalLineOrdinals()
 {
     var dxf = Path.Combine(_root, "layer.dxf");
     File.WriteAllText(Path.ChangeExtension(dxf, ".blocks.json"), """
-        {"version":1,"border_line_count":2,"blocks":[
+        {"version":1,"border_line_count":4,"blocks":[
           {"block_index":7,"center_x":1.5,"center_y":-2,"line_count":2},
           {"block_index":9,"center_x":3,"center_y":4.5,"line_count":0},
           {"block_index":3,"center_x":5,"center_y":6,"line_count":1}
@@ -68,12 +68,12 @@ public void ReadsV1DocumentAndClassifiesOriginalLineOrdinals()
     var metadata = DxfBlockMetadata.LoadForDxf(dxf);
 
     Assert.IsNotNull(metadata);
-    metadata.ValidateLineCount(5);
+    metadata.ValidateLineCount(7);
     Assert.AreEqual(3, metadata.Blocks.Count);
     Assert.AreEqual(new DxfLineClassification(0, true), metadata.ClassifyLine(0));
-    Assert.AreEqual(new DxfLineClassification(7, false), metadata.ClassifyLine(2));
-    Assert.AreEqual(new DxfLineClassification(7, false), metadata.ClassifyLine(3));
-    Assert.AreEqual(new DxfLineClassification(3, false), metadata.ClassifyLine(4));
+    Assert.AreEqual(new DxfLineClassification(7, false), metadata.ClassifyLine(4));
+    Assert.AreEqual(new DxfLineClassification(7, false), metadata.ClassifyLine(5));
+    Assert.AreEqual(new DxfLineClassification(3, false), metadata.ClassifyLine(6));
 }
 
 [TestMethod]
@@ -81,15 +81,15 @@ public void NonContiguousSampleOrdinalsKeepSourceBlockMapping()
 {
     var metadata = LoadHappyFixture();
 
-    Assert.AreEqual(7, metadata.ClassifyLine(2).BlockIndex);
-    Assert.AreEqual(3, metadata.ClassifyLine(4).BlockIndex);
+    Assert.AreEqual(7, metadata.ClassifyLine(4).BlockIndex);
+    Assert.AreEqual(3, metadata.ClassifyLine(6).BlockIndex);
 }
 
 private DxfBlockMetadata LoadHappyFixture()
 {
     var dxf = Path.Combine(_root, "sample.dxf");
     File.WriteAllText(Path.ChangeExtension(dxf, ".blocks.json"), """
-        {"version":1,"border_line_count":2,"blocks":[
+        {"version":1,"border_line_count":4,"blocks":[
           {"block_index":7,"center_x":1.5,"center_y":-2,"line_count":2},
           {"block_index":9,"center_x":3,"center_y":4.5,"line_count":0},
           {"block_index":3,"center_x":5,"center_y":6,"line_count":1}
@@ -139,7 +139,7 @@ Expected: both tests pass.
 
 - [ ] **Step 5: Add strict failing tests**
 
-Use a data-driven test that writes each raw JSON and expects `InvalidDataException` for: malformed `{`; duplicate `version`; version `2`; Boolean or negative `border_line_count`; missing/extra top-level fields; empty `blocks`; missing/extra block fields; negative or duplicate `block_index`; Boolean, fractional, or negative `line_count`; overflowed/non-finite center; empty file; directory or reparse-point sidecar. Add separate assertions that `ValidateLineCount(4)` rejects the happy fixture total `5`, and `ClassifyLine(-1)`/`ClassifyLine(5)` reject out-of-range ordinals.
+Use a data-driven test that writes each raw JSON and expects `InvalidDataException` for: malformed `{`; duplicate `version`; version `2`; Boolean, negative, or unsupported nonzero/non-four `border_line_count`; missing/extra top-level fields; empty `blocks`; missing/extra block fields; negative or duplicate `block_index`; Boolean, fractional, or negative `line_count`; overflowed/non-finite center; empty file; directory or reparse-point sidecar. Add separate assertions that `ValidateLineCount(6)` rejects the happy fixture total `7`, and `ClassifyLine(-1)`/`ClassifyLine(7)` reject out-of-range ordinals.
 
 Example row:
 
@@ -199,16 +199,19 @@ public void MissingCompanionLoadsWithoutInferredBlockSummary()
 public void ValidCompanionReportsDeclaredBlocksIncludingEmptyBlock()
 {
     var dxf = Path.Combine(_root, "blocked.dxf");
-    WriteDxf(dxf, (0, 0, 10, 0), (0, 1, 10, 1), (0, 2, 10, 2));
+    WriteDxf(
+        dxf,
+        (0, 0, 10, 0), (0, 1, 10, 1), (0, 2, 10, 2),
+        (0, 3, 10, 3), (0, 4, 10, 4), (0, 5, 10, 5));
     File.WriteAllText(Path.ChangeExtension(dxf, ".blocks.json"), """
-        {"version":1,"border_line_count":1,"blocks":[
+        {"version":1,"border_line_count":4,"blocks":[
           {"block_index":4,"center_x":0,"center_y":0,"line_count":1},
           {"block_index":8,"center_x":1,"center_y":1,"line_count":0},
           {"block_index":2,"center_x":2,"center_y":2,"line_count":1}]}
         """);
     using var preview = new DxfPreviewControl();
     preview.LoadFile(dxf);
-    Assert.AreEqual("blocked.dxf · 3 条 LINE · 加工块 3 个", preview.Summary);
+    Assert.AreEqual("blocked.dxf · 6 条 LINE · 加工块 3 个", preview.Summary);
 }
 ```
 

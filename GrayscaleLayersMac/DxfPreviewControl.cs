@@ -9,7 +9,7 @@ namespace GrayscaleLayersMac;
 
 public sealed class DxfPreviewControl : Control, IDisposable
 {
-    private sealed record Segment(
+    internal sealed record Segment(
         double X1,
         double Y1,
         double Z1,
@@ -626,7 +626,7 @@ public sealed class DxfPreviewControl : Control, IDisposable
         return groups;
     }
 
-    private static (
+    internal static (
         int Count,
         Rect Bounds,
         List<Segment> Segments,
