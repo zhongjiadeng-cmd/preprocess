@@ -663,6 +663,61 @@ def _make_owned_staging_directory_writable(
         raise ValueError("owned staging directory could not be made writable")
 
 
+def _remove_owned_staging_directory(
+    staging_directory: _OwnedStagingDirectory,
+) -> None:
+    """Remove the private staging directory we created after a successful publish.
+
+    The directory is only removed when the bundle was fully published: every
+    staged artifact is already hard-linked into the public directory, so
+    dropping the private directory only removes redundant links and never
+    deletes user-visible output. We keep the directory on the failure path so
+    an interrupted run can be reclaimed on the next attempt.
+
+    Removal is resolved *within* the publication-directory descriptor we opened
+    and verified, never via a full filesystem path that an adversary could swap
+    between an identity check and the removal. The staging name is a
+    high-entropy ``tempfile`` string, so it cannot be reproduced to redirect the
+    removal at a foreign directory.
+    """
+    # The directory was locked read-only (0o500) for publication. Restore owner
+    # write permission so we can unlink the staged entries it contains.
+    try:
+        _make_owned_staging_directory_writable(staging_directory)
+    except BaseException:
+        pass
+    # Drop every staged entry. The inode survives through the public hard link,
+    # so this only removes our copy's link, not the published file.
+    for staged_file in reversed(staging_directory.resources.staged_files):
+        try:
+            os.unlink(staged_file.name, dir_fd=staging_directory.descriptor)
+        except BaseException:
+            pass
+    # Final identity confirmation before removing: only remove a directory that
+    # is still the one we created (same device/inode) and is now empty.
+    try:
+        current_stat = os.stat(
+            staging_directory.path.name,
+            dir_fd=staging_directory.publication_directory_descriptor,
+            follow_symlinks=False,
+        )
+    except OSError:
+        return
+    if (
+        not stat.S_ISDIR(current_stat.st_mode)
+        or (current_stat.st_dev, current_stat.st_ino)
+        != staging_directory.identity
+    ):
+        return
+    try:
+        os.rmdir(
+            staging_directory.path.name,
+            dir_fd=staging_directory.publication_directory_descriptor,
+        )
+    except OSError:
+        pass
+
+
 def _atomic_rename_no_replace(
     source_directory_descriptor: int,
     source_name: str,
@@ -2089,6 +2144,7 @@ def export_horizontal_hatch_dxf(
     temporary_dxf: _OwnedStagedFile | None = None
     temporary_metadata: _OwnedStagedFile | None = None
     temporary_preview: _OwnedStagedFile | None = None
+    bundle_published = False
     try:
         if publish_bundle:
             staging_directory = _create_owned_staging_directory(
@@ -2219,6 +2275,7 @@ def export_horizontal_hatch_dxf(
             for published_file in resources.published_files:
                 _verify_owned_published_file(published_file, expected_mode=0o600)
             _verify_owned_publication_directory(staging_directory)
+            bundle_published = True
     except BaseException:
         if publish_bundle:
             owned_staging_directory = resources.staging_directory
@@ -2249,6 +2306,15 @@ def export_horizontal_hatch_dxf(
                     _close_published_file(published_file)
                 except BaseException:
                     pass
+            owned_staging_directory = resources.staging_directory
+            # On a successful publish the staged artifacts are already hard
+            # linked into the public directory, so the private staging directory
+            # only holds redundant links. Remove it after success so we do not
+            # leave a hidden ``.name.staging`` directory behind on every run.
+            # On the failure path we keep it so an interrupted run can be
+            # reclaimed on the next attempt.
+            if owned_staging_directory is not None and bundle_published:
+                _remove_owned_staging_directory(owned_staging_directory)
             for staged_file in reversed(resources.staged_files):
                 # POSIX has no conditional unlink-by-inode primitive. Close the
                 # retained descriptor and leave any failed staged entry in the
@@ -2258,11 +2324,7 @@ def export_horizontal_hatch_dxf(
                     os.close(staged_file.descriptor)
                 except BaseException:
                     pass
-            owned_staging_directory = resources.staging_directory
             if owned_staging_directory is not None:
-                # There is no POSIX rmdir-by-open-descriptor primitive. Keep one
-                # bounded private directory instead of risking a lstat-to-rmdir
-                # swap that removes a foreign empty directory.
                 try:
                     os.close(owned_staging_directory.descriptor)
                 except BaseException:

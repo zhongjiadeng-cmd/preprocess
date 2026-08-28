@@ -534,7 +534,7 @@ class BlockMetadataTests(unittest.TestCase):
             self.assertEqual(publication_count, 2)
             self.assert_only_bounded_private_stage_remains(root)
 
-    def test_successful_pair_is_consistent_with_one_bounded_private_stage(self) -> None:
+    def test_successful_pair_removes_the_private_stage_after_publication(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             output, metadata = self.export_blocked_pair(root)
@@ -549,18 +549,11 @@ class BlockMetadataTests(unittest.TestCase):
                 sorted(path.name for path in root.iterdir() if path.is_file()),
                 ["layer_01.blocks.json", "layer_01.dxf"],
             )
-            self.assertEqual(len([path for path in root.iterdir() if path.is_dir()]), 1)
-            staging_directory = next(path for path in root.iterdir() if path.is_dir())
-            staged_entries = sorted(staging_directory.iterdir(), key=lambda path: path.name)
             self.assertEqual(
-                [path.name for path in staged_entries],
-                ["layer_01.blocks.json", "layer_01.dxf"],
+                len([path for path in root.iterdir() if path.is_dir()]),
+                0,
+                "the private staging directory must be removed after a successful export",
             )
-            for staged, published in zip(staged_entries, (metadata, output)):
-                self.assertEqual(
-                    (os.stat(staged).st_dev, os.stat(staged).st_ino),
-                    (os.stat(published).st_dev, os.stat(published).st_ino),
-                )
 
     def test_preexisting_pair_is_preserved_without_starting_staging(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -662,23 +655,32 @@ class BlockMetadataTests(unittest.TestCase):
             self.assertGreater(generated_output.stat().st_size, 0)
             self.assertGreater(generated_metadata.stat().st_size, 0)
 
-    def test_cleanup_never_rmdirs_a_re_resolved_staging_path(self) -> None:
+    def test_cleanup_removes_staging_only_through_parent_descriptor(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            with mock.patch.object(
-                hatch.os,
-                "rmdir",
-                side_effect=AssertionError("unsafe pathname rmdir attempted"),
-            ):
+            unsafe_rmdir_calls: list[object] = []
+            real_rmdir = hatch.os.rmdir
+
+            def spy_rmdir(path: object, *, dir_fd: object = None) -> None:
+                if dir_fd is None:
+                    unsafe_rmdir_calls.append(path)
+                    raise AssertionError("unsafe pathname rmdir attempted")
+                return real_rmdir(path, dir_fd=dir_fd)
+
+            with mock.patch.object(hatch.os, "rmdir", side_effect=spy_rmdir):
                 output, metadata = self.export_blocked_pair(root)
 
             self.assertTrue(output.is_file())
             self.assertTrue(metadata.is_file())
-            staging_directories = [path for path in root.iterdir() if path.is_dir()]
-            self.assertEqual(len(staging_directories), 1)
             self.assertEqual(
-                stat.S_IMODE(os.stat(staging_directories[0]).st_mode),
-                0o700,
+                len([path for path in root.iterdir() if path.is_dir()]),
+                0,
+                "staging directory must be removed after a successful export",
+            )
+            self.assertEqual(
+                unsafe_rmdir_calls,
+                [],
+                "staging removal must resolve through a pinned descriptor, not a pathname",
             )
 
     def test_staging_directory_swap_cannot_modify_foreign_directory(self) -> None:
