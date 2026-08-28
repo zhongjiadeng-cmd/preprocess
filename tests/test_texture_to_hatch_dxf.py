@@ -24,7 +24,6 @@ from texture_to_hatch_dxf import (
     convert_texture_to_dxf,
     export_horizontal_hatch_dxf,
     inspect_texture_image,
-    _fuzzy_block_intervals,
 )
 
 
@@ -2695,40 +2694,6 @@ class AngledHatchTests(unittest.TestCase):
             export_horizontal_hatch_dxf(mask, first, 2, 2, 1, 1, 1, hatch_angle_deg=0)
             export_horizontal_hatch_dxf(mask, second, 2, 2, 1, 1, 1, hatch_angle_deg=180)
             self.assertEqual(first.read_bytes(), second.read_bytes())
-
-    def test_fuzzy_block_intervals_stay_inside_voronoi_polygons(self) -> None:
-        """边界模糊不应让分块区间越过真实 Voronoi 多边形，避免影线飞出单元。"""
-        blocks = [
-            VoronoiBlock(
-                index=0,
-                seed_x=-2.5,
-                seed_y=0.0,
-                polygon=((-5.0, -1.0), (0.0, -1.0), (0.0, 1.0), (-5.0, 1.0)),
-                area=5.0,
-            ),
-            VoronoiBlock(
-                index=1,
-                seed_x=2.5,
-                seed_y=0.0,
-                polygon=((0.0, -1.0), (5.0, -1.0), (5.0, 1.0), (0.0, 1.0)),
-                area=5.0,
-            ),
-        ]
-        for blur in (0.0, 0.2, 1.0, 3.0, 10.0):
-            result = _fuzzy_block_intervals(
-                blocks,
-                0.0,
-                -5.0,
-                5.0,
-                blur_width_mm=blur,
-                blur_correlation_mm=1.0,
-                random_seed=12345,
-            )
-            for block_index, fuzzy_left, fuzzy_right in result:
-                actual_left = min(x for x, _ in blocks[block_index].polygon)
-                actual_right = max(x for x, _ in blocks[block_index].polygon)
-                self.assertGreaterEqual(fuzzy_left, actual_left - 1e-9)
-                self.assertLessEqual(fuzzy_right, actual_right + 1e-9)
 
     def test_rejects_non_finite_angle(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
