@@ -29,8 +29,6 @@ public sealed class MainWindow : Window
 
     private const int InspectionJsonOverheadCharacters = 4 * 1024;
     private const int MaximumInspectionStandardErrorCharacters = 1024 * 1024;
-    // 工作区底部日志行的展开高度；折叠后改为自适应，只保留一行。
-    private const double LogRowHeight = 224;
     private static readonly int MaximumInspectionStandardOutputCharacters = checked(
         TextureImageInspection.GetMaximumBase64CharacterCount(
             TextureImageInspection.DefaultMaximumPreviewBytes) + InspectionJsonOverheadCharacters);
@@ -1303,13 +1301,6 @@ public sealed class MainWindow : Window
         var logSurface = logPanel.Root;
         logSurface.Margin = new Thickness(0, 0, 12, 0);
 
-        // 折叠日志面板后底部行改为自适应高度，多出来的空间全部交给预览区。
-        var logRow = new RowDefinition(new GridLength(LogRowHeight));
-        logPanel.CollapsedChanged += (_, _) =>
-            logRow.Height = logPanel.IsCollapsed
-                ? GridLength.Auto
-                : new GridLength(LogRowHeight);
-
         previewPanel.MinWidth = 420;
 
         var previewColumn = new ColumnDefinition
@@ -1334,8 +1325,7 @@ public sealed class MainWindow : Window
             previewPanel,
             logSurface,
             splitter,
-            inspectorSurface,
-            logRow);
+            inspectorSurface);
     }
 
     internal static Grid AssembleWorkspaceGrid(
@@ -1344,8 +1334,7 @@ public sealed class MainWindow : Window
         Control previewPanel,
         Control logSurface,
         GridSplitter splitter,
-        Control inspectorSurface,
-        RowDefinition? logRow = null)
+        Control inspectorSurface)
     {
         Grid.SetRow(logSurface, 1);
         Grid.SetColumn(splitter, 1);
@@ -1361,11 +1350,9 @@ public sealed class MainWindow : Window
                 new ColumnDefinition(new GridLength(8)),
                 inspectorColumn
             },
-            RowDefinitions = new RowDefinitions
-            {
-                new RowDefinition(GridLength.Star),
-                logRow ?? new RowDefinition(new GridLength(LogRowHeight))
-            },
+            // 底部日志行自适应：面板自身动画收拢高度，行高跟着走，
+            // 多出来的空间由上方 Star 行（预览区）自动吃掉。
+            RowDefinitions = new RowDefinitions("*,Auto"),
             ColumnSpacing = 0,
             RowSpacing = 12,
             Children =

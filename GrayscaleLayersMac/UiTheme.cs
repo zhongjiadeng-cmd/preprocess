@@ -127,6 +127,30 @@ internal static class UiTheme
             new SolidColorBrush(Color.FromRgb(255, 173, 166))));
         styles.Add(dangerHover);
 
+        // ---- 日志面板的抽屉把手（居中悬浮的小箭头胶囊）----
+        var handle = new Style(x => x.OfType<Button>().Class("panel-handle"));
+        handle.Setters.Add(new Setter(Button.BackgroundProperty,
+            new SolidColorBrush(Color.FromRgb(31, 36, 47))));
+        handle.Setters.Add(new Setter(Button.BorderBrushProperty, BorderMediumBrush));
+        handle.Setters.Add(new Setter(Button.ForegroundProperty, TextSecondaryBrush));
+        styles.Add(handle);
+
+        var handleHover = new Style(
+            x => x.OfType<Button>().Class("panel-handle").Class(":pointerover"));
+        handleHover.Setters.Add(new Setter(Button.BackgroundProperty,
+            new SolidColorBrush(Color.FromRgb(44, 51, 66))));
+        handleHover.Setters.Add(new Setter(Button.BorderBrushProperty,
+            new SolidColorBrush(Color.FromArgb(110, 0, 120, 212))));
+        handleHover.Setters.Add(new Setter(Button.ForegroundProperty, TextPrimaryBrush));
+        styles.Add(handleHover);
+
+        var handlePressed = new Style(
+            x => x.OfType<Button>().Class("panel-handle").Class(":pressed"));
+        handlePressed.Setters.Add(new Setter(Button.BackgroundProperty, AccentPressedBrush));
+        handlePressed.Setters.Add(new Setter(Button.BorderBrushProperty, AccentPressedBrush));
+        handlePressed.Setters.Add(new Setter(Button.ForegroundProperty, AccentTextBrush));
+        styles.Add(handlePressed);
+
         return styles;
     }
 
@@ -223,12 +247,14 @@ internal static class UiTheme
             button.Classes.Add("danger");
     }
 
-    private static void AttachButtonTransitions(Button button)
+    /// <summary>按钮状态色的过渡动画；把手等自定义按钮也复用这一套。</summary>
+    internal static void AttachButtonTransitions(Button button)
     {
         button.Transitions = new Transitions
         {
             new BrushTransition { Property = Button.BackgroundProperty, Duration = HoverDuration },
-            new BrushTransition { Property = Button.BorderBrushProperty, Duration = HoverDuration }
+            new BrushTransition { Property = Button.BorderBrushProperty, Duration = HoverDuration },
+            new BrushTransition { Property = Button.ForegroundProperty, Duration = HoverDuration }
         };
     }
 
@@ -268,6 +294,13 @@ internal static class UiTheme
         }
     };
 
+    /// <summary>
+    /// 日志面板展开时日志区的固定高度（与日志框 MinHeight 一致，整卡约 224px）。
+    /// 必须写死成具体数值（而非 Auto/NaN），这样折叠时 Height → 0
+    /// 才能走 DoubleTransition 产生连续的收拢动画。
+    /// </summary>
+    public const double LogAreaExpandedHeight = 170;
+
     /// <summary>深色控制台风格的只读日志框。</summary>
     public static TextBox CreateLogBox(double minHeight = 170) => new()
     {
@@ -285,9 +318,9 @@ internal static class UiTheme
     };
 
     /// <summary>
-    /// 日志面板卡片：标题 + 最新一条日志（折叠时） + 清空按钮 + 折叠按钮 + 控制台风格日志框。
-    /// 折叠后只显示最新一条日志；需要根据折叠状态调整行高的宿主可订阅
-    /// <see cref="LogPanelView.CollapsedChanged"/>。
+    /// 日志面板卡片：顶部居中的抽屉把手 + 标题 + 最新一条日志（折叠时） +
+    /// 清空按钮 + 控制台风格日志框。折叠后日志区高度动画收拢为 0，
+    /// 面板所在行需设为 Auto 才能跟着一起收。
     /// </summary>
     public static LogPanelView LogPanel(TextBox log, string title) => new(log, title);
 
