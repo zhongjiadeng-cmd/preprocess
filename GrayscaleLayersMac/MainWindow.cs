@@ -487,7 +487,7 @@ public sealed class MainWindow : Window
             pipelineInspector,
             pipelinePreviewPanel,
             _pipelineLogBox,
-            "流程日志",
+            "log",
             PipelineLogKey);
 
         foreach (var secondaryButton in new[]
