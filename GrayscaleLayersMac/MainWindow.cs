@@ -303,8 +303,6 @@ public sealed class MainWindow : Window
             Spacing = 18,
             Children =
             {
-                UiTheme.PageTitle("灰度分层 → Hatch DXF → 加工文件"),
-                UiTheme.PageSubtitle("先输出灰度分层 TIFF，再逐层生成 DXF，最后打包为机器加工文件。"),
                 new StackPanel
                 {
                     Orientation = Orientation.Horizontal,
