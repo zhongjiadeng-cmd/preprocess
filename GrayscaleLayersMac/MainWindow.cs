@@ -126,6 +126,19 @@ public sealed class MainWindow : Window
     private readonly TextBox _pipelineLogBox = MakeLogBox();
     private readonly DropDownButton _pipelineImportButton = new() { Content = "导入", HorizontalAlignment = HorizontalAlignment.Left };
     private readonly Button _pipelineClearButton = new() { Content = "清空缓存", HorizontalAlignment = HorizontalAlignment.Left };
+    private readonly DropDownButton _appearanceButton = new() { Content = "外观", HorizontalAlignment = HorizontalAlignment.Left };
+    private readonly TextBlock _pipelineReadinessText = new()
+    {
+        FontSize = 12,
+        TextWrapping = TextWrapping.Wrap,
+        Foreground = UiTheme.TextSecondaryBrush
+    };
+    private readonly TextBlock _pipelineActionStateText = new()
+    {
+        FontSize = 11.5,
+        TextWrapping = TextWrapping.Wrap,
+        Foreground = UiTheme.TextSecondaryBrush
+    };
     private Flyout? _pipelineImportFlyout;
     private readonly SplitButton _pipelineRunSplitButton = new()
     {
@@ -265,6 +278,7 @@ public sealed class MainWindow : Window
             }
         };
         _pipelineImportButton.Flyout = _pipelineImportFlyout;
+        ConfigureAppearanceMenu();
         ToolTip.SetTip(
             _pipelineClearButton,
             "清空所有已导入或生成的 TIFF 与 DXF 预览缓存；不会删除磁盘上的文件。");
@@ -307,6 +321,11 @@ public sealed class MainWindow : Window
         _pipelineBlocksBox.ValueChanged += (_, _) => UpdateBlockCenterMotionAvailability();
         UpdateBlockCenterMotionAvailability();
 
+        _pipelineInputBox.TextChanged += (_, _) => UpdatePipelineReadiness();
+        _pipelineLayerOutputBox.TextChanged += (_, _) => UpdatePipelineReadiness();
+        _pipelineDxfOutputBox.TextChanged += (_, _) => UpdatePipelineReadiness();
+        UpdatePipelineReadiness();
+
         var pipelineInspector = new StackPanel
         {
             Spacing = 18,
@@ -316,7 +335,16 @@ public sealed class MainWindow : Window
                 {
                     Orientation = Orientation.Horizontal,
                     Spacing = 10,
-                    Children = { _pipelineImportButton, _pipelineClearButton }
+                    Children = { _pipelineImportButton, _pipelineClearButton, _appearanceButton }
+                },
+                new Border
+                {
+                    Padding = new Thickness(12, 10),
+                    CornerRadius = UiTheme.ControlRadius,
+                    Background = UiTheme.SunkenBrush,
+                    BorderBrush = UiTheme.BorderSubtleBrush,
+                    BorderThickness = new Thickness(1),
+                    Child = _pipelineReadinessText
                 },
                 MakeInspectorSection(
                     "灰度分层",
@@ -385,7 +413,7 @@ public sealed class MainWindow : Window
                         }
                     },
                     _pipelineBlockCenterMotionBox,
-                    new Expander
+                    UiTheme.StyleExpander(new Expander
                     {
                         Header = new TextBlock
                         {
@@ -463,16 +491,24 @@ public sealed class MainWindow : Window
                                 }
                             }
                         }
-                    }),
+                    })),
                 _pipelineProgress,
-                new Grid
+                new StackPanel
                 {
-                    ColumnDefinitions = new ColumnDefinitions("*,Auto,Auto"),
-                    ColumnSpacing = 10,
+                    Spacing = 8,
                     Children =
                     {
-                        Place(_pipelineRunSplitButton, 0),
-                        Place(_pipelineOpenButton, 1)
+                        _pipelineActionStateText,
+                        new Grid
+                        {
+                            ColumnDefinitions = new ColumnDefinitions("*,Auto,Auto"),
+                            ColumnSpacing = 10,
+                            Children =
+                            {
+                                Place(_pipelineRunSplitButton, 0),
+                                Place(_pipelineOpenButton, 1)
+                            }
+                        }
                     }
                 }
             }
@@ -495,7 +531,7 @@ public sealed class MainWindow : Window
             pipelineInputButton, pipelineLayerOutputButton, pipelineDxfOutputButton,
             pipelineCancelButton,
             _pipelineOpenButton,
-            _pipelineImportButton, _pipelineClearButton
+            _pipelineImportButton, _pipelineClearButton, _appearanceButton
         })
             UiTheme.ApplyGhostStyle(secondaryButton);
         UiTheme.MarkDanger(pipelineCancelButton);
@@ -505,16 +541,7 @@ public sealed class MainWindow : Window
             Padding = new Thickness(20, 8),
             BorderBrush = UiTheme.BorderSubtleBrush,
             BorderThickness = new Thickness(0, 0, 0, 1),
-            Background = new LinearGradientBrush
-            {
-                StartPoint = new RelativePoint(0, 0, RelativeUnit.Relative),
-                EndPoint = new RelativePoint(0, 1, RelativeUnit.Relative),
-                GradientStops =
-                {
-                    new GradientStop(Color.FromRgb(18, 22, 30), 0),
-                    new GradientStop(Color.FromRgb(13, 16, 21), 1)
-                }
-            },
+            Background = UiTheme.HeaderBrush,
             Child = new Grid
             {
                 ColumnDefinitions = new ColumnDefinitions("Auto,*,Auto"),
@@ -579,6 +606,72 @@ public sealed class MainWindow : Window
                 }, 1)
             }
         };
+    }
+
+    private void ConfigureAppearanceMenu()
+    {
+        if (Application.Current is not App app)
+        {
+            _appearanceButton.IsEnabled = false;
+            return;
+        }
+
+        var system = new RadioButton { Content = "跟随系统", GroupName = "appearance" };
+        var light = new RadioButton { Content = "浅色", GroupName = "appearance" };
+        var dark = new RadioButton { Content = "深色", GroupName = "appearance" };
+
+        void RefreshSelection()
+        {
+            system.IsChecked = app.Appearance == AppAppearance.System;
+            light.IsChecked = app.Appearance == AppAppearance.Light;
+            dark.IsChecked = app.Appearance == AppAppearance.Dark;
+            _appearanceButton.Content = app.Appearance switch
+            {
+                AppAppearance.Light => "外观 · 浅色",
+                AppAppearance.Dark => "外观 · 深色",
+                _ => "外观 · 系统"
+            };
+        }
+
+        system.Click += (_, _) => app.SetAppearance(AppAppearance.System);
+        light.Click += (_, _) => app.SetAppearance(AppAppearance.Light);
+        dark.Click += (_, _) => app.SetAppearance(AppAppearance.Dark);
+        app.AppearanceChanged += (_, _) => RefreshSelection();
+
+        _appearanceButton.Flyout = new Flyout
+        {
+            Placement = PlacementMode.BottomEdgeAlignedLeft,
+            Content = new Border
+            {
+                Padding = new Thickness(10, 8),
+                Child = new StackPanel
+                {
+                    Spacing = 8,
+                    Children = { system, light, dark }
+                }
+            }
+        };
+        ToolTip.SetTip(_appearanceButton, "默认跟随 macOS 外观，也可以在此手动覆盖。");
+        RefreshSelection();
+    }
+
+    private void UpdatePipelineReadiness()
+    {
+        var ready = _cancellation is null &&
+            !string.IsNullOrWhiteSpace(_pipelineInputBox.Text) &&
+            !string.IsNullOrWhiteSpace(_pipelineLayerOutputBox.Text) &&
+            !string.IsNullOrWhiteSpace(_pipelineDxfOutputBox.Text);
+        var message = PipelineReadiness.Describe(
+            _cancellation is not null,
+            _pipelineInputBox.Text,
+            _pipelineLayerOutputBox.Text,
+            _pipelineDxfOutputBox.Text);
+
+        _pipelineReadinessText.Text = message;
+        _pipelineActionStateText.Text = message;
+        var foreground = ready ? UiTheme.TextPrimaryBrush : UiTheme.TextSecondaryBrush;
+        _pipelineReadinessText.Foreground = foreground;
+        _pipelineActionStateText.Foreground = foreground;
     }
 
     private static NumericUpDown MakeNumberBox(
@@ -687,6 +780,8 @@ public sealed class MainWindow : Window
         _pipelineDxfHost = dxfHost;
         var textureTab = new ToggleButton { Content = "纹理" };
         var dxfTab = new ToggleButton { Content = "DXF" };
+        textureTab.Classes.Add("preview-tab");
+        dxfTab.Classes.Add("preview-tab");
         var sharedView = new SharedPreviewView(
             textureTab,
             dxfTab,
@@ -1627,6 +1722,7 @@ public sealed class MainWindow : Window
         }
 
         _cancellation = new CancellationTokenSource();
+        UpdatePipelineReadiness();
         var pipelineBlocksBoxWasEnabled = _pipelineBlocksBox.IsEnabled;
         _pipelineRunSplitButton.IsEnabled = false;
         _pipelineImportButton.IsEnabled = false;
@@ -1949,6 +2045,7 @@ public sealed class MainWindow : Window
             _pipelineBlocksBox.IsEnabled = pipelineBlocksBoxWasEnabled;
             UpdateBlockCenterMotionAvailability();
             _pipelineProgress.IsIndeterminate = false;
+            UpdatePipelineReadiness();
         }
     }
 

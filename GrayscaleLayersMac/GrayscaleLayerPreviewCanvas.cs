@@ -416,7 +416,7 @@ public sealed class GrayscaleLayerPreviewCanvas : Control, IDisposable
             return;
         }
 
-        var pen = new Pen(new SolidColorBrush(Color.FromArgb(28, 255, 255, 255)), 1);
+        var pen = new Pen(UiTheme.BorderSubtleBrush, 1);
         for (var x = origin.X; x <= origin.X + content.Width + 0.5; x += step)
         {
             if (x < viewport.Left || x > viewport.Right)

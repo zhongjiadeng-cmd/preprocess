@@ -9,6 +9,42 @@ namespace GrayscaleLayersMac.Tests;
 public sealed class WorkspaceSplitSettingsTests
 {
     [TestMethod]
+    public void LoadAppearance_MissingFileFollowsSystem() => WithSettings(settings =>
+        Assert.AreEqual(AppAppearance.System, settings.LoadAppearance()));
+
+    [TestMethod]
+    public void SaveAndLoadAppearance_RoundTrips() => WithSettings(settings =>
+    {
+        Assert.IsTrue(settings.TrySaveAppearance(AppAppearance.Light));
+        Assert.AreEqual(AppAppearance.Light, settings.LoadAppearance());
+
+        Assert.IsTrue(settings.TrySaveAppearance(AppAppearance.Dark));
+        Assert.AreEqual(AppAppearance.Dark, settings.LoadAppearance());
+    });
+
+    [TestMethod]
+    public void LoadAppearance_InvalidValueFollowsSystem() => WithSettings((settings, path) =>
+    {
+        File.WriteAllText(path,
+            "{\"Version\":1,\"PreviewRatio\":0.58,\"Appearance\":\"sepia\"}");
+
+        Assert.AreEqual(AppAppearance.System, settings.LoadAppearance());
+    });
+
+    [TestMethod]
+    public void SaveAppearance_PreservesOtherSettings() => WithSettings((settings, path) =>
+    {
+        Assert.IsTrue(settings.TrySavePreviewRatio(0.64));
+        Assert.IsTrue(settings.TrySaveLogCollapsed("pipeline", true));
+        Assert.IsTrue(settings.TrySaveAppearance(AppAppearance.Light));
+
+        var reloaded = new WorkspaceSplitSettings(path);
+        Assert.AreEqual(0.64, reloaded.LoadPreviewRatio(), 1e-9);
+        Assert.IsTrue(reloaded.LoadLogCollapsed("pipeline"));
+        Assert.AreEqual(AppAppearance.Light, reloaded.LoadAppearance());
+    });
+
+    [TestMethod]
     public void LoadPreviewRatio_MissingFileUsesDefault()
     {
         WithSettings(settings =>

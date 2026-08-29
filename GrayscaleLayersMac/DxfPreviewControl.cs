@@ -387,9 +387,7 @@ public sealed class DxfPreviewControl : Control, IDisposable
     public override void Render(DrawingContext context)
     {
         base.Render(context);
-        context.FillRectangle(
-            new SolidColorBrush(Color.FromRgb(7, 9, 13)),
-            new Rect(Bounds.Size));
+        context.FillRectangle(UiTheme.SunkenBrush, new Rect(Bounds.Size));
         if (_segments.Count == 0 && _textureBitmap is null)
         {
             var text = new FormattedText(
@@ -398,7 +396,7 @@ public sealed class DxfPreviewControl : Control, IDisposable
                 FlowDirection.LeftToRight,
                 Typeface.Default,
                 14,
-                new SolidColorBrush(Color.FromRgb(150, 156, 166)));
+                UiTheme.TextSecondaryBrush);
             context.DrawText(text, Bounds.Center - new Vector(text.Width / 2, text.Height / 2));
             return;
         }
@@ -467,7 +465,7 @@ public sealed class DxfPreviewControl : Control, IDisposable
                 blockIndex => new Pen(
                     new SolidColorBrush(LayerColors[blockIndex % LayerColors.Length]),
                     0.9));
-        var borderPen = new Pen(new SolidColorBrush(Color.FromRgb(170, 176, 186)), 1.2);
+        var borderPen = new Pen(UiTheme.TextSecondaryBrush, 1.2);
         var arrowPen = new Pen(new SolidColorBrush(Color.FromRgb(255, 196, 92)), 1);
         var lastRenderedScreenY = new Dictionary<int, double>();
         const double minimumRowSpacingPixels = 1.15;
@@ -694,7 +692,7 @@ public sealed class DxfPreviewControl : Control, IDisposable
         DrawingContext context,
         PlanarOverlayProjection projection)
     {
-        var pen = new Pen(new SolidColorBrush(Color.FromArgb(32, 255, 255, 255)), 1);
+        var pen = new Pen(UiTheme.BorderSubtleBrush, 1);
         var viewport = new Rect(Bounds.Size);
         const int divisions = 10;
         for (var index = 0; index <= divisions; index++)

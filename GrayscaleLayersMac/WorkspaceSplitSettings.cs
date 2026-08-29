@@ -32,6 +32,13 @@ internal sealed class WorkspaceSplitSettings
 
     public double LoadPreviewRatio() => LoadDocument().PreviewRatio;
 
+    /// <summary>读取外观偏好；缺失或无效值默认跟随系统。</summary>
+    public AppAppearance LoadAppearance() => LoadDocument().Appearance;
+
+    /// <summary>保存外观偏好，其余工作区设置保持不变。</summary>
+    public bool TrySaveAppearance(AppAppearance appearance) =>
+        TrySaveDocument(LoadDocument() with { Appearance = appearance });
+
     public bool TrySavePreviewRatio(double ratio)
     {
         if (!IsValidPreviewRatio(ratio))
@@ -88,7 +95,8 @@ internal sealed class WorkspaceSplitSettings
             DefaultPreviewRatio,
             new Dictionary<string, bool>(StringComparer.Ordinal),
             ThumbnailCollapsed: false,
-            DxfLayerCollapsed: false);
+            DxfLayerCollapsed: false,
+            Appearance: AppAppearance.System);
 
     private Settings LoadDocument()
     {
@@ -114,13 +122,20 @@ internal sealed class WorkspaceSplitSettings
                     ? new Dictionary<string, bool>(StringComparer.Ordinal)
                     : new Dictionary<string, bool>(document.LogCollapsed, StringComparer.Ordinal),
                 document.ThumbnailCollapsed ?? false,
-                document.DxfLayerCollapsed ?? false);
+                document.DxfLayerCollapsed ?? false,
+                ParseAppearance(document.Appearance));
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException or JsonException)
         {
             return DefaultDocument();
         }
     }
+
+    private static AppAppearance ParseAppearance(string? value) =>
+        Enum.TryParse<AppAppearance>(value, ignoreCase: true, out var appearance) &&
+        Enum.IsDefined(appearance)
+            ? appearance
+            : AppAppearance.System;
 
     private bool TrySaveDocument(Settings document)
     {
@@ -136,7 +151,13 @@ internal sealed class WorkspaceSplitSettings
                 directory,
                 $".{Path.GetFileName(_path)}.{Guid.NewGuid():N}.tmp");
             var json = JsonSerializer.Serialize(
-                document,
+                new SettingsDocument(
+                    document.Version,
+                    document.PreviewRatio,
+                    document.LogCollapsed,
+                    document.ThumbnailCollapsed,
+                    document.DxfLayerCollapsed,
+                    document.Appearance.ToString()),
                 new JsonSerializerOptions { WriteIndented = true });
             File.WriteAllText(temporaryPath, json);
             File.Move(temporaryPath, _path, overwrite: true);
@@ -168,7 +189,8 @@ internal sealed class WorkspaceSplitSettings
         double PreviewRatio,
         Dictionary<string, bool> LogCollapsed,
         bool ThumbnailCollapsed,
-        bool DxfLayerCollapsed);
+        bool DxfLayerCollapsed,
+        AppAppearance Appearance);
 
     /// <summary>
     /// 磁盘上的 JSON 形状。LogCollapsed / ThumbnailCollapsed / DxfLayerCollapsed 可空，兼容老版本文件。
@@ -178,5 +200,6 @@ internal sealed class WorkspaceSplitSettings
         double PreviewRatio,
         Dictionary<string, bool>? LogCollapsed,
         bool? ThumbnailCollapsed,
-        bool? DxfLayerCollapsed);
+        bool? DxfLayerCollapsed,
+        string? Appearance);
 }
