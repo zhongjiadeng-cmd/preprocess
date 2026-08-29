@@ -451,7 +451,6 @@ public sealed class MainWindow : Window
         var pipelineLayerOutputButton = new Button { Content = "选择目录…" };
         var pipelineDxfOutputButton = new Button { Content = "选择目录…" };
         var pipelineCancelButton = new Button { Content = "取消", IsEnabled = false };
-        var pipelineImportDxfButton = new Button { Content = "导入 DXF…" };
         pipelineInputButton.Click += async (_, _) => await PickPipelineInputAsync();
         pipelineLayerOutputButton.Click += async (_, _) =>
             await PickPipelineFolderAsync(_pipelineLayerOutputBox, "选择分层 TIFF 保存目录");
@@ -470,7 +469,10 @@ public sealed class MainWindow : Window
                         ImportPipelineLayerFolderAsync),
                     CreatePipelineImportMenuButton(
                         "导入 DXF 文件夹",
-                        ImportPipelineDxfFolderAsync)
+                        ImportPipelineDxfFolderAsync),
+                    CreatePipelineImportMenuButton(
+                        "导入单个 DXF 文件…",
+                        ImportPipelineDxfFileAsync)
                 }
             }
         };
@@ -510,12 +512,6 @@ public sealed class MainWindow : Window
         _pipelineRunSplitButton.Flyout = singleStepFlyout;
         pipelineCancelButton.Click += (_, _) => _cancellation?.Cancel();
         _pipelineOpenButton.Click += (_, _) => OpenDirectory(_lastMachineOutputPath);
-        pipelineImportDxfButton.Click += async (_, _) =>
-            await ImportDxfPreviewAsync(
-                _pipelineDxfPreview,
-                _pipelineDxfPreviewStatus,
-                addToPipelineSelector: true,
-                _pipelineSharedPreview!);
         _pipelineBlocksBox.ValueChanged += (_, _) => UpdateBlockCenterMotionAvailability();
         UpdateBlockCenterMotionAvailability();
 
@@ -690,7 +686,7 @@ public sealed class MainWindow : Window
             _pipelineTextureSurface,
             _pipelineDxfPreview,
             _pipelineDxfPreviewStatus,
-            pipelineImportDxfButton,
+            importButton: null,
             _pipelineDxfSelector,
             enableLayerOverlay: true,
             out _pipelineSharedPreview);
@@ -921,7 +917,7 @@ public sealed class MainWindow : Window
         GrayscaleLayerPreviewControl texture,
         DxfPreviewControl dxfPreview,
         TextBlock dxfStatus,
-        Button importButton,
+        Button? importButton,
         ComboBox? fileSelector,
         bool enableLayerOverlay,
         out SharedPreviewView view)
@@ -1012,7 +1008,7 @@ public sealed class MainWindow : Window
     private static Control MakeDxfPreviewContent(
         DxfPreviewControl preview,
         TextBlock status,
-        Button importButton,
+        Button? importButton,
         ComboBox? fileSelector)
     {
         var fitButton = new Button { Content = "适应窗口" };
@@ -1021,7 +1017,8 @@ public sealed class MainWindow : Window
         topButton.Click += (_, _) => preview.SetTopView();
         var isometricButton = new Button { Content = "等轴测" };
         isometricButton.Click += (_, _) => preview.SetIsometricView();
-        UiTheme.ApplyGhostStyle(importButton, small: true);
+        if (importButton is not null)
+            UiTheme.ApplyGhostStyle(importButton, small: true);
         UiTheme.ApplyGhostStyle(topButton, small: true);
         UiTheme.ApplyGhostStyle(isometricButton, small: true);
         UiTheme.ApplyGhostStyle(fitButton, small: true);
@@ -1036,24 +1033,30 @@ public sealed class MainWindow : Window
         arrowCheckBox.IsCheckedChanged += (_, _) =>
             preview.ShowDirectionArrows = arrowCheckBox.IsChecked == true;
         status.Text = preview.Summary;
+        var topGrid = new Grid { ColumnSpacing = 10 };
+        if (importButton is null)
+        {
+            topGrid.ColumnDefinitions = new ColumnDefinitions("Auto,Auto,Auto");
+            topGrid.Children.Add(Place(topButton, 0));
+            topGrid.Children.Add(Place(isometricButton, 1));
+            topGrid.Children.Add(Place(fitButton, 2));
+        }
+        else
+        {
+            topGrid.ColumnDefinitions = new ColumnDefinitions("*,Auto,Auto,Auto");
+            topGrid.Children.Add(Place(importButton, 0));
+            topGrid.Children.Add(Place(topButton, 1));
+            topGrid.Children.Add(Place(isometricButton, 2));
+            topGrid.Children.Add(Place(fitButton, 3));
+        }
+
         return new Grid
         {
             RowDefinitions = new RowDefinitions("Auto,Auto,*,Auto"),
             RowSpacing = 10,
             Children =
             {
-                AtRow(new Grid
-                {
-                    ColumnDefinitions = new ColumnDefinitions("*,Auto,Auto,Auto"),
-                    ColumnSpacing = 10,
-                    Children =
-                    {
-                        Place(importButton, 0),
-                        Place(topButton, 1),
-                        Place(isometricButton, 2),
-                        Place(fitButton, 3)
-                    }
-                }, 0),
+                AtRow(topGrid, 0),
                 AtRow(new Grid
                 {
                     ColumnDefinitions = new ColumnDefinitions("*,Auto"),
@@ -1094,7 +1097,7 @@ public sealed class MainWindow : Window
     private static Control MakePipelineDxfPreviewContent(
         DxfPreviewControl preview,
         TextBlock status,
-        Button importButton,
+        Button? importButton,
         ComboBox? fileSelector,
         out Action updateOverlayControlAvailability)
     {
@@ -1201,24 +1204,30 @@ public sealed class MainWindow : Window
         status.Text = preview.Summary;
         updateOverlayControlAvailability = UpdateOverlayControlAvailability;
         UpdateOverlayControlAvailability();
+        var topGrid = new Grid { ColumnSpacing = 10 };
+        if (importButton is null)
+        {
+            topGrid.ColumnDefinitions = new ColumnDefinitions("Auto,Auto,Auto");
+            topGrid.Children.Add(Place(topButton, 0));
+            topGrid.Children.Add(Place(isometricButton, 1));
+            topGrid.Children.Add(Place(fitButton, 2));
+        }
+        else
+        {
+            topGrid.ColumnDefinitions = new ColumnDefinitions("*,Auto,Auto,Auto");
+            topGrid.Children.Add(Place(importButton, 0));
+            topGrid.Children.Add(Place(topButton, 1));
+            topGrid.Children.Add(Place(isometricButton, 2));
+            topGrid.Children.Add(Place(fitButton, 3));
+        }
+
         return new Grid
         {
             RowDefinitions = new RowDefinitions("Auto,Auto,Auto,*,Auto"),
             RowSpacing = 10,
             Children =
             {
-                AtRow(new Grid
-                {
-                    ColumnDefinitions = new ColumnDefinitions("*,Auto,Auto,Auto"),
-                    ColumnSpacing = 10,
-                    Children =
-                    {
-                        Place(importButton, 0),
-                        Place(topButton, 1),
-                        Place(isometricButton, 2),
-                        Place(fitButton, 3)
-                    }
-                }, 0),
+                AtRow(topGrid, 0),
                 AtRow(new Grid
                 {
                     ColumnDefinitions = new ColumnDefinitions("*"),
@@ -1696,6 +1705,40 @@ public sealed class MainWindow : Window
         {
             await ShowMessageAsync($"无法导入 DXF 文件夹：\n{error.Message}");
         }
+    }
+
+    private async Task ImportPipelineDxfFileAsync()
+    {
+        var files = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
+        {
+            Title = "导入单个 DXF 文件",
+            AllowMultiple = false,
+            FileTypeFilter =
+            [
+                new FilePickerFileType("DXF 文件") { Patterns = ["*.dxf"] }
+            ]
+        });
+        var path = files.FirstOrDefault()?.TryGetLocalPath();
+        if (string.IsNullOrWhiteSpace(path))
+            return;
+
+        try
+        {
+            using var validator = new DxfPreviewControl();
+            validator.LoadFile(path);
+            if (validator.LineCount == 0)
+                throw new InvalidDataException("DXF 中没有 LINE 实体。");
+        }
+        catch (Exception error)
+        {
+            await ShowMessageAsync($"无法读取 DXF：\n{error.Message}");
+            return;
+        }
+
+        var item = DxfLayerPreviewItem.Imported(path);
+        _pipelineDxfFiles.Add(item);
+        _pipelineDxfSelector.SelectedItem = item;
+        AppendPipelineLog($"已导入单个 DXF：{path}");
     }
 
     private async Task PickPipelineFolderAsync(TextBox target, string title)
