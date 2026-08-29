@@ -89,6 +89,62 @@ public sealed class PipelineArtifactDiscoveryTests
         StringAssert.Contains(error.Message, "layer_01.dxf");
     }
 
+    [TestMethod]
+    public void QuietScanReturnsEmptyInsteadOfThrowing()
+    {
+        using var directory = new TemporaryDirectory();
+        var missing = directory.File("missing");
+
+        // 静默扫描供"按类型自动路由"使用：目录不存在或没有匹配都不该中断导入。
+        CollectionAssert.AreEqual(
+            Array.Empty<string>(),
+            PipelineArtifactDiscovery.FindLayerTiffsOrEmpty(missing));
+        CollectionAssert.AreEqual(
+            Array.Empty<string>(),
+            PipelineArtifactDiscovery.FindDxfFilesOrEmpty(missing));
+        CollectionAssert.AreEqual(
+            Array.Empty<string>(),
+            PipelineArtifactDiscovery.FindLayerTiffsOrEmpty(directory.Path));
+        CollectionAssert.AreEqual(
+            Array.Empty<string>(),
+            PipelineArtifactDiscovery.FindDxfFilesOrEmpty(directory.Path));
+    }
+
+    [TestMethod]
+    public void QuietScanRoutesTiffsAndDxfsFromTheSameFolder()
+    {
+        using var directory = new TemporaryDirectory();
+        File.WriteAllBytes(directory.File("layer_01_gray.tiff"), [1]);
+        File.WriteAllBytes(directory.File("layer_02_gray.tiff"), [2]);
+        File.WriteAllBytes(directory.File("part_01.dxf"), [3]);
+        File.WriteAllBytes(directory.File("notes.txt"), [4]);
+
+        CollectionAssert.AreEqual(
+            new[]
+            {
+                directory.File("layer_01_gray.tiff"),
+                directory.File("layer_02_gray.tiff")
+            },
+            PipelineArtifactDiscovery.FindLayerTiffsOrEmpty(directory.Path));
+        CollectionAssert.AreEqual(
+            new[] { directory.File("part_01.dxf") },
+            PipelineArtifactDiscovery.FindDxfFilesOrEmpty(directory.Path));
+    }
+
+    [TestMethod]
+    public void TypePredicatesClassifyByFileNameAndExtension()
+    {
+        Assert.IsTrue(PipelineArtifactDiscovery.IsLayerTiff("/tmp/layer_01_gray.tiff"));
+        Assert.IsTrue(PipelineArtifactDiscovery.IsLayerTiff("/tmp/LAYER_02.TIFF"));
+        Assert.IsFalse(PipelineArtifactDiscovery.IsLayerTiff("/tmp/preview.tiff"));
+        Assert.IsFalse(PipelineArtifactDiscovery.IsLayerTiff("/tmp/layer_01_gray.tif"));
+        Assert.IsFalse(PipelineArtifactDiscovery.IsLayerTiff("/tmp/layer_01.dxf"));
+
+        Assert.IsTrue(PipelineArtifactDiscovery.IsDxf("/tmp/part_01.dxf"));
+        Assert.IsTrue(PipelineArtifactDiscovery.IsDxf("/tmp/part_01.DXF"));
+        Assert.IsFalse(PipelineArtifactDiscovery.IsDxf("/tmp/part_01.tiff"));
+    }
+
     private sealed class TemporaryDirectory : IDisposable
     {
         public string Path { get; } = System.IO.Path.Combine(

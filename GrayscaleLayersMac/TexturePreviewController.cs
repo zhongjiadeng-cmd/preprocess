@@ -298,6 +298,34 @@ public sealed class TexturePreviewController : IDisposable
         ownedPreview?.Dispose();
     }
 
+    /// <summary>
+    /// 回到"未导入任何纹理"的初始状态，控制器之后仍可继续使用。
+    /// 与 <see cref="Close"/> 的区别：Close 是窗口关闭时的终态，之后 BeginImport 会抛
+    /// ObjectDisposedException；Reset 只丢弃当前预览与图片信息，用于"清空缓存"这类
+    /// 清完还要继续操作的场景。
+    /// </summary>
+    public void Reset()
+    {
+        CancellationTokenSource? activeCancellation;
+        IDisposable? ownedPreview;
+
+        lock (_sync)
+        {
+            if (_isClosed)
+                return;
+
+            activeCancellation = CompleteActiveOperation();
+            _displayPreview(null);
+            ownedPreview = _ownedPreview;
+            _ownedPreview = null;
+            _currentInfo = null;
+            _state = TexturePreviewState.Empty;
+        }
+
+        CancelAndDispose(activeCancellation);
+        ownedPreview?.Dispose();
+    }
+
     public void Dispose() => Close();
 
     private bool IsCurrent(TexturePreviewOperation operation) =>

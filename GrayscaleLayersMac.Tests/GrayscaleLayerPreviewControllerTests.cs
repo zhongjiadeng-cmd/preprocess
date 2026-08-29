@@ -84,6 +84,66 @@ public sealed class GrayscaleLayerPreviewControllerTests
     }
 
     [TestMethod]
+    public void RefreshFilesUsesTheGivenOrderAndDoesNotRequireTheLayerNaming()
+    {
+        var directory = CreateDirectory();
+        try
+        {
+            var first = Path.Combine(directory, "part_a.tiff");
+            var second = Path.Combine(directory, "part_b.tiff");
+            File.WriteAllBytes(first, [1]);
+            File.WriteAllBytes(second, [1]);
+            File.WriteAllBytes(Path.Combine(directory, "ignored.tiff"), [1]);
+
+            using var controller = new GrayscaleLayerPreviewController();
+            controller.SetSource(GrayscaleLayerPreviewItem.ForSourceTexture(null));
+
+            // 手动选中的分层 TIFF 不必叫 layer_*.tiff；排序结果即层序，
+            // 没有列进来的同目录文件不受影响。
+            var items = controller.RefreshFiles([second, first]);
+
+            Assert.AreEqual(3, items.Count);
+            Assert.IsTrue(items[0].IsSourceTexture);
+            Assert.AreEqual("part_a.tiff", Path.GetFileName(items[1].FilePath));
+            Assert.AreEqual("part_b.tiff", Path.GetFileName(items[2].FilePath));
+            Assert.AreEqual(1, items[1].Index);
+            Assert.AreEqual(2, items[2].Index);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [TestMethod]
+    public void RefreshFilesReplacesPreviousLayersAndSkipsMissingFiles()
+    {
+        var directory = CreateDirectory();
+        try
+        {
+            var dropped = Path.Combine(directory, "layer_01_gray.tiff");
+            var kept = Path.Combine(directory, "layer_02_gray.tiff");
+            File.WriteAllBytes(dropped, [1]);
+            File.WriteAllBytes(kept, [1]);
+
+            using var controller = new GrayscaleLayerPreviewController();
+            controller.Refresh(directory);
+            Assert.AreEqual(3, controller.Items.Count);
+
+            // 与文件夹导入同一套语义：整体替换，且不存在的文件直接跳过。
+            controller.RefreshFiles([kept, Path.Combine(directory, "gone.tiff")]);
+
+            Assert.AreEqual(2, controller.Items.Count);
+            Assert.AreEqual("layer_02_gray.tiff", Path.GetFileName(controller.Items[1].FilePath));
+            Assert.AreEqual(1, controller.Items[1].Index);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [TestMethod]
     public void SettingSourceFocusesSlotZeroWhenUserHasNotPickedALayer()
     {
         using var controller = new GrayscaleLayerPreviewController();

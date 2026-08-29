@@ -336,36 +336,74 @@ public sealed class GrayscaleLayerPreviewControl : Grid, IDisposable
         var items = _controller.Refresh(directory);
         try
         {
-            foreach (var item in items)
-            {
-                if (item.IsSourceTexture)
-                    continue;   // 第 0 层的预览已经在内存里，不用再去读文件
-
-                try
-                {
-                    var inspection = await _loadPreview(item.FilePath, cancellationToken);
-                    cancellationToken.ThrowIfCancellationRequested();
-                    using var stream = new MemoryStream(inspection.PreviewPng, writable: false);
-                    var thumbnail = Bitmap.DecodeToWidth(stream, 120, BitmapInterpolationMode.MediumQuality);
-                    item.SetPreview(
-                        inspection.PreviewPng,
-                        inspection.Info.PixelWidth,
-                        inspection.Info.PixelHeight,
-                        thumbnail);
-                }
-                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-                {
-                    throw;
-                }
-                catch (Exception error)
-                {
-                    item.SetError(error.Message);
-                }
-            }
+            await LoadItemPreviewsAsync(items, cancellationToken);
         }
         finally
         {
             SyncItems();
+        }
+    }
+
+    /// <summary>
+    /// 直接按给定的 TIFF 文件列表重建第 1..N 层，第 0 层（源纹理）保持不变。
+    /// 用于"导入时按文件类型路由"：手动选中的分层 TIFF 不必都叫 layer_*.tiff。
+    /// </summary>
+    public async Task LoadLayerFilesAsync(
+        IReadOnlyList<string> files,
+        CancellationToken cancellationToken)
+    {
+        if (!_supportsLayers || _loadPreview is null)
+            return;
+
+        var items = _controller.RefreshFiles(files);
+        try
+        {
+            await LoadItemPreviewsAsync(items, cancellationToken);
+        }
+        finally
+        {
+            SyncItems();
+        }
+    }
+
+    /// <summary>
+    /// 清空源纹理与所有分层预览（只清内存中的缓存，不触碰磁盘文件）。
+    /// </summary>
+    public void ClearAll()
+    {
+        _controller.Clear();
+        SyncItems();
+    }
+
+    private async Task LoadItemPreviewsAsync(
+        IReadOnlyList<GrayscaleLayerPreviewItem> items,
+        CancellationToken cancellationToken)
+    {
+        foreach (var item in items)
+        {
+            if (item.IsSourceTexture)
+                continue;   // 第 0 层的预览已经在内存里，不用再去读文件
+
+            try
+            {
+                var inspection = await _loadPreview!(item.FilePath, cancellationToken);
+                cancellationToken.ThrowIfCancellationRequested();
+                using var stream = new MemoryStream(inspection.PreviewPng, writable: false);
+                var thumbnail = Bitmap.DecodeToWidth(stream, 120, BitmapInterpolationMode.MediumQuality);
+                item.SetPreview(
+                    inspection.PreviewPng,
+                    inspection.Info.PixelWidth,
+                    inspection.Info.PixelHeight,
+                    thumbnail);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception error)
+            {
+                item.SetError(error.Message);
+            }
         }
     }
 

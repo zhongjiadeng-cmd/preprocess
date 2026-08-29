@@ -62,24 +62,40 @@ public sealed class GrayscaleLayerPreviewController : IDisposable
 
     public IReadOnlyList<GrayscaleLayerPreviewItem> Refresh(string directory)
     {
-        ClearLayers();
-        Error = null;
-        if (Directory.Exists(directory))
+        string[] paths;
+        try
         {
-            try
-            {
-                var paths = Directory.EnumerateFiles(directory, "layer_*.tiff")
+            paths = Directory.Exists(directory)
+                ? Directory.EnumerateFiles(directory, "layer_*.tiff")
                     .Where(IsRegularNonEmptyFile)
                     .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
-                    .ToArray();
-                for (var index = 0; index < paths.Length; index++)
-                    _layers.Add(new GrayscaleLayerPreviewItem(paths[index], index + LayerIndexOffset));
-            }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
-            {
-                Error = ex.Message;
-                return RebuildAndSelect();
-            }
+                    .ToArray()
+                : [];
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
+        {
+            ClearLayers();
+            Error = ex.Message;
+            return RebuildAndSelect();
+        }
+
+        return RefreshFiles(paths);
+    }
+
+    /// <summary>
+    /// 直接按给定的文件列表重建分层序列，第 0 层源纹理保持不变。
+    /// 用于"导入时按文件类型路由"：手动选中的 TIFF 不必都叫 layer_*.tiff，
+    /// 这里按路径排序结果作为层序。
+    /// </summary>
+    public IReadOnlyList<GrayscaleLayerPreviewItem> RefreshFiles(IEnumerable<string> paths)
+    {
+        ClearLayers();
+        Error = null;
+        foreach (var path in paths
+                     .Where(IsRegularNonEmptyFile)
+                     .OrderBy(path => path, StringComparer.OrdinalIgnoreCase))
+        {
+            _layers.Add(new GrayscaleLayerPreviewItem(path, _layers.Count + LayerIndexOffset));
         }
 
         return RebuildAndSelect();

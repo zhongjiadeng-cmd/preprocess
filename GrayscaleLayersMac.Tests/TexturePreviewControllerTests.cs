@@ -9,6 +9,34 @@ namespace GrayscaleLayersMac.Tests;
 public sealed class TexturePreviewControllerTests
 {
     [TestMethod]
+    public void Reset_DiscardsPreviewButKeepsControllerUsable()
+    {
+        var displayed = new List<IDisposable?>();
+        using var controller = new TexturePreviewController(displayed.Add, _ => { });
+        var request = controller.BeginImport();
+        controller.TryCompleteImport(
+            request,
+            new TrackedPreview(),
+            new TextureImageInfo(600, 300, 300, 150),
+            fallbackDpiText: "96",
+            minimum: 0.01m,
+            maximum: 100000m,
+            out _);
+        Assert.AreEqual(TexturePreviewPhase.Ready, controller.State.Phase);
+
+        controller.Reset();
+
+        Assert.AreEqual(TexturePreviewState.Empty, controller.State);
+        Assert.IsNull(controller.CurrentInfo);
+        Assert.IsNull(displayed[^1]);
+
+        // Close 是终态（之后 BeginImport 会抛 ObjectDisposedException）；
+        // Reset 之后必须还能继续导入，否则"清空缓存"会顺手把界面废掉。
+        controller.BeginImport();
+        Assert.AreEqual(TexturePreviewState.Loading, controller.State);
+    }
+
+    [TestMethod]
     public void Import_WithEmbeddedDpi_ProducesTargetWrite()
     {
         var displayed = new List<IDisposable?>();
