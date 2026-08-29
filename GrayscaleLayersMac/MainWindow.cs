@@ -319,7 +319,7 @@ public sealed class MainWindow : Window
                     Children = { _pipelineImportButton, _pipelineClearButton }
                 },
                 MakeInspectorSection(
-                    "输入与分层",
+                    "灰度分层",
                     MakeField("原始灰度图", _pipelineInputBox, pipelineInputButton),
                     MakeField("分层 TIFF 目录", _pipelineLayerOutputBox, pipelineLayerOutputButton),
                     new Grid
