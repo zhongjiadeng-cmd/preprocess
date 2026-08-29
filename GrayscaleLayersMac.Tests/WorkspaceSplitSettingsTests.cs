@@ -217,6 +217,65 @@ public sealed class WorkspaceSplitSettingsTests
             Assert.IsFalse(reloaded.LoadThumbnailCollapsed());
         });
 
+    [TestMethod]
+    public void LoadDxfLayerCollapsed_MissingFileIsExpanded() => WithSettings(settings =>
+        Assert.IsFalse(settings.LoadDxfLayerCollapsed()));
+
+    [TestMethod]
+    public void SaveAndLoadDxfLayerCollapsed_RoundTrips() => WithSettings(settings =>
+    {
+        Assert.IsTrue(settings.TrySaveDxfLayerCollapsed(true));
+        Assert.IsTrue(settings.LoadDxfLayerCollapsed());
+
+        Assert.IsTrue(settings.TrySaveDxfLayerCollapsed(false));
+        Assert.IsFalse(settings.LoadDxfLayerCollapsed());
+    });
+
+    [TestMethod]
+    public void DxfLayerCollapsed_IsIndependentOfThumbnailCollapsed() => WithSettings(
+        (settings, path) =>
+        {
+            Assert.IsTrue(settings.TrySaveThumbnailCollapsed(true));
+            Assert.IsTrue(settings.TrySaveDxfLayerCollapsed(true));
+
+            var reloaded = new WorkspaceSplitSettings(path);
+            Assert.IsTrue(reloaded.LoadThumbnailCollapsed());
+            Assert.IsTrue(reloaded.LoadDxfLayerCollapsed());
+
+            Assert.IsTrue(reloaded.TrySaveDxfLayerCollapsed(false));
+            var after = new WorkspaceSplitSettings(path);
+            Assert.IsTrue(after.LoadThumbnailCollapsed(),
+                "收起 DXF 图层侧栏不应波及纹理缩略图侧栏的状态");
+            Assert.IsFalse(after.LoadDxfLayerCollapsed());
+        });
+
+    [TestMethod]
+    public void SaveDxfLayerCollapsed_PreservesOtherPreferences() => WithSettings(
+        (settings, path) =>
+        {
+            Assert.IsTrue(settings.TrySavePreviewRatio(0.66));
+            Assert.IsTrue(settings.TrySaveLogCollapsed("pipeline", true));
+            Assert.IsTrue(settings.TrySaveDxfLayerCollapsed(true));
+
+            var reloaded = new WorkspaceSplitSettings(path);
+            Assert.AreEqual(0.66, reloaded.LoadPreviewRatio(), 1e-9);
+            Assert.IsTrue(reloaded.LoadLogCollapsed("pipeline"));
+            Assert.IsTrue(reloaded.LoadDxfLayerCollapsed());
+        });
+
+    [TestMethod]
+    public void LoadDxfLayerCollapsed_LegacyFileWithoutTheFieldIsExpanded() => WithSettings(
+        (settings, path) =>
+        {
+            File.WriteAllText(path,
+                "{\"Version\":1,\"PreviewRatio\":0.6,\"ThumbnailCollapsed\":true}");
+            var reloaded = new WorkspaceSplitSettings(path);
+
+            Assert.IsTrue(reloaded.LoadThumbnailCollapsed());
+            Assert.IsFalse(reloaded.LoadDxfLayerCollapsed(),
+                "旧版本文件无 DxfLayerCollapsed 字段时应按展开处理");
+        });
+
     private static void WithSettings(Action<WorkspaceSplitSettings> action) =>
         WithSettings((settings, _) => action(settings));
 

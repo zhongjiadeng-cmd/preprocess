@@ -26,6 +26,11 @@ public sealed class DxfPreviewControl : Control, IDisposable
         bool IsBorder);
 
     private const int MaximumDisplayedSegments = 250_000;
+
+    /// <summary>平移允许越过内容边界的余量，免得缩小状态下画布被拖到完全看不见。</summary>
+    private const double PanSlack = 80;
+
+    private GrayscalePreviewWheelMode _wheelMode = GrayscalePreviewWheelMode.Auto;
     private List<Segment> _segments = [];
     private List<RowGroup> _rowGroups = [];
     private Rect _modelBounds = new(-50, -50, 100, 100);
@@ -107,6 +112,50 @@ public sealed class DxfPreviewControl : Control, IDisposable
     public bool IsTopView =>
         Math.Abs(_yaw) < 1e-7 && Math.Abs(_tilt) < 1e-7;
 
+    /// <summary>画布上是否有东西可看（DXF 线段或配准纹理）。</summary>
+    public bool HasContent => _segments.Count > 0 || _textureBitmap is not null;
+
+    /// <summary>
+    /// 当前缩放倍率。基准 1.0 = 适应窗口，而不是纹理画布那种「1 图像像素 : 1 屏幕像素」——
+    /// DXF 是矢量模型，没有像素可言，用适应窗口当基准才有可比性。
+    /// </summary>
+    public double Zoom => _zoom;
+
+    /// <summary>当前平移偏移（画布坐标系）。与 <see cref="Zoom"/> 一起构成完整的视图状态。</summary>
+    public Vector PanOffset => _pan;
+
+    /// <summary>滚轮语义；与纹理画布共用 <see cref="GrayscalePreviewWheelMode"/>。</summary>
+    public GrayscalePreviewWheelMode WheelMode
+    {
+        get => _wheelMode;
+        set => _wheelMode = value;
+    }
+
+    /// <summary>缩放或平移发生变化后触发，宿主据此刷新缩放读数。</summary>
+    public event EventHandler? ViewChanged;
+
+    /// <summary>内容投影到屏幕后的尺寸，用于判定「还有没有地方可滚」。</summary>
+    private Size ContentSize
+    {
+        get
+        {
+            var projected = ProjectedModelSize();
+            var scale = CalculateScale();
+            return new Size(projected.Width * scale, projected.Height * scale);
+        }
+    }
+
+    public bool CanPanHorizontally =>
+        HasContent && ContentSize.Width > Bounds.Width + 0.5;
+
+    public bool CanPanVertically =>
+        HasContent && ContentSize.Height > Bounds.Height + 0.5;
+
+    /// <summary>画布自身坐标系下的中心点。
+    /// <see cref="Control.Bounds"/> 是相对父控件的，绘制与指针坐标都在本控件坐标系里，
+    /// 因此中心一律取 (Width/2, Height/2)，避免宿主带内边距时整幅图被偏移。</summary>
+    private Point LocalCenter => new(Bounds.Width / 2, Bounds.Height / 2);
+
     public DxfPreviewControl(bool startInTopView = false)
     {
         _overlay = new DxfOverlayState(startInTopView);
@@ -134,14 +183,70 @@ public sealed class DxfPreviewControl : Control, IDisposable
         Summary = "正在等待生成 DXF…";
         LineCount = 0;
         InvalidateVisual();
+        RaiseViewChanged();
     }
 
+    /// <summary>缩放到适应窗口并回到居中位置。</summary>
     public void FitToView()
     {
         _zoom = 1;
         _pan = default;
         InvalidateVisual();
+        RaiseViewChanged();
     }
+
+    /// <summary>
+    /// 把缩放恢复成 100%（即适应窗口的基准倍率），但保留当前平移位置：
+    /// 逐层对照时常常只想退回基准倍率、不想丢掉正在看的位置。
+    /// </summary>
+    public void ActualSize()
+    {
+        if (Math.Abs(_zoom - 1) < 1e-9)
+            return;
+        _zoom = 1;
+        ClampPan();
+        InvalidateVisual();
+        RaiseViewChanged();
+    }
+
+    public void ZoomIn() => ZoomBy(GrayscalePreviewViewMath.ZoomButtonStep);
+
+    public void ZoomOut() => ZoomBy(1 / GrayscalePreviewViewMath.ZoomButtonStep);
+
+    public void ZoomBy(double factor) => ZoomAt(LocalCenter, _zoom * factor);
+
+    /// <summary>以屏幕上某个锚点为中心缩放，锚点下的模型点保持不动。</summary>
+    public void ZoomAt(Point anchor, double zoom)
+    {
+        if (Math.Abs(_zoom - zoom) < 1e-12)
+            return;
+        var oldZoom = _zoom;
+        _zoom = GrayscalePreviewViewMath.ClampZoom(zoom);
+        var relative = anchor - LocalCenter - _pan;
+        _pan = anchor - LocalCenter - relative * (_zoom / oldZoom);
+        ClampPan();
+        InvalidateVisual();
+        RaiseViewChanged();
+    }
+
+    /// <summary>把平移限制在「内容不会被拖出视野」的范围内，留出一点余量。</summary>
+    private void ClampPan()
+    {
+        if (!HasContent)
+        {
+            _pan = default;
+            return;
+        }
+
+        var content = ContentSize;
+        var limitX = Math.Max(0, (content.Width - Bounds.Width) / 2) + PanSlack;
+        var limitY = Math.Max(0, (content.Height - Bounds.Height) / 2) + PanSlack;
+        _pan = new Vector(
+            Math.Clamp(_pan.X, -limitX, limitX),
+            Math.Clamp(_pan.Y, -limitY, limitY));
+    }
+
+    private void RaiseViewChanged() => ViewChanged?.Invoke(this, EventArgs.Empty);
 
     public void SetIsometricView()
     {
@@ -166,6 +271,16 @@ public sealed class DxfPreviewControl : Control, IDisposable
                 widthMm, heightMm, widthMm, heightMm, 1, 1));
 
     public void LoadTexture(string path, DxfTextureRegistration registration)
+        => LoadTexture(path, registration, keepView: false);
+
+    /// <param name="keepView">
+    /// 为真时保留当前缩放 / 平移 / 视角。换层时由宿主根据「切层保持视图」传入，
+    /// 这样逐层对照不会每次都跳回适应窗口。
+    /// </param>
+    public void LoadTexture(
+        string path,
+        DxfTextureRegistration registration,
+        bool keepView)
     {
         ArgumentNullException.ThrowIfNull(registration);
 
@@ -201,7 +316,16 @@ public sealed class DxfPreviewControl : Control, IDisposable
             _modelBounds = _textureFrameBounds;
             _overlay.SetTextureAvailable(true);
             previous?.Dispose();
-            FitToView();
+            if (keepView)
+            {
+                ClampPan();
+                InvalidateVisual();
+                RaiseViewChanged();
+            }
+            else
+            {
+                FitToView();
+            }
         }
         finally
         {
@@ -221,7 +345,12 @@ public sealed class DxfPreviewControl : Control, IDisposable
 
     public void Dispose() => ClearTexture();
 
-    public void LoadFile(string path)
+    public void LoadFile(string path) => LoadFile(path, keepView: false);
+
+    /// <param name="keepView">
+    /// 为真时保留当前缩放 / 平移 / 视角，供「切层保持视图」逐层对照使用。
+    /// </param>
+    public void LoadFile(string path, bool keepView)
     {
         var metadata = DxfBlockMetadata.LoadForDxf(path);
         var firstPass = ScanFile(path, 0, metadata: null);
@@ -237,7 +366,16 @@ public sealed class DxfPreviewControl : Control, IDisposable
         _modelBounds = HasTexture ? _textureFrameBounds : bounds;
         _minZ = secondPass.MinZ;
         _maxZ = secondPass.MaxZ;
-        FitToView();
+        if (keepView)
+        {
+            ClampPan();
+            InvalidateVisual();
+            RaiseViewChanged();
+        }
+        else
+        {
+            FitToView();
+        }
         var blockSummary = metadata is null
             ? string.Empty
             : $" · 加工块 {metadata.Blocks.Count} 个";
@@ -249,7 +387,9 @@ public sealed class DxfPreviewControl : Control, IDisposable
     public override void Render(DrawingContext context)
     {
         base.Render(context);
-        context.FillRectangle(new SolidColorBrush(Color.FromRgb(7, 9, 13)), Bounds);
+        context.FillRectangle(
+            new SolidColorBrush(Color.FromRgb(7, 9, 13)),
+            new Rect(Bounds.Size));
         if (_segments.Count == 0 && _textureBitmap is null)
         {
             var text = new FormattedText(
@@ -263,7 +403,7 @@ public sealed class DxfPreviewControl : Control, IDisposable
             return;
         }
 
-        var projection = CreateProjection(CalculateScale(), Bounds.Center + _pan);
+        var projection = CreateProjection(CalculateScale(), LocalCenter + _pan);
         var viewport = new Rect(Bounds.Size);
         DrawGrid(context, projection);
 
@@ -374,13 +514,43 @@ public sealed class DxfPreviewControl : Control, IDisposable
     protected override void OnPointerWheelChanged(PointerWheelEventArgs e)
     {
         base.OnPointerWheelChanged(e);
-        var oldZoom = _zoom;
-        _zoom = Math.Clamp(_zoom * Math.Pow(1.18, e.Delta.Y), 0.1, 100);
-        var pointer = e.GetPosition(this);
-        var relative = pointer - Bounds.Center - _pan;
-        _pan = pointer - Bounds.Center - relative * (_zoom / oldZoom);
+        if (!HasContent)
+            return;
+
+        var modifiers = e.KeyModifiers;
+        var zoomModifier =
+            modifiers.HasFlag(KeyModifiers.Control) ||
+            modifiers.HasFlag(KeyModifiers.Meta);
+        var shift = modifiers.HasFlag(KeyModifiers.Shift);
+        // 与纹理画布共用同一套判定：⌘/Ctrl 恒为缩放，其余按滚轮模式决定，
+        // Auto 模式下目标方向已经滚不动了才退化为缩放，画面永远不会「滚轮没反应」。
+        var action = GrayscalePreviewViewMath.ResolveWheelAction(
+            _wheelMode,
+            zoomModifier,
+            shift,
+            CanPanVertically,
+            CanPanHorizontally);
+
+        if (action == GrayscalePreviewWheelAction.Zoom)
+        {
+            ZoomAt(
+                e.GetPosition(this),
+                GrayscalePreviewViewMath.WheelZoom(_zoom, e.Delta.Y));
+        }
+        else
+        {
+            // Shift 把竖向滚轮转成横向滚动；其余情况沿用原生方向。
+            var deltaX = shift ? e.Delta.Y : e.Delta.X;
+            var deltaY = shift ? 0 : e.Delta.Y;
+            _pan += new Vector(
+                -deltaX * GrayscalePreviewViewMath.WheelScrollStep,
+                -deltaY * GrayscalePreviewViewMath.WheelScrollStep);
+            ClampPan();
+            InvalidateVisual();
+            RaiseViewChanged();
+        }
+
         e.Handled = true;
-        InvalidateVisual();
     }
 
     protected override void OnPointerPressed(PointerPressedEventArgs e)
@@ -423,9 +593,11 @@ public sealed class DxfPreviewControl : Control, IDisposable
         else
         {
             _pan = _panAtDragStart + delta;
+            ClampPan();
         }
         e.Handled = true;
         InvalidateVisual();
+        RaiseViewChanged();
     }
 
     protected override void OnPointerReleased(PointerReleasedEventArgs e)

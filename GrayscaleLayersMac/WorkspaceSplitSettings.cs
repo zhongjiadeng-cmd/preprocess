@@ -63,12 +63,19 @@ internal sealed class WorkspaceSplitSettings
         return TrySaveDocument(document with { LogCollapsed = states });
     }
 
-    /// <summary>读取三步流程页的图层缩略图侧栏上次的收起状态，没有记录时按展开处理。</summary>
+    /// <summary>读取纹理预览图层缩略图侧栏上次的收起状态，没有记录时按展开处理。</summary>
     public bool LoadThumbnailCollapsed() => LoadDocument().ThumbnailCollapsed;
 
-    /// <summary>写入三步流程页的图层缩略图侧栏的收起状态，分栏比例与日志面板状态保持不变。</summary>
+    /// <summary>写入纹理预览图层缩略图侧栏的收起状态，分栏比例与日志面板状态保持不变。</summary>
     public bool TrySaveThumbnailCollapsed(bool collapsed) =>
         TrySaveDocument(LoadDocument() with { ThumbnailCollapsed = collapsed });
+
+    /// <summary>读取 DXF 预览图层侧栏上次的收起状态，没有记录时按展开处理。</summary>
+    public bool LoadDxfLayerCollapsed() => LoadDocument().DxfLayerCollapsed;
+
+    /// <summary>写入 DXF 预览图层侧栏的收起状态，其余偏好保持不变。</summary>
+    public bool TrySaveDxfLayerCollapsed(bool collapsed) =>
+        TrySaveDocument(LoadDocument() with { DxfLayerCollapsed = collapsed });
 
     public static bool IsValidPreviewRatio(double ratio) =>
         double.IsFinite(ratio) &&
@@ -80,7 +87,8 @@ internal sealed class WorkspaceSplitSettings
             CurrentVersion,
             DefaultPreviewRatio,
             new Dictionary<string, bool>(StringComparer.Ordinal),
-            ThumbnailCollapsed: false);
+            ThumbnailCollapsed: false,
+            DxfLayerCollapsed: false);
 
     private Settings LoadDocument()
     {
@@ -97,15 +105,16 @@ internal sealed class WorkspaceSplitSettings
                 return DefaultDocument();
             }
 
-            // 老版本文件没有 LogCollapsed / ThumbnailCollapsed 字段，反序列化后可能为 null，
-            // 这里统一补齐默认值，让上层拿到的永远是非空结构。
+            // 老版本文件没有 LogCollapsed / ThumbnailCollapsed / DxfLayerCollapsed 字段，
+            // 反序列化后可能为 null，这里统一补齐默认值，让上层拿到的永远是非空结构。
             return new Settings(
                 document.Version,
                 document.PreviewRatio,
                 document.LogCollapsed is null
                     ? new Dictionary<string, bool>(StringComparer.Ordinal)
                     : new Dictionary<string, bool>(document.LogCollapsed, StringComparer.Ordinal),
-                document.ThumbnailCollapsed ?? false);
+                document.ThumbnailCollapsed ?? false,
+                document.DxfLayerCollapsed ?? false);
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException or JsonException)
         {
@@ -158,12 +167,16 @@ internal sealed class WorkspaceSplitSettings
         int Version,
         double PreviewRatio,
         Dictionary<string, bool> LogCollapsed,
-        bool ThumbnailCollapsed);
+        bool ThumbnailCollapsed,
+        bool DxfLayerCollapsed);
 
-    /// <summary>磁盘上的 JSON 形状。LogCollapsed / ThumbnailCollapsed 可空，兼容老版本文件。</summary>
+    /// <summary>
+    /// 磁盘上的 JSON 形状。LogCollapsed / ThumbnailCollapsed / DxfLayerCollapsed 可空，兼容老版本文件。
+    /// </summary>
     private sealed record SettingsDocument(
         int Version,
         double PreviewRatio,
         Dictionary<string, bool>? LogCollapsed,
-        bool? ThumbnailCollapsed);
+        bool? ThumbnailCollapsed,
+        bool? DxfLayerCollapsed);
 }

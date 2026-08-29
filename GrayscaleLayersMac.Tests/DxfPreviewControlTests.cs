@@ -3,6 +3,7 @@ using System.IO;
 using System.Globalization;
 using System.Linq;
 using System.Text;
+using Avalonia;
 using GrayscaleLayersMac;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 
@@ -105,6 +106,106 @@ public sealed class DxfPreviewControlTests
             new[] { 7, 3, 3 },
             scan.Segments.Select(segment => segment.BlockIndex).ToArray());
         Assert.IsFalse(scan.Segments.Any(segment => segment.IsBorder));
+    }
+
+    [TestMethod]
+    public void ZoomButtonsStepByTheSharedFactor()
+    {
+        using var preview = new DxfPreviewControl();
+
+        preview.ZoomIn();
+        Assert.AreEqual(
+            GrayscalePreviewViewMath.ZoomButtonStep, preview.Zoom, 1e-9);
+
+        preview.ZoomOut();
+        Assert.AreEqual(1d, preview.Zoom, 1e-9, "放大一次再缩小一次应回到基准倍率");
+    }
+
+    [TestMethod]
+    public void ZoomStaysInsideTheSharedBounds()
+    {
+        using var preview = new DxfPreviewControl();
+
+        for (var i = 0; i < 200; i++)
+            preview.ZoomIn();
+        Assert.AreEqual(GrayscalePreviewViewMath.MaxZoom, preview.Zoom, 1e-9);
+
+        for (var i = 0; i < 400; i++)
+            preview.ZoomOut();
+        Assert.AreEqual(GrayscalePreviewViewMath.MinZoom, preview.Zoom, 1e-9);
+    }
+
+    [TestMethod]
+    public void ActualSizeKeepsPanWhileFitToViewResetsIt()
+    {
+        var dxf = Path.Combine(_root, "sized.dxf");
+        WriteDxf(dxf, (0d, 0d, 10d, 0d), (0d, 5d, 10d, 5d));
+        using var preview = new DxfPreviewControl();
+        preview.LoadFile(dxf);
+
+        // 锚点不在中心，缩放后必然留下非零平移，才能区分「保留视图」与「重排视图」。
+        preview.ZoomAt(new Point(50, 30), 2);
+        var panBefore = preview.PanOffset;
+        Assert.IsTrue(Math.Abs(panBefore.X) > 1e-6 || Math.Abs(panBefore.Y) > 1e-6);
+
+        preview.ActualSize();
+        Assert.AreEqual(1d, preview.Zoom, 1e-9);
+        Assert.AreEqual(panBefore.X, preview.PanOffset.X, 1e-6, "100% 只退倍率，不应丢掉正在看的位置");
+        Assert.AreEqual(panBefore.Y, preview.PanOffset.Y, 1e-6);
+
+        preview.FitToView();
+        Assert.AreEqual(1d, preview.Zoom, 1e-9);
+        Assert.AreEqual(0d, preview.PanOffset.X, 1e-9, "适应窗口要一并回到居中位置");
+        Assert.AreEqual(0d, preview.PanOffset.Y, 1e-9);
+    }
+
+    [TestMethod]
+    public void LoadFileWithKeepViewPreservesZoomAndPan()
+    {
+        var dxf = Path.Combine(_root, "kept.dxf");
+        WriteDxf(dxf, (0d, 0d, 10d, 0d), (0d, 5d, 10d, 5d));
+        using var preview = new DxfPreviewControl();
+
+        preview.LoadFile(dxf);
+        preview.ZoomAt(new Point(50, 30), 2);
+        var zoom = preview.Zoom;
+        var pan = preview.PanOffset;
+
+        preview.LoadFile(dxf, keepView: true);
+
+        Assert.AreEqual(zoom, preview.Zoom, 1e-9, "切层保持视图时倍率不变");
+        Assert.AreEqual(pan.X, preview.PanOffset.X, 1e-6);
+        Assert.AreEqual(pan.Y, preview.PanOffset.Y, 1e-6);
+
+        preview.LoadFile(dxf, keepView: false);
+
+        Assert.AreEqual(1d, preview.Zoom, 1e-9);
+        Assert.AreEqual(0d, preview.PanOffset.X, 1e-9);
+        Assert.AreEqual(0d, preview.PanOffset.Y, 1e-9);
+    }
+
+    [TestMethod]
+    public void EmptyCanvasReportsNoContentAndIgnoresWheel()
+    {
+        using var preview = new DxfPreviewControl();
+
+        Assert.IsFalse(preview.HasContent);
+        Assert.AreEqual(GrayscalePreviewWheelMode.Auto, preview.WheelMode);
+    }
+
+    [TestMethod]
+    public void LoadedFileReportsContentAndRaisesViewChanged()
+    {
+        var dxf = Path.Combine(_root, "signal.dxf");
+        WriteDxf(dxf, (0d, 0d, 10d, 10d));
+        using var preview = new DxfPreviewControl();
+        var raised = 0;
+        preview.ViewChanged += (_, _) => raised++;
+
+        preview.LoadFile(dxf);
+
+        Assert.IsTrue(preview.HasContent);
+        Assert.IsTrue(raised > 0, "载入内容后宿主要能刷新缩放读数");
     }
 
     private static void WriteDxf(

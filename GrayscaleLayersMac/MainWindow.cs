@@ -121,12 +121,8 @@ public sealed class MainWindow : Window
     private readonly DxfPreviewControl _pipelineDxfPreview = new(startInTopView: true);
     private readonly TextBlock _pipelineDxfPreviewStatus = new() { Foreground = UiTheme.TextSecondaryBrush };
     private readonly ObservableCollection<DxfLayerPreviewItem> _pipelineDxfFiles = [];
-    private readonly ComboBox _pipelineDxfSelector = new()
-    {
-        MinWidth = 240,
-        HorizontalAlignment = HorizontalAlignment.Stretch,
-        PlaceholderText = "生成后选择要预览的层"
-    };
+    // DXF 预览宿主在构造预览面板时才建好，因此这里只能是可空字段。
+    private DxfPreviewHost? _pipelineDxfHost;
     private readonly TextBox _pipelineLogBox = MakeLogBox();
     private readonly DropDownButton _pipelineImportButton = new() { Content = "导入", HorizontalAlignment = HorizontalAlignment.Left };
     private readonly Button _pipelineClearButton = new() { Content = "清空缓存", HorizontalAlignment = HorizontalAlignment.Left };
@@ -143,24 +139,38 @@ public sealed class MainWindow : Window
     private string? _lastMachineOutputPath;
     private CancellationTokenSource? _cancellation;
 
-    private void ConfigurePipelineDxfSelector()
+    /// <summary>
+    /// 把 DXF 预览宿主接到主界面：选层改由宿主的图层侧栏驱动（与纹理界面同一套交互），
+    /// 侧栏的展开 / 收起沿用工位设置的持久化。
+    /// 宿主在 <see cref="MakeSharedPreviewPanel"/> 里才建好，因此必须在预览面板之后调用。
+    /// </summary>
+    private void ConfigurePipelineDxfHost()
     {
-        _pipelineDxfSelector.ItemsSource = _pipelineDxfFiles;
-        _pipelineDxfSelector.SelectionChanged += (_, _) =>
-        {
-            if (_pipelineDxfSelector.SelectedItem is DxfLayerPreviewItem item)
-                LoadPipelineLayerPreview(item);
-        };
+        var host = _pipelineDxfHost;
+        if (host is null)
+            return;
+
+        host.LoadLayer = item => LoadPipelineLayerPreview(item, host.KeepView);
+        host.SetItems(_pipelineDxfFiles);
+        // 先恢复、再订阅：恢复动作本身不会触发一次多余的写入。
+        host.SetRailCollapsed(_workspaceSplitSettings.LoadDxfLayerCollapsed());
+        host.RailCollapsedChanged += (_, _) =>
+            _workspaceSplitSettings.TrySaveDxfLayerCollapsed(host.IsRailCollapsed);
     }
 
-    private bool LoadPipelineLayerPreview(DxfLayerPreviewItem item)
+    /// <param name="keepView">
+    /// 为真时保留当前缩放 / 平移 / 视角——逐层对照时不必每次都跳回适应窗口。
+    /// 由宿主的「切层保持视图」勾选框下发。
+    /// </param>
+    private bool LoadPipelineLayerPreview(DxfLayerPreviewItem item, bool keepView)
     {
         _pipelineDxfPreview.ClearTexture();
         _pipelineSharedPreview.UpdateDxfOverlayControls();
         if (!LoadDxfPreview(
                 _pipelineDxfPreview,
                 _pipelineDxfPreviewStatus,
-                item.DxfPath))
+                item.DxfPath,
+                keepView))
         {
             _pipelineSharedPreview.UpdateDxfOverlayControls();
             return false;
@@ -171,7 +181,7 @@ public sealed class MainWindow : Window
             try
             {
                 _pipelineDxfPreview.LoadTexture(
-                    item.TexturePath!, item.TextureRegistration!);
+                    item.TexturePath!, item.TextureRegistration!, keepView);
             }
             catch (Exception error)
             {
@@ -218,7 +228,6 @@ public sealed class MainWindow : Window
             _workspaceSplitSettings.TrySaveThumbnailCollapsed(
                 _pipelineTextureSurface.IsThumbnailsCollapsed);
         UiTheme.ApplyPrimaryStyle(_pipelineRunSplitButton);
-        ConfigurePipelineDxfSelector();
         _pipelineDpiBox.TextChanged += (_, _) =>
         {
             _pipelinePreviewController.ApplyFallbackDpiEdit(
@@ -472,10 +481,8 @@ public sealed class MainWindow : Window
             _pipelineTextureSurface,
             _pipelineDxfPreview,
             _pipelineDxfPreviewStatus,
-            importButton: null,
-            _pipelineDxfSelector,
-            enableLayerOverlay: true,
             out _pipelineSharedPreview);
+        ConfigurePipelineDxfHost();
         var pipelineContent = MakeWorkspace(
             pipelineInspector,
             pipelinePreviewPanel,
@@ -663,37 +670,21 @@ public sealed class MainWindow : Window
     /// <summary>
     /// 预览区只有「纹理」与「DXF」两个标签页：纹理界面内部用第 0 层承载源纹理，
     /// 1..N 承载灰度分层，所以不再需要单独的分层标签页。
+    /// 两侧共用同一套「图层侧栏 + 工具栏 + 画布 + 状态行」骨架，只是内容不同。
     /// </summary>
-    private static Control MakeSharedPreviewPanel(
+    private Control MakeSharedPreviewPanel(
         GrayscaleLayerPreviewControl texture,
         DxfPreviewControl dxfPreview,
         TextBlock dxfStatus,
-        Button? importButton,
-        ComboBox? fileSelector,
-        bool enableLayerOverlay,
         out SharedPreviewView view)
     {
         var textureContent = MakeTexturePreviewContent(texture);
-        Control dxfContent;
-        Action updateDxfOverlayControls;
-        if (enableLayerOverlay)
-        {
-            dxfContent = MakePipelineDxfPreviewContent(
-                dxfPreview,
-                dxfStatus,
-                importButton,
-                fileSelector,
-                out updateDxfOverlayControls);
-        }
-        else
-        {
-            dxfContent = MakeDxfPreviewContent(
-                dxfPreview,
-                dxfStatus,
-                importButton,
-                fileSelector);
-            updateDxfOverlayControls = static () => { };
-        }
+        var dxfContent = MakePipelineDxfPreviewContent(
+            dxfPreview,
+            dxfStatus,
+            out var dxfHost,
+            out var updateDxfOverlayControls);
+        _pipelineDxfHost = dxfHost;
         var textureTab = new ToggleButton { Content = "纹理" };
         var dxfTab = new ToggleButton { Content = "DXF" };
         var sharedView = new SharedPreviewView(
@@ -756,106 +747,23 @@ public sealed class MainWindow : Window
         view.SetPhysicalSize(state.PhysicalSizeText);
     }
 
-    private static Control MakeDxfPreviewContent(
-        DxfPreviewControl preview,
-        TextBlock status,
-        Button? importButton,
-        ComboBox? fileSelector)
-    {
-        var fitButton = new Button { Content = "适应窗口" };
-        fitButton.Click += (_, _) => preview.FitToView();
-        var topButton = new Button { Content = "顶视图" };
-        topButton.Click += (_, _) => preview.SetTopView();
-        var isometricButton = new Button { Content = "等轴测" };
-        isometricButton.Click += (_, _) => preview.SetIsometricView();
-        if (importButton is not null)
-            UiTheme.ApplyGhostStyle(importButton, small: true);
-        UiTheme.ApplyGhostStyle(topButton, small: true);
-        UiTheme.ApplyGhostStyle(isometricButton, small: true);
-        UiTheme.ApplyGhostStyle(fitButton, small: true);
-        status.FontFamily = UiTheme.MonoFont;
-        status.FontSize = 11;
-        var arrowCheckBox = new CheckBox
-        {
-            Content = "显示方向箭头",
-            IsChecked = preview.ShowDirectionArrows,
-            VerticalAlignment = VerticalAlignment.Center
-        };
-        arrowCheckBox.IsCheckedChanged += (_, _) =>
-            preview.ShowDirectionArrows = arrowCheckBox.IsChecked == true;
-        status.Text = preview.Summary;
-        var topGrid = new Grid { ColumnSpacing = 10 };
-        if (importButton is null)
-        {
-            topGrid.ColumnDefinitions = new ColumnDefinitions("Auto,Auto,Auto");
-            topGrid.Children.Add(Place(topButton, 0));
-            topGrid.Children.Add(Place(isometricButton, 1));
-            topGrid.Children.Add(Place(fitButton, 2));
-        }
-        else
-        {
-            topGrid.ColumnDefinitions = new ColumnDefinitions("*,Auto,Auto,Auto");
-            topGrid.Children.Add(Place(importButton, 0));
-            topGrid.Children.Add(Place(topButton, 1));
-            topGrid.Children.Add(Place(isometricButton, 2));
-            topGrid.Children.Add(Place(fitButton, 3));
-        }
-
-        return new Grid
-        {
-            RowDefinitions = new RowDefinitions("Auto,Auto,*,Auto"),
-            RowSpacing = 10,
-            Children =
-            {
-                AtRow(topGrid, 0),
-                AtRow(new Grid
-                {
-                    ColumnDefinitions = new ColumnDefinitions("*,Auto"),
-                    ColumnSpacing = 10,
-                    Children =
-                    {
-                        fileSelector is null
-                            ? Place(new TextBlock
-                            {
-                                Text = "左键拖拽环视 · 滚轮缩放 · 中键平移 · Shift + 中键环视 · 双击中键适应窗口",
-                                Foreground = UiTheme.TextFaintBrush,
-                                FontSize = 11,
-                                VerticalAlignment = VerticalAlignment.Center
-                            }, 0)
-                            : Place(new StackPanel
-                            {
-                                Spacing = 5,
-                                Children =
-                                {
-                                    fileSelector,
-                                    new TextBlock
-                                    {
-                                        Text = "左键拖拽环视 · 滚轮缩放 · 中键平移 · Shift + 中键环视 · 双击中键适应窗口",
-                                        Foreground = UiTheme.TextFaintBrush,
-                                        FontSize = 11
-                                    }
-                                }
-                            }, 0),
-                        Place(arrowCheckBox, 1)
-                    }
-                }, 1),
-                AtRow(UiTheme.CanvasCard(preview), 2),
-                AtRow(status, 3)
-            }
-        };
-    }
-
+    /// <summary>
+    /// 主界面的 DXF 预览：图层侧栏 + 工具栏 + 叠加控制行 + 画布 + 状态行，
+    /// 整块交给 <see cref="DxfPreviewHost"/> 拼装，与纹理界面是同一个骨架。
+    /// 「顶视图 / 等轴测」是 DXF 专属工具，以 extraTools 插进标准工具栏。
+    /// </summary>
     private static Control MakePipelineDxfPreviewContent(
         DxfPreviewControl preview,
         TextBlock status,
-        Button? importButton,
-        ComboBox? fileSelector,
+        out DxfPreviewHost host,
         out Action updateOverlayControlAvailability)
     {
-        var fitButton = new Button { Content = "适应窗口" };
-        fitButton.Click += (_, _) => preview.FitToView();
         var topButton = new Button { Content = "顶视图" };
         var isometricButton = new Button { Content = "等轴测" };
+        UiTheme.ApplyGhostStyle(topButton, small: true);
+        UiTheme.ApplyGhostStyle(isometricButton, small: true);
+        ToolTip.SetTip(topButton, "回到正上方俯视，并开始 / 继续顶视图巡览。");
+        ToolTip.SetTip(isometricButton, "切到 35° 等轴测视角，便于看清分层高度。");
         var textureCheckBox = new CheckBox
         {
             Content = "显示灰度纹理",
@@ -955,82 +863,49 @@ public sealed class MainWindow : Window
         status.Text = preview.Summary;
         updateOverlayControlAvailability = UpdateOverlayControlAvailability;
         UpdateOverlayControlAvailability();
-        var topGrid = new Grid { ColumnSpacing = 10 };
-        if (importButton is null)
-        {
-            topGrid.ColumnDefinitions = new ColumnDefinitions("Auto,Auto,Auto");
-            topGrid.Children.Add(Place(topButton, 0));
-            topGrid.Children.Add(Place(isometricButton, 1));
-            topGrid.Children.Add(Place(fitButton, 2));
-        }
-        else
-        {
-            topGrid.ColumnDefinitions = new ColumnDefinitions("*,Auto,Auto,Auto");
-            topGrid.Children.Add(Place(importButton, 0));
-            topGrid.Children.Add(Place(topButton, 1));
-            topGrid.Children.Add(Place(isometricButton, 2));
-            topGrid.Children.Add(Place(fitButton, 3));
-        }
 
-        return new Grid
+        var overlayRow = new StackPanel
         {
-            RowDefinitions = new RowDefinitions("Auto,Auto,Auto,*,Auto"),
-            RowSpacing = 10,
+            Orientation = Orientation.Horizontal,
+            Spacing = 12,
+            VerticalAlignment = VerticalAlignment.Center,
             Children =
             {
-                AtRow(topGrid, 0),
-                AtRow(new Grid
+                textureCheckBox,
+                new TextBlock
                 {
-                    ColumnDefinitions = new ColumnDefinitions("*"),
-                    ColumnSpacing = 10,
-                    Children =
-                    {
-                        fileSelector is null
-                            ? Place(new TextBlock
-                            {
-                                Text = "左键拖拽环视 · 滚轮缩放 · 中键平移 · Shift + 中键环视 · 双击中键适应窗口",
-                                Foreground = UiTheme.TextFaintBrush,
-                                VerticalAlignment = VerticalAlignment.Center
-                            }, 0)
-                            : Place(new StackPanel
-                            {
-                                Spacing = 5,
-                                Children =
-                                {
-                                    fileSelector,
-                                    new TextBlock
-                                    {
-                                        Text = "左键拖拽环视 · 滚轮缩放 · 中键平移 · Shift + 中键环视 · 双击中键适应窗口",
-                                        Foreground = UiTheme.TextFaintBrush,
-                                        FontSize = 11
-                                    }
-                                }
-                            }, 0)
-                    }
-                }, 1),
-                AtRow(new StackPanel
-                {
-                    Orientation = Orientation.Horizontal,
-                    Spacing = 12,
+                    Text = "纹理透明度",
                     VerticalAlignment = VerticalAlignment.Center,
-                    Children =
-                    {
-                        textureCheckBox,
-                        new TextBlock
-                        {
-                            Text = "纹理透明度",
-                            VerticalAlignment = VerticalAlignment.Center,
-                            Foreground = UiTheme.TextFaintBrush
-                        },
-                        textureOpacity,
-                        linesCheckBox,
-                        arrowCheckBox
-                    }
-                }, 2),
-                AtRow(UiTheme.CanvasCard(preview), 3),
-                AtRow(status, 4)
+                    Foreground = UiTheme.TextFaintBrush
+                },
+                textureOpacity,
+                linesCheckBox,
+                arrowCheckBox
             }
         };
+
+        // 操作提示压在叠加控制行下面，省下单独一行：工具栏已经够宽了。
+        var extraRow = new StackPanel
+        {
+            Spacing = 6,
+            Children =
+            {
+                overlayRow,
+                new TextBlock
+                {
+                    Text = "左键拖拽环视 · 滚轮缩放 · 中键平移 · Shift + 中键环视 · 双击中键适应窗口",
+                    Foreground = UiTheme.TextFaintBrush,
+                    FontSize = 11
+                }
+            }
+        };
+
+        host = new DxfPreviewHost(
+            preview,
+            status,
+            extraTools: [topButton, isometricButton],
+            extraRow: extraRow);
+        return host;
     }
 
     private static void SelectSharedPreview(SharedPreviewView view, SharedPreviewKind kind)
@@ -1497,7 +1372,8 @@ public sealed class MainWindow : Window
         _pipelineDxfFiles.Clear();
         foreach (var item in items)
             _pipelineDxfFiles.Add(item);
-        _pipelineDxfSelector.SelectedItem = items[0];
+        _pipelineDxfHost?.SetItems(_pipelineDxfFiles);
+        _pipelineDxfHost?.SelectIndex(0);
         if (directory is not null)
             _pipelineDxfOutputBox.Text = directory;
         report.AppendLine($"DXF：已导入 {items.Length} 层。");
@@ -1520,7 +1396,7 @@ public sealed class MainWindow : Window
         }
 
         _pipelineDxfFiles.Clear();
-        _pipelineDxfSelector.SelectedItem = null;
+        _pipelineDxfHost?.SetItems(_pipelineDxfFiles);
         _pipelineDxfPreview.Clear();
         _pipelineDxfPreviewStatus.Text = _pipelineDxfPreview.Summary;
         _pipelineDxfPreviewStatus.Foreground = UiTheme.TextSecondaryBrush;
@@ -1764,6 +1640,7 @@ public sealed class MainWindow : Window
         _pipelineSharedPreview.UpdateDxfOverlayControls();
         _pipelineSharedPreview.Selection.ClearDxf();
         _pipelineDxfFiles.Clear();
+        _pipelineDxfHost?.SetItems(_pipelineDxfFiles);
         string[] layerFiles = [];
         var currentRunDxfFiles = new List<string>();
         var progressWindow = new ProcessingProgressWindow(
@@ -1931,7 +1808,8 @@ public sealed class MainWindow : Window
                     previewFile,
                     textureRegistration);
                 _pipelineDxfFiles.Add(previewItem);
-                _pipelineDxfSelector.SelectedItem = previewItem;
+                _pipelineDxfHost?.SetItems(_pipelineDxfFiles);
+                _pipelineDxfHost?.SelectIndex(_pipelineDxfFiles.Count - 1);
             }
 
                 AppendPipelineLog(mode == PipelineRunMode.All
@@ -2433,11 +2311,12 @@ public sealed class MainWindow : Window
     private static bool LoadDxfPreview(
         DxfPreviewControl preview,
         TextBlock status,
-        string path)
+        string path,
+        bool keepView = false)
     {
         try
         {
-            preview.LoadFile(path);
+            preview.LoadFile(path, keepView);
             status.Text = preview.Summary;
             status.ClearValue(TextBlock.ForegroundProperty);
             return true;
@@ -2473,7 +2352,8 @@ public sealed class MainWindow : Window
         {
             var item = DxfLayerPreviewItem.Imported(path);
             _pipelineDxfFiles.Add(item);
-            _pipelineDxfSelector.SelectedItem = item;
+            _pipelineDxfHost?.SetItems(_pipelineDxfFiles);
+            _pipelineDxfHost?.SelectItem(item);
         }
         else
         {
