@@ -2316,7 +2316,9 @@ public sealed class MainWindow : Window
             throw new InvalidOperationException("找不到带有 numpy 和 Pillow 的 Python 3。");
 
         var info = CreatePythonProcess(python);
-        info.ArgumentList.Add(Path.Combine(AppContext.BaseDirectory, "texture_to_hatch_dxf.py"));
+        info.ArgumentList.Add(ApplicationLayout.GetScriptPath(
+            AppContext.BaseDirectory,
+            "texture_to_hatch_dxf.py"));
         info.ArgumentList.Add(path);
         info.ArgumentList.Add("--inspect-image");
         info.ArgumentList.Add("--include-preview");

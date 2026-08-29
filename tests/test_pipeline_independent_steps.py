@@ -39,6 +39,20 @@ class PipelineIndependentStepsTests(unittest.TestCase):
         self.assertIn('"分层 TIFF 目录"', SOURCE)
         self.assertIn('"DXF 目录"', SOURCE)
 
+    def test_texture_inspection_resolves_scripts_for_packaged_app_layout(self):
+        method = SOURCE.split(
+            "private static async Task<TextureImageInspection> InspectTextureImageAsync(",
+            1,
+        )[1].split(
+            "private static async Task WaitForExitOrKillAsync(",
+            1,
+        )[0]
+        self.assertIn("ApplicationLayout.GetScriptPath(", method)
+        self.assertNotIn(
+            'Path.Combine(AppContext.BaseDirectory, "texture_to_hatch_dxf.py")',
+            method,
+        )
+
     def test_single_step_modes_have_explicit_dependencies(self):
         self.assertIn("PipelineRunMode.GrayscaleOnly", SOURCE)
         self.assertIn("PipelineRunMode.DxfOnly", SOURCE)
