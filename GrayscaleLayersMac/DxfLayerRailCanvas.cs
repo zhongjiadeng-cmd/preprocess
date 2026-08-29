@@ -70,8 +70,10 @@ public sealed class DxfLayerRailCanvas : Control
                 new Pen(selected ? UiTheme.AccentBrush : UiTheme.BorderSubtleBrush, selected ? 2 : 1),
                 row.Deflate(2));
 
+            // 行号与层名保持同一套 1 基编号：层名是「第 01 层…」，侧栏大号数字也应从 01 起，
+            // 否则第一行会显示 00 而层名叫第 01 层，肉眼对不上。
             var number = new FormattedText(
-                $"{index:D2}",
+                $"{index + 1:D2}",
                 CultureInfo.CurrentCulture,
                 FlowDirection.LeftToRight,
                 Typeface.Default,
