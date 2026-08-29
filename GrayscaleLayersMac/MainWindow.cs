@@ -173,8 +173,26 @@ public sealed class MainWindow : Window
         PlaceholderText = "生成后选择要预览的层"
     };
     private readonly TextBox _pipelineLogBox = MakeLogBox();
+    // 全部执行按钮：执行整个三步流程（默认最高优先级操作）。
     private readonly Button _pipelineRunButton = new() { Content = "全部执行", HorizontalAlignment = HorizontalAlignment.Stretch };
-    private readonly Button _pipelineSingleStepButton = new() { Content = "单步执行 ▾" };
+    // 单步可选框：仅展示可选的步骤，列表项与 PipelineRunMode 的单步枚举一一对应。
+    // 选中后立即执行对应步骤，然后清空选择让 placeholder 重新出现，方便下一次再选。
+    // ComboBox 的弹出方向（上拉/下拉）由 ApplyUpwardPlacementAfterTemplate 统一把 PART_Popup 设成 TopEdgeAlignedLeft。
+    private static readonly (string Label, PipelineRunMode Mode)[] PipelineStepOptions =
+    {
+        ("第 1 步：灰度分层", PipelineRunMode.GrayscaleOnly),
+        ("第 2 步：生成 DXF", PipelineRunMode.DxfOnly),
+        ("第 3 步：生成加工文件", PipelineRunMode.MachineOnly),
+    };
+    private readonly ComboBox _pipelineStepSelector = new()
+    {
+        ItemsSource = PipelineStepOptions.Select(o => o.Label).ToArray(),
+        SelectedIndex = -1,
+        PlaceholderText = "单步执行…",
+        HorizontalAlignment = HorizontalAlignment.Stretch,
+        VerticalAlignment = VerticalAlignment.Center,
+        MinWidth = 200,
+    };
     private readonly Button _pipelineOpenButton = new() { Content = "打开加工文件目录", IsEnabled = false };
     private readonly ProgressBar _pipelineProgress = UiTheme.CreateProgress();
     private readonly TexturePreviewController _hatchPreviewController;
@@ -460,29 +478,9 @@ public sealed class MainWindow : Window
                 pipelineCancelButton.IsEnabled = false;
             }
         };
-        var singleStepFlyout = new Flyout
-        {
-            Content = new StackPanel
-            {
-                Spacing = 4,
-                Children =
-                {
-                    CreatePipelineStepMenuButton(
-                        "第 1 步：灰度分层",
-                        PipelineRunMode.GrayscaleOnly,
-                        pipelineCancelButton),
-                    CreatePipelineStepMenuButton(
-                        "第 2 步：生成 DXF",
-                        PipelineRunMode.DxfOnly,
-                        pipelineCancelButton),
-                    CreatePipelineStepMenuButton(
-                        "第 3 步：生成加工文件",
-                        PipelineRunMode.MachineOnly,
-                        pipelineCancelButton)
-                }
-            }
-        };
-        _pipelineSingleStepButton.Flyout = singleStepFlyout;
+        // 把单步执行的 Flyout 替换为 ComboBox 自身的事件：选中即触发，结束后清空选择。
+        // TemplateApplied 时把 PART_Popup 改成上拉（TopEdgeAlignedLeft），避免下拉打开时被窗口底部裁掉。
+        ConfigurePipelineStepSelector(pipelineCancelButton);
         pipelineCancelButton.Click += (_, _) => _cancellation?.Cancel();
         _pipelineOpenButton.Click += (_, _) => OpenDirectory(_lastMachineOutputPath);
         pipelineImportDxfButton.Click += async (_, _) =>
@@ -660,8 +658,8 @@ public sealed class MainWindow : Window
                             Spacing = 8,
                             Children =
                             {
-                                _pipelineRunButton,
-                                _pipelineSingleStepButton
+                                _pipelineStepSelector,
+                                _pipelineRunButton
                             }
                         }, 0),
                         Place(_pipelineOpenButton, 1)
@@ -1535,29 +1533,39 @@ public sealed class MainWindow : Window
             _pipelineSharedPreview);
     }
 
-    private Button CreatePipelineStepMenuButton(
-        string label,
-        PipelineRunMode mode,
-        Button cancelButton)
+    // 把单步执行按钮的 Flyout 行为折成 ComboBox：选中即触发对应步骤，并清空选择让 placeholder 再次出现。
+    // TemplateApplied 时把内部的 PART_Popup 强制设成 TopEdgeAlignedLeft（下拉打开时往"上"展开），避免按钮位于窗口底部时被裁切。
+    private void ConfigurePipelineStepSelector(Button cancelButton)
+{
+    _pipelineStepSelector.SelectionChanged += async (_, _) =>
     {
-        var button = new Button
+        if (_pipelineStepSelector.SelectedIndex < 0)
+            return;
+        var selectedIndex = _pipelineStepSelector.SelectedIndex;
+        if (selectedIndex >= PipelineStepOptions.Length)
+            return;
+        // 立刻关闭下拉、清空选择 —— placeholder 复位后才能再次选同一项。
+        _pipelineStepSelector.IsDropDownOpen = false;
+        _pipelineStepSelector.SelectedIndex = -1;
+        if (_cancellation is not null)
+            return;
+        var (_, mode) = PipelineStepOptions[selectedIndex];
+        cancelButton.IsEnabled = true;
+        try
         {
-            Content = label,
-            HorizontalContentAlignment = HorizontalAlignment.Left,
-            HorizontalAlignment = HorizontalAlignment.Stretch
-        };
-        button.Click += async (_, _) =>
+            await RunPipelineAsync(mode);
+        }
+        finally
         {
-            _pipelineSingleStepButton.Flyout?.Hide();
-            if (_cancellation is null)
-            {
-                cancelButton.IsEnabled = true;
-                await RunPipelineAsync(mode);
-                cancelButton.IsEnabled = false;
-            }
-        };
-        return button;
-    }
+            cancelButton.IsEnabled = false;
+        }
+    };
+    _pipelineStepSelector.TemplateApplied += (_, e) =>
+    {
+        if (e.NameScope.Find<Popup>("PART_Popup") is { } popup)
+            popup.Placement = PlacementMode.TopEdgeAlignedLeft;
+    };
+}
 
     private async Task PickPipelineFolderAsync(TextBox target, string title)
     {
@@ -1777,10 +1785,11 @@ public sealed class MainWindow : Window
         _pipelineSharedPreview.UpdateDxfOverlayControls();
         _pipelineSharedPreview.Selection.ClearDxf();
         _pipelineDxfFiles.Clear();
-        var pipelineStartButtons = new[]
+        // 全部执行按钮 + 单步可选框在运行期间统一禁用，避免重复触发。
+        var pipelineStartButtons = new Control[]
         {
             _pipelineRunButton,
-            _pipelineSingleStepButton
+            _pipelineStepSelector
         };
         foreach (var button in pipelineStartButtons)
             button.IsEnabled = false;
