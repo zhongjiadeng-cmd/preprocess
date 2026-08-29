@@ -27,6 +27,18 @@ class PipelineIndependentStepsTests(unittest.TestCase):
         self.assertIn('button.Resources["SplitButtonSecondaryButtonSize"] = 40d', THEME_SOURCE)
         self.assertIn("arrow.RenderTransform = new RotateTransform(180)", THEME_SOURCE)
 
+    def test_main_pipeline_exposes_page_level_intermediate_artifact_imports(self):
+        subtitle = 'UiTheme.PageSubtitle("先输出灰度分层 TIFF，再逐层生成 DXF，最后打包为机器加工文件。")'
+        import_button = "_pipelineImportButton,"
+        first_section = 'MakeInspectorSection(\n                    "输入与分层"'
+        self.assertIn('private readonly DropDownButton _pipelineImportButton = new() { Content = "导入"', SOURCE)
+        self.assertIn('"导入分层 TIFF 文件夹"', SOURCE)
+        self.assertIn('"导入 DXF 文件夹"', SOURCE)
+        self.assertLess(SOURCE.index(subtitle), SOURCE.index(import_button))
+        self.assertLess(SOURCE.index(import_button), SOURCE.index(first_section))
+        self.assertIn('"分层 TIFF 目录"', SOURCE)
+        self.assertIn('"DXF 目录"', SOURCE)
+
     def test_single_step_modes_have_explicit_dependencies(self):
         self.assertIn("PipelineRunMode.GrayscaleOnly", SOURCE)
         self.assertIn("PipelineRunMode.DxfOnly", SOURCE)

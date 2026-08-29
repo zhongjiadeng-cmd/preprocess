@@ -37,6 +37,7 @@ public sealed class DxfPreviewControlTests
         preview.LoadFile(dxf);
 
         Assert.AreEqual("plain.dxf · 3 条 LINE", preview.Summary);
+        Assert.AreEqual(3, preview.LineCount);
     }
 
     [TestMethod]

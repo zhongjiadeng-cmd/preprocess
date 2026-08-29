@@ -61,6 +61,7 @@ public sealed class DxfPreviewControl : Control, IDisposable
     ];
 
     public string Summary { get; private set; } = "尚未生成或加载 DXF";
+    public int LineCount { get; private set; }
     public bool HasTexture => _textureBitmap is not null;
     public string TextureStatus => !HasTexture
         ? "此 DXF 没有配对纹理"
@@ -131,6 +132,7 @@ public sealed class DxfPreviewControl : Control, IDisposable
         _zoom = 1;
         _pan = default;
         Summary = "正在等待生成 DXF…";
+        LineCount = 0;
         InvalidateVisual();
     }
 
@@ -224,6 +226,7 @@ public sealed class DxfPreviewControl : Control, IDisposable
         var metadata = DxfBlockMetadata.LoadForDxf(path);
         var firstPass = ScanFile(path, 0, metadata: null);
         var count = firstPass.Count;
+        LineCount = count;
         var bounds = firstPass.Bounds;
         metadata?.ValidateLineCount(count);
         var stride = Math.Max(1, (int)Math.Ceiling(count / (double)MaximumDisplayedSegments));
