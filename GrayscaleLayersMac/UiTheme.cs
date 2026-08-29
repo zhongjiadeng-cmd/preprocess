@@ -227,6 +227,57 @@ internal static class UiTheme
         AttachButtonTransitions(button);
     }
 
+    /// <summary>
+    /// 主操作分割按钮：左侧执行默认操作，右侧窄区打开附加操作。
+    /// 通过 SplitButton 自身的动态资源统一原生模板中两个按钮的交互色。
+    /// </summary>
+    public static void ApplyPrimaryStyle(SplitButton button)
+    {
+        button.Classes.Add("accent");
+        button.Height = 44;
+        button.MinWidth = 150;
+        button.FontSize = 15;
+        button.FontWeight = FontWeight.SemiBold;
+        button.CornerRadius = ControlRadius;
+        button.Foreground = AccentTextBrush;
+        button.HorizontalContentAlignment = HorizontalAlignment.Center;
+
+        var separatorBrush = new SolidColorBrush(Color.FromArgb(62, 255, 255, 255));
+        var disabledBackground = new SolidColorBrush(Color.FromArgb(95, 0, 120, 212));
+        var disabledBorder = new SolidColorBrush(Color.FromArgb(28, 255, 255, 255));
+        button.Resources["SplitButtonBackground"] = AccentBrush;
+        button.Resources["SplitButtonBackgroundPointerOver"] = AccentHoverBrush;
+        button.Resources["SplitButtonBackgroundPressed"] = AccentPressedBrush;
+        button.Resources["SplitButtonBackgroundDisabled"] = disabledBackground;
+        button.Resources["SplitButtonForeground"] = AccentTextBrush;
+        button.Resources["SplitButtonForegroundPointerOver"] = AccentTextBrush;
+        button.Resources["SplitButtonForegroundPressed"] = AccentTextBrush;
+        button.Resources["SplitButtonForegroundDisabled"] = TextFaintBrush;
+        button.Resources["SplitButtonBorderBrush"] = separatorBrush;
+        button.Resources["SplitButtonBorderBrushPointerOver"] = separatorBrush;
+        button.Resources["SplitButtonBorderBrushPressed"] = separatorBrush;
+        button.Resources["SplitButtonBorderBrushDisabled"] = disabledBorder;
+        button.Resources["SplitButtonMinHeight"] = 44d;
+        button.Resources["SplitButtonSecondaryButtonSize"] = 40d;
+        button.Resources["SplitButtonSeparatorWidth"] = 1d;
+
+        button.TemplateApplied += (_, e) =>
+        {
+            if (e.NameScope.Find<Button>("PART_PrimaryButton") is { } primary)
+                AttachButtonTransitions(primary);
+            if (e.NameScope.Find<Button>("PART_SecondaryButton") is not { } secondary)
+                return;
+
+            AttachButtonTransitions(secondary);
+            if (secondary.Content is PathIcon arrow)
+            {
+                arrow.RenderTransformOrigin = new RelativePoint(
+                    0.5, 0.5, RelativeUnit.Relative);
+                arrow.RenderTransform = new RotateTransform(180);
+            }
+        };
+    }
+
     /// <summary>次级按钮：幽灵样式（细描边、悬停提亮）。small 用于工具栏与日志面板。</summary>
     public static void ApplyGhostStyle(Button button, bool small = false)
     {

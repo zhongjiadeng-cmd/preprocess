@@ -173,8 +173,11 @@ public sealed class MainWindow : Window
         PlaceholderText = "生成后选择要预览的层"
     };
     private readonly TextBox _pipelineLogBox = MakeLogBox();
-    private readonly Button _pipelineRunButton = new() { Content = "全部执行", HorizontalAlignment = HorizontalAlignment.Stretch };
-    private readonly Button _pipelineSingleStepButton = new() { Content = "单步执行 ▾" };
+    private readonly SplitButton _pipelineRunSplitButton = new()
+    {
+        Content = "全部执行",
+        HorizontalAlignment = HorizontalAlignment.Left
+    };
     private readonly Button _pipelineOpenButton = new() { Content = "打开加工文件目录", IsEnabled = false };
     private readonly ProgressBar _pipelineProgress = UiTheme.CreateProgress();
     private readonly TexturePreviewController _hatchPreviewController;
@@ -261,8 +264,9 @@ public sealed class MainWindow : Window
         _pipelineTextureSurface.ThumbnailsCollapsedChanged += (_, _) =>
             _workspaceSplitSettings.TrySaveThumbnailCollapsed(
                 _pipelineTextureSurface.IsThumbnailsCollapsed);
-        foreach (var primaryButton in new[] { _pipelineRunButton, _hatchRunButton, _runButton })
+        foreach (var primaryButton in new[] { _hatchRunButton, _runButton })
             UiTheme.ApplyPrimaryStyle(primaryButton);
+        UiTheme.ApplyPrimaryStyle(_pipelineRunSplitButton);
         ConfigurePipelineDxfSelector();
         _dpiBox.TextChanged += (_, _) =>
         {
@@ -451,7 +455,7 @@ public sealed class MainWindow : Window
             await PickPipelineFolderAsync(_pipelineLayerOutputBox, "选择分层 TIFF 保存目录");
         pipelineDxfOutputButton.Click += async (_, _) =>
             await PickPipelineFolderAsync(_pipelineDxfOutputBox, "选择 DXF 保存目录");
-        _pipelineRunButton.Click += async (_, _) =>
+        _pipelineRunSplitButton.Click += async (_, _) =>
         {
             if (_cancellation is null)
             {
@@ -462,6 +466,7 @@ public sealed class MainWindow : Window
         };
         var singleStepFlyout = new Flyout
         {
+            Placement = PlacementMode.TopEdgeAlignedLeft,
             Content = new StackPanel
             {
                 Spacing = 4,
@@ -482,7 +487,7 @@ public sealed class MainWindow : Window
                 }
             }
         };
-        _pipelineSingleStepButton.Flyout = singleStepFlyout;
+        _pipelineRunSplitButton.Flyout = singleStepFlyout;
         pipelineCancelButton.Click += (_, _) => _cancellation?.Cancel();
         _pipelineOpenButton.Click += (_, _) => OpenDirectory(_lastMachineOutputPath);
         pipelineImportDxfButton.Click += async (_, _) =>
@@ -654,16 +659,7 @@ public sealed class MainWindow : Window
                     ColumnSpacing = 10,
                     Children =
                     {
-                        Place(new StackPanel
-                        {
-                            Orientation = Orientation.Horizontal,
-                            Spacing = 8,
-                            Children =
-                            {
-                                _pipelineRunButton,
-                                _pipelineSingleStepButton
-                            }
-                        }, 0),
+                        Place(_pipelineRunSplitButton, 0),
                         Place(_pipelineOpenButton, 1)
                     }
                 }
@@ -1548,7 +1544,7 @@ public sealed class MainWindow : Window
         };
         button.Click += async (_, _) =>
         {
-            _pipelineSingleStepButton.Flyout?.Hide();
+            _pipelineRunSplitButton.Flyout?.Hide();
             if (_cancellation is null)
             {
                 cancelButton.IsEnabled = true;
@@ -1767,7 +1763,7 @@ public sealed class MainWindow : Window
 
         _cancellation = new CancellationTokenSource();
         var pipelineBlocksBoxWasEnabled = _pipelineBlocksBox.IsEnabled;
-        _pipelineRunButton.IsEnabled = false;
+        _pipelineRunSplitButton.IsEnabled = false;
         _pipelineBlocksBox.IsEnabled = false;
         _pipelineBlockCenterMotionBox.IsEnabled = false;
         _pipelineProgress.IsIndeterminate = true;
@@ -1777,14 +1773,6 @@ public sealed class MainWindow : Window
         _pipelineSharedPreview.UpdateDxfOverlayControls();
         _pipelineSharedPreview.Selection.ClearDxf();
         _pipelineDxfFiles.Clear();
-        var pipelineStartButtons = new[]
-        {
-            _pipelineRunButton,
-            _pipelineSingleStepButton
-        };
-        foreach (var button in pipelineStartButtons)
-            button.IsEnabled = false;
-
         string[] layerFiles = [];
         var currentRunDxfFiles = new List<string>();
         var progressWindow = new ProcessingProgressWindow(
@@ -2077,8 +2065,7 @@ public sealed class MainWindow : Window
             progressWindow.CloseFromOwner();
             _cancellation.Dispose();
             _cancellation = null;
-            foreach (var button in pipelineStartButtons)
-                button.IsEnabled = true;
+            _pipelineRunSplitButton.IsEnabled = true;
             _pipelineBlocksBox.IsEnabled = pipelineBlocksBoxWasEnabled;
             UpdateBlockCenterMotionAvailability();
             _pipelineProgress.IsIndeterminate = false;
