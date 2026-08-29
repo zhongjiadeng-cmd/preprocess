@@ -2532,27 +2532,16 @@ class AvaloniaTextureOverlaySourceContractTests(unittest.TestCase):
 class AvaloniaLayerOverlayWiringTests(unittest.TestCase):
     def test_layer_overlay_controls_and_status_are_pipeline_only(self) -> None:
         source = (ROOT / "GrayscaleLayersMac" / "MainWindow.cs").read_text()
-        hatch_call = source[
-            source.index("var hatchPreviewPanel = MakeSharedPreviewPanel"):
-            source.index("var hatchContent = MakeWorkspace")
-        ]
         pipeline_call = source[
             source.index("var pipelinePreviewPanel = MakeSharedPreviewPanel"):
             source.index("var pipelineContent = MakeWorkspace")
-        ]
-        standalone_builder = source[
-            source.index("private static Control MakeDxfPreviewContent"):
-            source.index("private static Control MakePipelineDxfPreviewContent")
         ]
         pipeline_builder = source[
             source.index("private static Control MakePipelineDxfPreviewContent"):
             source.index("private static void SelectSharedPreview")
         ]
 
-        self.assertIn("enableLayerOverlay: false", hatch_call)
-        self.assertIn("enableLayerOverlay: true", pipeline_call)
-        self.assertNotIn("显示灰度纹理", standalone_builder)
-        self.assertNotIn("TextureStatus", standalone_builder)
+        self.assertIn("_pipelineDxfPreview", pipeline_call)
         self.assertIn("显示灰度纹理", pipeline_builder)
         self.assertIn("TextureStatus", pipeline_builder)
 
@@ -2590,16 +2579,13 @@ class AvaloniaLayerOverlayWiringTests(unittest.TestCase):
             "new(startInTopView: true);",
             source,
         )
-        self.assertIn(
-            "private readonly DxfPreviewControl _hatchDxfPreview = new();",
-            source,
-        )
+        self.assertNotIn("_hatchDxfPreview", source)
 
     def test_selector_clears_stale_texture_before_loading_new_item(self) -> None:
         source = (ROOT / "GrayscaleLayersMac" / "MainWindow.cs").read_text()
         handler = source[
-            source.index("_pipelineDxfSelector.SelectionChanged"):
-            source.index("_dpiBox.TextChanged")
+            source.index("private bool LoadPipelineLayerPreview"):
+            source.index("public MainWindow()")
         ]
         self.assertIn("_pipelineDxfPreview.ClearTexture()", handler)
         self.assertIn("item.HasTexture", handler)
@@ -2608,7 +2594,7 @@ class AvaloniaLayerOverlayWiringTests(unittest.TestCase):
     def test_orbiting_refreshes_the_top_view_texture_explanation(self) -> None:
         source = (ROOT / "GrayscaleLayersMac" / "MainWindow.cs").read_text()
         toolbar = source[
-            source.index("private static Control MakeDxfPreviewContent"):
+            source.index("private static Control MakePipelineDxfPreviewContent"):
             source.index("private static void SelectSharedPreview")
         ]
         self.assertIn("preview.AddHandler(", toolbar)

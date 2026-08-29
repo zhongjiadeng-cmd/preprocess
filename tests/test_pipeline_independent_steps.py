@@ -28,16 +28,26 @@ class PipelineIndependentStepsTests(unittest.TestCase):
         self.assertIn("arrow.RenderTransform = new RotateTransform(180)", THEME_SOURCE)
 
     def test_main_pipeline_exposes_page_level_intermediate_artifact_imports(self):
-        subtitle = 'UiTheme.PageSubtitle("先输出灰度分层 TIFF，再逐层生成 DXF，最后打包为机器加工文件。")'
         import_button = "_pipelineImportButton,"
-        first_section = 'MakeInspectorSection(\n                    "输入与分层"'
+        first_section = 'MakeInspectorSection(\n                    "灰度分层"'
         self.assertIn('private readonly DropDownButton _pipelineImportButton = new() { Content = "导入"', SOURCE)
-        self.assertIn('"导入分层 TIFF 文件夹"', SOURCE)
-        self.assertIn('"导入 DXF 文件夹"', SOURCE)
-        self.assertLess(SOURCE.index(subtitle), SOURCE.index(import_button))
+        self.assertIn('"选择文件夹…"', SOURCE)
+        self.assertIn('"选择文件…"', SOURCE)
         self.assertLess(SOURCE.index(import_button), SOURCE.index(first_section))
         self.assertIn('"分层 TIFF 目录"', SOURCE)
         self.assertIn('"DXF 目录"', SOURCE)
+
+    def test_main_pipeline_keeps_the_original_single_workspace_structure(self):
+        self.assertIn('MakeInspectorSection(\n                    "灰度分层"', SOURCE)
+        self.assertIn('MakeInspectorSection(\n                    "Hatch 与 DXF"', SOURCE)
+        self.assertIn('"Voronoi 分块与边界扩散"', SOURCE)
+        self.assertIn('MakeInspectorSection(\n                    "机器加工文件"', SOURCE)
+        self.assertIn("var pipelinePreviewPanel = MakeSharedPreviewPanel", SOURCE)
+        self.assertIn('var textureTab = new ToggleButton { Content = "纹理" }', SOURCE)
+        self.assertIn('var dxfTab = new ToggleButton { Content = "DXF" }', SOURCE)
+        self.assertNotIn("PipelineStepNavigator", SOURCE)
+        self.assertNotIn("InspectorCategoryTabs", SOURCE)
+        self.assertNotIn('Content = "选择纹理图"', SOURCE)
 
     def test_texture_inspection_resolves_scripts_for_packaged_app_layout(self):
         method = SOURCE.split(

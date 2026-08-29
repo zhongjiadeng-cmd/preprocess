@@ -1,0 +1,70 @@
+using System;
+using System.IO;
+using Microsoft.VisualStudio.TestTools.UnitTesting;
+
+namespace GrayscaleLayersMac.Tests;
+
+[TestClass]
+public sealed class UiStructureContractTests
+{
+    private static readonly string MainWindowSource = File.ReadAllText(
+        Path.Combine(FindRepositoryRoot(), "GrayscaleLayersMac", "MainWindow.cs"));
+
+    [TestMethod]
+    public void OriginalInspectorSectionsRemainInOrder()
+    {
+        var grayscale = MainWindowSource.IndexOf(
+            "MakeInspectorSection(\n                    \"灰度分层\"",
+            StringComparison.Ordinal);
+        var hatch = MainWindowSource.IndexOf(
+            "MakeInspectorSection(\n                    \"Hatch 与 DXF\"",
+            StringComparison.Ordinal);
+        var voronoi = MainWindowSource.IndexOf(
+            "MakeVoronoiPanel(",
+            StringComparison.Ordinal);
+        var machine = MainWindowSource.IndexOf(
+            "MakeInspectorSection(\n                    \"机器加工文件\"",
+            StringComparison.Ordinal);
+
+        Assert.IsGreaterThanOrEqualTo(0, grayscale);
+        Assert.IsGreaterThan(grayscale, hatch);
+        Assert.IsGreaterThan(hatch, voronoi);
+        Assert.IsGreaterThan(voronoi, machine);
+    }
+
+    [TestMethod]
+    public void ExistingPreviewLogAndRunEntryPointsRemainPresent()
+    {
+        StringAssert.Contains(MainWindowSource, "MakeSharedPreviewPanel(");
+        StringAssert.Contains(MainWindowSource, "Content = \"纹理\"");
+        StringAssert.Contains(MainWindowSource, "Content = \"DXF\"");
+        StringAssert.Contains(MainWindowSource, "_pipelineLogBox");
+        StringAssert.Contains(MainWindowSource, "private readonly SplitButton _pipelineRunSplitButton");
+        StringAssert.Contains(MainWindowSource, "Content = \"全部执行\"");
+    }
+
+    [TestMethod]
+    public void RedesignDoesNotIntroduceAlternateWorkflowNavigation()
+    {
+        Assert.DoesNotContain("PipelineStepNavigator", MainWindowSource);
+        Assert.DoesNotContain("InspectorCategoryTabs", MainWindowSource);
+        Assert.DoesNotContain("Content = \"选择纹理图\"", MainWindowSource);
+    }
+
+    private static string FindRepositoryRoot()
+    {
+        var directory = new DirectoryInfo(AppContext.BaseDirectory);
+        while (directory is not null)
+        {
+            if (File.Exists(Path.Combine(directory.FullName, "GrayscaleLayersMac.sln")) ||
+                Directory.Exists(Path.Combine(directory.FullName, "GrayscaleLayersMac")))
+            {
+                return directory.FullName;
+            }
+
+            directory = directory.Parent;
+        }
+
+        throw new DirectoryNotFoundException("无法定位测试仓库根目录。");
+    }
+}
