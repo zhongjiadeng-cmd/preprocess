@@ -55,51 +55,6 @@ public sealed class MainWindow : Window
     private readonly List<WorkspaceColumns> _workspaceColumns = [];
     private double _workspacePreviewRatio = WorkspaceSplitSettings.DefaultPreviewRatio;
 
-    private readonly TextBox _inputBox = new() { Watermark = "请选择一张灰度纹理图", IsReadOnly = true };
-    private readonly TextBox _outputBox = new() { Watermark = "请选择结果保存目录", IsReadOnly = true };
-    private readonly NumericUpDown _layersBox = new()
-    {
-        Minimum = 1, Maximum = 255, Value = 10, Increment = 1,
-        ShowButtonSpinner = false,
-        HorizontalAlignment = HorizontalAlignment.Stretch
-    };
-    private readonly NumericUpDown _minLevelBox = MakeNumberBox(0, 1, 254, 0, showButtons: false);
-    private readonly NumericUpDown _maxLevelBox = MakeNumberBox(255, 1, 255, 0, showButtons: false);
-    private readonly CheckBox _belowIsWhite = new()
-    {
-        Content = "低于阈值的区域设为白色（默认设为黑色）"
-    };
-    private readonly TextBox _logBox = UiTheme.CreateLogBox(190);
-    private readonly Button _runButton = new() { Content = "开始处理", HorizontalAlignment = HorizontalAlignment.Stretch };
-    private readonly Button _openOutputButton = new() { Content = "打开输出目录", IsEnabled = false };
-    private readonly ProgressBar _progress = UiTheme.CreateProgress();
-    private readonly TextBox _hatchInputBox = new() { Watermark = "请选择一张黑白纹理图", IsReadOnly = true };
-    private readonly TextBox _hatchOutputBox = new() { Watermark = "可输入文件名或完整路径" };
-    private readonly NumericUpDown _widthBox = MakeNumberBox(100, 0.01m, 100000, showButtons: false);
-    private readonly NumericUpDown _heightBox = MakeNumberBox(100, 0.01m, 100000, showButtons: false);
-    private readonly NumericUpDown _spacingBox = MakeNumberBox(0.02m, 0.001m, 1000);
-    private readonly TextBox _dpiBox = new() { Watermark = "可选；图片无 DPI 时填写" };
-    private readonly GrayscaleLayerPreviewControl _hatchTextureSurface = new();
-    private readonly ComboBox _anchorBox = new()
-    {
-        ItemsSource = new[] { "居中裁剪", "左上角裁剪" },
-        SelectedIndex = 0,
-        HorizontalAlignment = HorizontalAlignment.Stretch
-    };
-    private readonly CheckBox _includeBorder = new() { Content = "在 DXF 中写入加工区域边框" };
-    private readonly CheckBox _bidirectionalHatch = new() { Content = "往返填充" };
-    private readonly NumericUpDown _blocksBox = MakeNumberBox(9, 1, 100, 0);
-    private readonly NumericUpDown _minBlockPercentBox = MakeNumberBox(5, 0.5m, 100, 1);
-    private readonly NumericUpDown _maxBlockPercentBox = MakeNumberBox(18, 0.5m, 100, 1);
-    private readonly NumericUpDown _boundaryBlurBox = MakeNumberBox(3, 0.1m, 100);
-    private readonly NumericUpDown _boundaryCorrelationBox = MakeNumberBox(1, 0.1m, 100);
-    private readonly NumericUpDown _voronoiSeedBox = MakeNumberBox(12345, 1, int.MaxValue, 0);
-    private readonly DxfPreviewControl _hatchDxfPreview = new();
-    private readonly TextBlock _hatchDxfPreviewStatus = new() { Foreground = UiTheme.TextSecondaryBrush };
-    private readonly TextBox _hatchLogBox = MakeLogBox();
-    private readonly Button _hatchRunButton = new() { Content = "生成 DXF", HorizontalAlignment = HorizontalAlignment.Stretch };
-    private readonly Button _hatchOpenButton = new() { Content = "打开输出位置", IsEnabled = false };
-    private readonly ProgressBar _hatchProgress = UiTheme.CreateProgress();
     private readonly TextBox _pipelineInputBox = new() { Watermark = "请选择一张灰度纹理图", IsReadOnly = true };
     private readonly TextBox _pipelineLayerOutputBox = new() { Watermark = "请选择分层 TIFF 保存目录", IsReadOnly = true };
     private readonly TextBox _pipelineDxfOutputBox = new() { Watermark = "请选择 DXF 保存目录", IsReadOnly = true };
@@ -183,9 +138,7 @@ public sealed class MainWindow : Window
     };
     private readonly Button _pipelineOpenButton = new() { Content = "打开加工文件目录", IsEnabled = false };
     private readonly ProgressBar _pipelineProgress = UiTheme.CreateProgress();
-    private readonly TexturePreviewController _hatchPreviewController;
     private readonly TexturePreviewController _pipelinePreviewController;
-    private readonly SharedPreviewView _hatchSharedPreview;
     private readonly SharedPreviewView _pipelineSharedPreview;
     private string? _lastMachineOutputPath;
     private CancellationTokenSource? _cancellation;
@@ -248,9 +201,6 @@ public sealed class MainWindow : Window
         MinHeight = 720;
         Background = UiTheme.RootBrush;
         WindowStartupLocation = WindowStartupLocation.CenterScreen;
-        _hatchPreviewController = new TexturePreviewController(
-            source => _hatchTextureSurface.SetSourceTexture(source as TexturePreviewPayload),
-            update => ApplyTextureSizeUpdate(update, _widthBox, _heightBox));
         _pipelinePreviewController = new TexturePreviewController(
             source => _pipelineTextureSurface.SetSourceTexture(source as TexturePreviewPayload),
             update => ApplyTextureSizeUpdate(
@@ -260,25 +210,15 @@ public sealed class MainWindow : Window
         Styles.Add(UiTheme.CreateGlobalStyles());
         UiTheme.ApplyFluentResourceOverrides(this);
         _workspacePreviewRatio = _workspaceSplitSettings.LoadPreviewRatio();
-        // 三步流程页的图层缩略图侧栏恢复上次收起状态。
+        // 主界面图层缩略图侧栏恢复上次收起状态。
         // 先恢复、再订阅，恢复动作本身不会触发一次多余的写入。
         _pipelineTextureSurface.SetThumbnailsCollapsed(
             _workspaceSplitSettings.LoadThumbnailCollapsed());
         _pipelineTextureSurface.ThumbnailsCollapsedChanged += (_, _) =>
             _workspaceSplitSettings.TrySaveThumbnailCollapsed(
                 _pipelineTextureSurface.IsThumbnailsCollapsed);
-        foreach (var primaryButton in new[] { _hatchRunButton, _runButton })
-            UiTheme.ApplyPrimaryStyle(primaryButton);
         UiTheme.ApplyPrimaryStyle(_pipelineRunSplitButton);
         ConfigurePipelineDxfSelector();
-        _dpiBox.TextChanged += (_, _) =>
-        {
-            _hatchPreviewController.ApplyFallbackDpiEdit(
-                _dpiBox.Text,
-                _widthBox.Minimum,
-                _widthBox.Maximum);
-            RenderTexturePreview(_hatchTextureSurface, _hatchPreviewController.State);
-        };
         _pipelineDpiBox.TextChanged += (_, _) =>
         {
             _pipelinePreviewController.ApplyFallbackDpiEdit(
@@ -288,165 +228,6 @@ public sealed class MainWindow : Window
             RenderTexturePreview(_pipelineTextureSurface, _pipelinePreviewController.State);
         };
         Closed += (_, _) => DisposeTexturePreviews();
-
-        var inputButton = new Button { Content = "选择图片…" };
-        var outputButton = new Button { Content = "选择目录…" };
-        var cancelButton = new Button { Content = "取消", IsEnabled = false };
-
-        inputButton.Click += async (_, _) => await PickInputAsync();
-        outputButton.Click += async (_, _) => await PickOutputAsync();
-        _runButton.Click += async (_, _) =>
-        {
-            if (_cancellation is null)
-            {
-                cancelButton.IsEnabled = true;
-                await RunAsync();
-                cancelButton.IsEnabled = false;
-            }
-        };
-        cancelButton.Click += (_, _) => _cancellation?.Cancel();
-        _openOutputButton.Click += (_, _) => OpenOutputDirectory();
-        LinkGrayLevelBounds(_minLevelBox, _maxLevelBox);
-        LinkGrayLevelBounds(_pipelineMinLevelBox, _pipelineMaxLevelBox);
-
-        var layerContent = new StackPanel
-        {
-            Spacing = 18,
-            Children =
-            {
-                UiTheme.PageTitle("灰度图分层"),
-                UiTheme.PageSubtitle("将灰度纹理图按累计阈值生成多张黑白 TIFF 图像；可限定灰阶上下限，只让区间内的灰阶参与分层。"),
-                MakeInspectorSection(
-                    "输入与参数",
-                    MakeField("输入图片", _inputBox, inputButton),
-                    MakeField("输出目录", _outputBox, outputButton),
-                    new Grid
-                    {
-                        ColumnDefinitions = new ColumnDefinitions("*,*"),
-                        ColumnSpacing = 12,
-                        Children =
-                        {
-                            MakeLabeledControl("灰阶下限（0–254）", _minLevelBox, 0),
-                            MakeLabeledControl("灰阶上限（1–255）", _maxLevelBox, 1),
-                            MakeLabeledControl("分层数量（1–255）", _layersBox, 2)
-                        }
-                    },
-                    new StackPanel { Children = { _belowIsWhite } }),
-                _progress,
-                new Grid
-                {
-                    ColumnDefinitions = new ColumnDefinitions("*,Auto"),
-                    ColumnSpacing = 10,
-                    Children =
-                    {
-                        Place(_runButton, 0),
-                        Place(cancelButton, 1),
-                        Place(_openOutputButton, 2)
-                    }
-                },
-                PersistLogCollapse(UiTheme.LogPanel(_logBox, "运行日志"), LayerLogKey).Root
-            }
-        };
-
-        var hatchInputButton = new Button { Content = "选择图片…" };
-        var hatchOutputButton = new Button { Content = "保存为…" };
-        var hatchCancelButton = new Button { Content = "取消", IsEnabled = false };
-        var hatchImportDxfButton = new Button { Content = "导入 DXF…" };
-        hatchInputButton.Click += async (_, _) => await PickHatchInputAsync();
-        hatchOutputButton.Click += async (_, _) => await PickHatchOutputAsync();
-        _hatchRunButton.Click += async (_, _) =>
-        {
-            if (_cancellation is null)
-            {
-                hatchCancelButton.IsEnabled = true;
-                await RunHatchAsync();
-                hatchCancelButton.IsEnabled = false;
-            }
-        };
-        hatchCancelButton.Click += (_, _) => _cancellation?.Cancel();
-        _hatchOpenButton.Click += (_, _) => OpenHatchOutput();
-        hatchImportDxfButton.Click += async (_, _) =>
-            await ImportDxfPreviewAsync(
-                _hatchDxfPreview,
-                _hatchDxfPreviewStatus,
-                addToPipelineSelector: false,
-                _hatchSharedPreview!);
-
-        var hatchInspector = new StackPanel
-        {
-            Spacing = 18,
-            Children =
-            {
-                UiTheme.PageTitle("Texture to Hatch"),
-                UiTheme.PageSubtitle("自动识别最小重复单元，只排列完整单元，再把黑色区域转换为 DXF 水平阴影线。"),
-                MakeInspectorSection(
-                    "输入输出",
-                    MakeField("输入纹理图", _hatchInputBox, hatchInputButton),
-                    MakeField("输出 DXF", _hatchOutputBox, hatchOutputButton)),
-                MakeInspectorSection(
-                    "Hatch 参数",
-                    new Grid
-                    {
-                        ColumnDefinitions = new ColumnDefinitions("*,*,*"),
-                        ColumnSpacing = 16,
-                        Children =
-                        {
-                            MakeLabeledControl("目标宽度（mm）", _widthBox, 0),
-                            MakeLabeledControl("目标高度（mm）", _heightBox, 1),
-                            MakeLabeledControl("阴影线间距（mm）", _spacingBox, 2)
-                        }
-                    },
-                    new Grid
-                    {
-                        ColumnDefinitions = new ColumnDefinitions("*,*,*"),
-                        ColumnSpacing = 16,
-                        Children =
-                        {
-                            MakeLabeledControl("设置 DPI", _dpiBox, 0),
-                            MakeLabeledControl("单元阵列对齐", _anchorBox, 1)
-                        }
-                    },
-                    new StackPanel
-                    {
-                        Orientation = Orientation.Horizontal,
-                        Spacing = 20,
-                        Children = { _includeBorder, _bidirectionalHatch }
-                    }),
-                MakeVoronoiPanel(
-                    _blocksBox,
-                    _minBlockPercentBox,
-                    _maxBlockPercentBox,
-                    _boundaryBlurBox,
-                    _boundaryCorrelationBox,
-                    _voronoiSeedBox),
-                _hatchProgress,
-                new Grid
-                {
-                    ColumnDefinitions = new ColumnDefinitions("*,Auto,Auto"),
-                    ColumnSpacing = 10,
-                    Children =
-                    {
-                        Place(_hatchRunButton, 0),
-                        Place(hatchCancelButton, 1),
-                        Place(_hatchOpenButton, 2)
-                    }
-                }
-            }
-        };
-        var hatchPreviewPanel = MakeSharedPreviewPanel(
-            _hatchTextureSurface,
-            _hatchDxfPreview,
-            _hatchDxfPreviewStatus,
-            hatchImportDxfButton,
-            fileSelector: null,
-            enableLayerOverlay: false,
-            out _hatchSharedPreview);
-        var hatchContent = MakeWorkspace(
-            hatchInspector,
-            hatchPreviewPanel,
-            _hatchLogBox,
-            "运行日志",
-            HatchLogKey);
 
         var pipelineInputButton = new Button { Content = "选择图片…" };
         var pipelineLayerOutputButton = new Button { Content = "选择目录…" };
@@ -706,52 +487,13 @@ public sealed class MainWindow : Window
 
         foreach (var secondaryButton in new[]
         {
-            inputButton, outputButton, cancelButton,
-            hatchInputButton, hatchOutputButton, hatchCancelButton,
             pipelineInputButton, pipelineLayerOutputButton, pipelineDxfOutputButton,
             pipelineCancelButton,
-            _openOutputButton, _hatchOpenButton, _pipelineOpenButton,
+            _pipelineOpenButton,
             _pipelineImportButton, _pipelineClearButton
         })
             UiTheme.ApplyGhostStyle(secondaryButton);
-        UiTheme.MarkDanger(cancelButton);
-        UiTheme.MarkDanger(hatchCancelButton);
         UiTheme.MarkDanger(pipelineCancelButton);
-
-        var workflowTabs = new TabControl
-        {
-            SelectedIndex = 0,
-            Margin = new Thickness(16, 0, 16, 16),
-            HorizontalAlignment = HorizontalAlignment.Stretch,
-            VerticalAlignment = VerticalAlignment.Stretch,
-            Items =
-            {
-                new TabItem
-                {
-                    Header = "三步流程",
-                    Content = pipelineContent
-                },
-                new TabItem
-                {
-                    Header = "灰度图分层",
-                    Content = new ScrollViewer
-                    {
-                        Padding = new Thickness(28),
-                        Content = new Border
-                        {
-                            MaxWidth = 1240,
-                            HorizontalAlignment = HorizontalAlignment.Center,
-                            Child = layerContent
-                        }
-                    }
-                },
-                new TabItem
-                {
-                    Header = "纹理转 Hatch DXF",
-                    Content = hatchContent
-                }
-            }
-        };
 
         var appHeader = new Border
         {
@@ -825,7 +567,11 @@ public sealed class MainWindow : Window
             Children =
             {
                 AtRow(appHeader, 0),
-                AtRow(workflowTabs, 1)
+                AtRow(new Border
+                {
+                    Child = pipelineContent,
+                    Margin = new Thickness(16, 0, 16, 16)
+                }, 1)
             }
         };
     }
@@ -1496,42 +1242,6 @@ public sealed class MainWindow : Window
         return control;
     }
 
-    private async Task PickInputAsync()
-    {
-        var files = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
-        {
-            Title = "选择灰度纹理图",
-            AllowMultiple = false,
-            FileTypeFilter =
-            [
-                new FilePickerFileType("图像文件")
-                {
-                    Patterns = ["*.tif", "*.tiff", "*.png", "*.jpg", "*.jpeg", "*.bmp"]
-                }
-            ]
-        });
-
-        var path = files.FirstOrDefault()?.TryGetLocalPath();
-        if (!string.IsNullOrWhiteSpace(path))
-        {
-            _inputBox.Text = path;
-            if (string.IsNullOrWhiteSpace(_outputBox.Text))
-                _outputBox.Text = Path.Combine(Path.GetDirectoryName(path)!, $"{Path.GetFileNameWithoutExtension(path)}_layers");
-        }
-    }
-
-    private async Task PickOutputAsync()
-    {
-        var folders = await StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions
-        {
-            Title = "选择结果保存目录",
-            AllowMultiple = false
-        });
-        var path = folders.FirstOrDefault()?.TryGetLocalPath();
-        if (!string.IsNullOrWhiteSpace(path))
-            _outputBox.Text = path;
-    }
-
     private async Task PickPipelineInputAsync()
     {
         var files = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
@@ -1799,7 +1509,7 @@ public sealed class MainWindow : Window
         files.Count == 0 ? null : Path.GetDirectoryName(files[0]);
 
     /// <summary>
-    /// 清空所有已导入或生成的 TIFF 与 DXF 缓存：三步流程页与"纹理转 Hatch DXF"页的
+    /// 清空所有已导入或生成的 TIFF 与 DXF 缓存：
     /// 纹理/分层预览、DXF 预览与层选择器全部释放。
     /// 只清内存状态——磁盘上的文件、用户手填的输入输出路径与各项参数都不动。
     /// </summary>
@@ -1823,21 +1533,11 @@ public sealed class MainWindow : Window
         RenderTexturePreview(_pipelineTextureSurface, _pipelinePreviewController.State);
         SelectSharedPreview(_pipelineSharedPreview, SharedPreviewKind.Texture);
 
-        _hatchDxfPreview.Clear();
-        _hatchDxfPreviewStatus.Text = _hatchDxfPreview.Summary;
-        _hatchDxfPreviewStatus.Foreground = UiTheme.TextSecondaryBrush;
-        _hatchSharedPreview.Selection.ClearDxf();
-        _hatchSharedPreview.UpdateDxfOverlayControls();
-        _hatchTextureSurface.ClearAll();
-        _hatchPreviewController.Reset();
-        RenderTexturePreview(_hatchTextureSurface, _hatchPreviewController.State);
-
         _lastMachineOutputPath = null;
         _pipelineOpenButton.IsEnabled = false;
 
         AppendPipelineLog(
             "已清空缓存：导入/生成的 TIFF 与 DXF 预览全部释放（磁盘文件未受影响）。\n");
-        AppendHatchLog("已清空缓存：纹理与 DXF 预览已释放（磁盘文件未受影响）。\n");
     }
 
     private async Task PickPipelineFolderAsync(TextBox target, string title)
@@ -2578,11 +2278,8 @@ public sealed class MainWindow : Window
     private void DisposeTexturePreviews()
     {
         // 控制器 Close 时会通知纹理界面卸下第 0 层，这里再释放画布与图层资源。
-        _hatchPreviewController.Dispose();
         _pipelinePreviewController.Dispose();
-        _hatchTextureSurface.Dispose();
         _pipelineTextureSurface.Dispose();
-        _hatchDxfPreview.Dispose();
         _pipelineDxfPreview.Dispose();
     }
 
@@ -2601,225 +2298,6 @@ public sealed class MainWindow : Window
             process,
             cancellationToken);
         return process.ExitCode;
-    }
-
-    private async Task PickHatchInputAsync()
-    {
-        var files = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
-        {
-            Title = "选择黑白纹理图",
-            AllowMultiple = false,
-            FileTypeFilter =
-            [
-                new FilePickerFileType("图像文件")
-                {
-                    Patterns = ["*.tif", "*.tiff", "*.png", "*.jpg", "*.jpeg", "*.bmp"]
-                }
-            ]
-        });
-
-        var path = files.FirstOrDefault()?.TryGetLocalPath();
-        if (string.IsNullOrWhiteSpace(path))
-            return;
-
-        _hatchInputBox.Text = path;
-        if (string.IsNullOrWhiteSpace(_hatchOutputBox.Text))
-            _hatchOutputBox.Text = Path.Combine(
-                Path.GetDirectoryName(path)!,
-                $"{Path.GetFileNameWithoutExtension(path)}_hatch.dxf");
-
-        await LoadTexturePreviewAsync(
-            path,
-            _hatchTextureSurface,
-            _dpiBox,
-            _widthBox,
-            _heightBox,
-            _hatchPreviewController,
-            _hatchSharedPreview);
-    }
-
-    private async Task PickHatchOutputAsync()
-    {
-        var file = await StorageProvider.SaveFilePickerAsync(new FilePickerSaveOptions
-        {
-            Title = "保存 Hatch DXF",
-            DefaultExtension = "dxf",
-            SuggestedFileName = string.IsNullOrWhiteSpace(_hatchInputBox.Text)
-                ? "texture_hatch.dxf"
-                : $"{Path.GetFileNameWithoutExtension(_hatchInputBox.Text)}_hatch.dxf",
-            FileTypeChoices =
-            [
-                new FilePickerFileType("DXF 文件") { Patterns = ["*.dxf"] }
-            ]
-        });
-        var path = file?.TryGetLocalPath();
-        if (!string.IsNullOrWhiteSpace(path))
-            _hatchOutputBox.Text = path;
-    }
-
-    private async Task RunHatchAsync()
-    {
-        var input = _hatchInputBox.Text?.Trim();
-        var output = _hatchOutputBox.Text?.Trim();
-        if (string.IsNullOrWhiteSpace(input) || !File.Exists(input))
-        {
-            await ShowMessageAsync("请先选择有效的输入纹理图。");
-            return;
-        }
-        if (string.IsNullOrWhiteSpace(output))
-        {
-            await ShowMessageAsync("请先选择 DXF 输出位置。");
-            return;
-        }
-
-        // 如果只输入了文件名，自动补到输入图片所在目录；如果是完整路径则直接取绝对路径。
-        if (!Path.IsPathRooted(output)
-            && !output.Contains(Path.DirectorySeparatorChar)
-            && !output.Contains(Path.AltDirectorySeparatorChar))
-        {
-            output = Path.Combine(Path.GetDirectoryName(input)!, output);
-        }
-        output = Path.GetFullPath(output);
-        _hatchOutputBox.Text = output;
-
-        var script = ApplicationLayout.GetScriptPath(
-            AppContext.BaseDirectory, "texture_to_hatch_dxf.py");
-        if (!File.Exists(script))
-        {
-            await ShowMessageAsync($"找不到 Python 脚本：\n{script}");
-            return;
-        }
-
-        var python = await FindPythonAsync();
-        if (python is null)
-        {
-            await ShowMessageAsync("找不到带有 numpy 和 Pillow 的 Python 3。");
-            return;
-        }
-
-        if (!TextureFallbackDpi.TryParseOptional(_dpiBox.Text, out var dpi))
-        {
-            await ShowMessageAsync("DPI 必须留空或填写有限且大于 0 的数字。");
-            return;
-        }
-
-        _cancellation = new CancellationTokenSource();
-        _hatchRunButton.IsEnabled = false;
-        _hatchOpenButton.IsEnabled = false;
-        _hatchProgress.IsIndeterminate = true;
-        _hatchLogBox.Text = "";
-        _hatchDxfPreview.Clear();
-        _hatchDxfPreviewStatus.Text = _hatchDxfPreview.Summary;
-        _hatchSharedPreview.UpdateDxfOverlayControls();
-        _hatchSharedPreview.Selection.ClearDxf();
-
-        var width = _widthBox.Value ?? 100;
-        var height = _heightBox.Value ?? 100;
-        var spacing = _spacingBox.Value ?? 0.02m;
-        if (!TryValidateVoronoiSettings(
-                _blocksBox,
-                _minBlockPercentBox,
-                _maxBlockPercentBox,
-                _boundaryCorrelationBox,
-                out var voronoiError))
-        {
-            await ShowMessageAsync(voronoiError);
-            return;
-        }
-        AppendHatchLog($"Python：{python}");
-        AppendHatchLog($"输入：{input}");
-        AppendHatchLog($"输出：{output}\n");
-
-        try
-        {
-            var outputDirectory = Path.GetDirectoryName(output);
-            if (!string.IsNullOrWhiteSpace(outputDirectory))
-                Directory.CreateDirectory(outputDirectory);
-
-            var info = new ProcessStartInfo
-            {
-                FileName = python,
-                UseShellExecute = false,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                CreateNoWindow = true
-            };
-            foreach (var argument in new[]
-            {
-                script, input, output,
-                "--width", Invariant(width),
-                "--height", Invariant(height),
-                "--spacing", Invariant(spacing),
-                "--anchor", _anchorBox.SelectedIndex == 1 ? "top-left" : "center"
-            })
-                info.ArgumentList.Add(argument);
-            if (dpi.HasValue)
-            {
-                info.ArgumentList.Add("--dpi");
-                info.ArgumentList.Add(dpi.Value.ToString(CultureInfo.InvariantCulture));
-            }
-            if (_includeBorder.IsChecked == true)
-                info.ArgumentList.Add("--border");
-            if (_bidirectionalHatch.IsChecked == true)
-                info.ArgumentList.Add("--bidirectional");
-            AddVoronoiArguments(
-                info,
-                width,
-                height,
-                _blocksBox,
-                _minBlockPercentBox,
-                _maxBlockPercentBox,
-                _boundaryBlurBox,
-                _boundaryCorrelationBox,
-                _voronoiSeedBox);
-
-            using var process = new Process { StartInfo = info };
-            process.OutputDataReceived += (_, e) => { if (e.Data is not null) AppendHatchLog(e.Data); };
-            process.ErrorDataReceived += (_, e) => { if (e.Data is not null) AppendHatchLog($"错误：{e.Data}"); };
-            process.Start();
-            process.BeginOutputReadLine();
-            process.BeginErrorReadLine();
-            await ProcessCancellation.WaitForExitOrTerminateAsync(
-                process,
-                _cancellation.Token);
-
-            if (process.ExitCode == 0)
-            {
-                AppendHatchLog("\nDXF 生成完成。");
-                _hatchOpenButton.IsEnabled = true;
-                if (LoadDxfPreview(_hatchDxfPreview, _hatchDxfPreviewStatus, output))
-                {
-                    _hatchSharedPreview.UpdateDxfOverlayControls();
-                    _hatchSharedPreview.Selection.CompleteDxfLoad();
-                    SelectSharedPreview(_hatchSharedPreview, SharedPreviewKind.Dxf);
-                }
-                else
-                {
-                    _hatchSharedPreview.UpdateDxfOverlayControls();
-                }
-            }
-            else
-            {
-                AppendHatchLog($"\n生成失败，退出代码：{process.ExitCode}");
-                await ShowMessageAsync("DXF 生成失败，请查看运行日志。");
-            }
-        }
-        catch (OperationCanceledException)
-        {
-            AppendHatchLog("\n操作已取消。");
-        }
-        catch (Exception ex)
-        {
-            AppendHatchLog($"\n发生异常：{ex.Message}");
-            await ShowMessageAsync(ex.Message);
-        }
-        finally
-        {
-            _cancellation.Dispose();
-            _cancellation = null;
-            _hatchRunButton.IsEnabled = true;
-            _hatchProgress.IsIndeterminate = false;
-        }
     }
 
     // 上下限联动：始终保留至少一级灰阶差，避免出现下限 ≥ 上限的无效区间。
@@ -2919,119 +2397,6 @@ public sealed class MainWindow : Window
     private static string Invariant(decimal value) =>
         value.ToString(CultureInfo.InvariantCulture);
 
-    private async Task RunAsync()
-    {
-        var input = _inputBox.Text?.Trim();
-        var output = _outputBox.Text?.Trim();
-        if (string.IsNullOrWhiteSpace(input) || !File.Exists(input))
-        {
-            await ShowMessageAsync("请先选择有效的输入图片。");
-            return;
-        }
-        if (string.IsNullOrWhiteSpace(output))
-        {
-            await ShowMessageAsync("请先选择输出目录。");
-            return;
-        }
-
-        var layers = (int)(_layersBox.Value ?? 10);
-        if (!TryReadGrayLevelRange(
-                _minLevelBox,
-                _maxLevelBox,
-                layers,
-                out var minLevel,
-                out var maxLevel,
-                out var rangeError))
-        {
-            await ShowMessageAsync(rangeError);
-            return;
-        }
-
-        var script = ApplicationLayout.GetScriptPath(
-            AppContext.BaseDirectory, "grayscale_layers.py");
-        if (!File.Exists(script))
-        {
-            await ShowMessageAsync($"找不到 Python 脚本：\n{script}");
-            return;
-        }
-
-        var python = await FindPythonAsync();
-        if (python is null)
-        {
-            await ShowMessageAsync("找不到 Python 3。请先安装 Python 3，并确保 python3 可从终端运行。");
-            return;
-        }
-
-        _cancellation = new CancellationTokenSource();
-        _runButton.IsEnabled = false;
-        _openOutputButton.IsEnabled = false;
-        _progress.IsIndeterminate = true;
-        _logBox.Text = "";
-        AppendLog($"Python：{python}");
-        AppendLog($"输入：{input}");
-        AppendLog($"输出：{output}");
-        AppendLog($"灰阶区间：[{minLevel}, {maxLevel}]，分层数量：{layers}\n");
-
-        try
-        {
-            Directory.CreateDirectory(output);
-            var info = new ProcessStartInfo
-            {
-                FileName = python,
-                UseShellExecute = false,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                CreateNoWindow = true
-            };
-            info.ArgumentList.Add(script);
-            info.ArgumentList.Add(input);
-            info.ArgumentList.Add(output);
-            info.ArgumentList.Add("--layers");
-            info.ArgumentList.Add(layers.ToString(CultureInfo.InvariantCulture));
-            GrayLevelRange.AppendArguments(info.ArgumentList, minLevel, maxLevel);
-            if (_belowIsWhite.IsChecked == true)
-                info.ArgumentList.Add("--below-is-white");
-
-            using var process = new Process { StartInfo = info };
-            process.OutputDataReceived += (_, e) => { if (e.Data is not null) AppendLog(e.Data); };
-            process.ErrorDataReceived += (_, e) => { if (e.Data is not null) AppendLog($"错误：{e.Data}"); };
-
-            process.Start();
-            process.BeginOutputReadLine();
-            process.BeginErrorReadLine();
-            await ProcessCancellation.WaitForExitOrTerminateAsync(
-                process,
-                _cancellation.Token);
-
-            if (process.ExitCode == 0)
-            {
-                AppendLog("\n处理完成。");
-                _openOutputButton.IsEnabled = true;
-            }
-            else
-            {
-                AppendLog($"\n处理失败，退出代码：{process.ExitCode}");
-                await ShowMessageAsync("处理失败，请查看运行日志。");
-            }
-        }
-        catch (OperationCanceledException)
-        {
-            AppendLog("\n操作已取消。");
-        }
-        catch (Exception ex)
-        {
-            AppendLog($"\n发生异常：{ex.Message}");
-            await ShowMessageAsync(ex.Message);
-        }
-        finally
-        {
-            _cancellation.Dispose();
-            _cancellation = null;
-            _runButton.IsEnabled = true;
-            _progress.IsIndeterminate = false;
-        }
-    }
-
     private static async Task<string?> FindPythonAsync(
         CancellationToken cancellationToken = default)
     {
@@ -3066,13 +2431,6 @@ public sealed class MainWindow : Window
         }
         return null;
     }
-
-    private void AppendLog(string text) =>
-        Dispatcher.UIThread.Post(() =>
-        {
-            _logBox.Text += text + Environment.NewLine;
-            _logBox.CaretIndex = _logBox.Text?.Length ?? 0;
-        });
 
     private static bool LoadDxfPreview(
         DxfPreviewControl preview,
@@ -3136,39 +2494,12 @@ public sealed class MainWindow : Window
         }
     }
 
-    private void AppendHatchLog(string text) =>
-        Dispatcher.UIThread.Post(() =>
-        {
-            _hatchLogBox.Text += text + Environment.NewLine;
-            _hatchLogBox.CaretIndex = _hatchLogBox.Text?.Length ?? 0;
-        });
-
     private void AppendPipelineLog(string text) =>
         Dispatcher.UIThread.Post(() =>
         {
             _pipelineLogBox.Text += text + Environment.NewLine;
             _pipelineLogBox.CaretIndex = _pipelineLogBox.Text?.Length ?? 0;
         });
-
-    private void OpenOutputDirectory()
-    {
-        var path = _outputBox.Text?.Trim();
-        if (string.IsNullOrWhiteSpace(path) || !Directory.Exists(path)) return;
-        var info = new ProcessStartInfo { FileName = "open", UseShellExecute = false };
-        info.ArgumentList.Add(path);
-        Process.Start(info);
-    }
-
-    private void OpenHatchOutput()
-    {
-        var path = _hatchOutputBox.Text?.Trim();
-        var directory = string.IsNullOrWhiteSpace(path) ? null : Path.GetDirectoryName(path);
-        if (string.IsNullOrWhiteSpace(directory) || !Directory.Exists(directory))
-            return;
-        var info = new ProcessStartInfo { FileName = "open", UseShellExecute = false };
-        info.ArgumentList.Add(directory);
-        Process.Start(info);
-    }
 
     private static void OpenDirectory(string? path)
     {
