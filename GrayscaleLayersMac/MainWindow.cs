@@ -241,6 +241,7 @@ public sealed class MainWindow : Window
             _workspaceSplitSettings.TrySaveThumbnailCollapsed(
                 _pipelineTextureSurface.IsThumbnailsCollapsed);
         UiTheme.ApplyPrimaryStyle(_pipelineRunSplitButton);
+        ApplyPipelineInputStyles();
         _pipelineDpiBox.TextChanged += (_, _) =>
         {
             _pipelinePreviewController.ApplyFallbackDpiEdit(
@@ -701,18 +702,51 @@ public sealed class MainWindow : Window
         decimal maximum,
         int decimalPlaces = 3,
         decimal minimum = 0,
-        bool showButtons = true) => new()
+        bool showButtons = true)
     {
-        Minimum = minimum,
-        Maximum = maximum,
-        Value = value,
-        Increment = increment,
-        FormatString = decimalPlaces == 0 ? "0" : $"0.{new string('#', decimalPlaces)}",
-        ShowButtonSpinner = showButtons,
-        FontFamily = UiTheme.MonoFont,
-        FontSize = 13,
-        HorizontalAlignment = HorizontalAlignment.Stretch
-    };
+        var box = new NumericUpDown
+        {
+            Minimum = minimum,
+            Maximum = maximum,
+            Value = value,
+            Increment = increment,
+            FormatString = decimalPlaces == 0 ? "0" : $"0.{new string('#', decimalPlaces)}",
+            ShowButtonSpinner = showButtons,
+            FontFamily = UiTheme.MonoFont,
+            FontSize = 13,
+            HorizontalAlignment = HorizontalAlignment.Stretch
+        };
+        UiTheme.ApplyInputStyle(box);
+        return box;
+    }
+
+    private void ApplyPipelineInputStyles()
+    {
+        foreach (var input in new Control[]
+        {
+            _pipelineInputBox,
+            _pipelineLayerOutputBox,
+            _pipelineDxfOutputBox,
+            _pipelineDpiBox,
+            _pipelineMachineNameBox,
+            _pipelineAnchorBox
+        })
+            UiTheme.ApplyInputStyle(input);
+
+        AttachPathTooltip(_pipelineInputBox);
+        AttachPathTooltip(_pipelineLayerOutputBox);
+        AttachPathTooltip(_pipelineDxfOutputBox);
+    }
+
+    private static void AttachPathTooltip(TextBox box)
+    {
+        void Refresh() => ToolTip.SetTip(
+            box,
+            string.IsNullOrWhiteSpace(box.Text) ? box.Watermark : box.Text);
+
+        box.TextChanged += (_, _) => Refresh();
+        Refresh();
+    }
 
     private static TextBox MakeLogBox() => UiTheme.CreateLogBox();
 

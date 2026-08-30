@@ -63,6 +63,16 @@ public sealed class UiStructureContractTests
     }
 
     [TestMethod]
+    public void ExistingParameterFieldsUseSharedStylesWithoutAParallelForm()
+    {
+        StringAssert.Contains(MainWindowSource, "ApplyPipelineInputStyles();");
+        StringAssert.Contains(MainWindowSource, "UiTheme.ApplyInputStyle(box);");
+        StringAssert.Contains(MainWindowSource, "_pipelineAnchorBox");
+        StringAssert.Contains(MainWindowSource, "AttachPathTooltip(_pipelineInputBox);");
+        Assert.DoesNotContain("StyledPipelineForm", MainWindowSource);
+    }
+
+    [TestMethod]
     public void RedesignDoesNotIntroduceAlternateWorkflowNavigation()
     {
         Assert.DoesNotContain("PipelineStepNavigator", MainWindowSource);
