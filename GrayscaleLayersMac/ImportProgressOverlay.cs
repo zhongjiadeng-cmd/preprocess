@@ -23,6 +23,7 @@ internal sealed class ImportProgressOverlay
     private const double CollapsedOffset = -8;
 
     private readonly Func<TimeSpan, CancellationToken, Task> _delay;
+    private readonly bool _hasSpatialTransitions;
     private readonly Border _surface;
     private readonly TranslateTransform _surfaceTranslation = new();
     private readonly Border _icon;
@@ -35,6 +36,8 @@ internal sealed class ImportProgressOverlay
     private ImportProgressStage? _lastAnnouncedStage;
     private long _generation;
     private bool _motionAttached;
+    private bool _showPending;
+    private bool _closeButtonFocusRequested;
 
     public ImportProgressOverlay(
         Control anchor,
@@ -42,6 +45,7 @@ internal sealed class ImportProgressOverlay
     {
         ArgumentNullException.ThrowIfNull(anchor);
         _delay = delay ?? Task.Delay;
+        _hasSpatialTransitions = MotionPreferences.AnimateSpatialProperties;
 
         _icon = (Border)UiIcons.Create(UiIcon.Import);
         _title = new TextBlock
@@ -69,7 +73,14 @@ internal sealed class ImportProgressOverlay
             TextWrapping = TextWrapping.NoWrap,
             TextTrimming = TextTrimming.CharacterEllipsis
         };
-        _liveRegion = new TextBlock { IsVisible = false };
+        // 保持可见才能进入 Avalonia 的自动化树；零尺寸和全透明使它不影响视觉或布局。
+        _liveRegion = new TextBlock
+        {
+            Width = 0,
+            Height = 0,
+            Opacity = 0,
+            IsHitTestVisible = false
+        };
         AutomationProperties.SetLiveSetting(_liveRegion, AutomationLiveSetting.Polite);
         _progress = UiTheme.CreateProgress();
         _progress.Maximum = 1;
@@ -109,17 +120,18 @@ internal sealed class ImportProgressOverlay
         _surface = new Border
         {
             Width = 320,
-            Height = ExpandedHeight,
+            Height = _hasSpatialTransitions ? 0 : ExpandedHeight,
             Padding = new Thickness(14, 12),
             Background = UiTheme.PopupBrush,
             BorderBrush = UiTheme.BorderMediumBrush,
             BorderThickness = new Thickness(1),
             CornerRadius = UiTheme.CardRadius,
             ClipToBounds = true,
-            Opacity = 1,
+            Opacity = 0,
             RenderTransform = _surfaceTranslation,
             Child = content
         };
+        _surfaceTranslation.Y = _hasSpatialTransitions ? CollapsedOffset : 0;
         _surface.AttachedToVisualTree += (_, _) => AttachMotion();
 
         Root = new Popup
@@ -141,19 +153,38 @@ internal sealed class ImportProgressOverlay
     public string DetailText => _detail.Text ?? string.Empty;
     public string CounterText => _counter.Text ?? string.Empty;
     public bool CloseButtonVisible => _closeButton.IsVisible;
-    public bool HasSpatialTransitions => MotionPreferences.AnimateSpatialProperties;
+    public bool HasSpatialTransitions => _hasSpatialTransitions;
     public PlacementMode Placement => Root.Placement;
+    internal string LiveRegionText => AutomationProperties.GetName(_liveRegion) ?? string.Empty;
+    internal bool LiveRegionIsVisible => _liveRegion.IsVisible;
+    internal AutomationLiveSetting LiveRegionSetting => AutomationProperties.GetLiveSetting(_liveRegion);
+    internal double SurfaceTranslationY => _surfaceTranslation.Y;
+    internal int InstalledSurfaceTransitionCount => _surface.Transitions?.Count ?? 0;
+    internal int InstalledTranslationTransitionCount => _surfaceTranslation.Transitions?.Count ?? 0;
+    internal Transitions? SurfaceTransitions => _surface.Transitions;
+    internal Transitions? TranslationTransitions => _surfaceTranslation.Transitions;
+    internal bool CloseButtonFocusRequested => _closeButtonFocusRequested;
+    internal IBrush TitleForeground => _title.Foreground ?? Brushes.Transparent;
+    internal IBrush ProgressForeground => _progress.Foreground ?? Brushes.Transparent;
 
     public void Show(ImportProgressState state)
     {
         ArgumentNullException.ThrowIfNull(state);
         _generation++;
-        Root.IsOpen = true;
+        _closeButtonFocusRequested = false;
         Apply(state);
         _surface.IsHitTestVisible = true;
-        _surface.Height = ExpandedHeight;
-        _surface.Opacity = 1;
-        _surfaceTranslation.Y = 0;
+        _showPending = true;
+        Root.IsOpen = true;
+        if (_motionAttached && _showPending)
+            ExpandSurface();
+    }
+
+    /// <summary>刷新当前进度，不重新打开 Popup，也不改变已有关闭代次。</summary>
+    public void Update(ImportProgressState state)
+    {
+        ArgumentNullException.ThrowIfNull(state);
+        Apply(state);
     }
 
     public async Task ShowSucceededAndCollapseAsync(
@@ -176,6 +207,7 @@ internal sealed class ImportProgressOverlay
 
         Show(state);
         _closeButton.IsVisible = true;
+        _closeButtonFocusRequested = true;
         _closeButton.Focus();
     }
 
@@ -183,9 +215,10 @@ internal sealed class ImportProgressOverlay
     {
         var generation = ++_generation;
         _surface.IsHitTestVisible = false;
-        _surface.Height = MotionPreferences.AnimateSpatialProperties ? 0 : ExpandedHeight;
+        _showPending = false;
+        _surface.Height = _hasSpatialTransitions ? 0 : ExpandedHeight;
         _surface.Opacity = 0;
-        _surfaceTranslation.Y = MotionPreferences.AnimateSpatialProperties ? CollapsedOffset : 0;
+        _surfaceTranslation.Y = _hasSpatialTransitions ? CollapsedOffset : 0;
 
         if (!_motionAttached)
         {
@@ -252,7 +285,7 @@ internal sealed class ImportProgressOverlay
                 Easing = Motion
             }
         };
-        if (MotionPreferences.AnimateSpatialProperties)
+        if (_hasSpatialTransitions)
         {
             transitions.Add(new DoubleTransition
             {
@@ -272,6 +305,16 @@ internal sealed class ImportProgressOverlay
         }
 
         _surface.Transitions = transitions;
+        if (_showPending)
+            ExpandSurface();
+    }
+
+    private void ExpandSurface()
+    {
+        _showPending = false;
+        _surface.Height = ExpandedHeight;
+        _surface.Opacity = 1;
+        _surfaceTranslation.Y = 0;
     }
 
     private static T AtRow<T>(T control, int row) where T : Control
