@@ -263,7 +263,7 @@ public sealed class MainWindow : Window
         _pipelineImportFlyout = new Flyout
         {
             Placement = PlacementMode.BottomEdgeAlignedLeft,
-            Content = new StackPanel
+            Content = UiTheme.FlyoutSurface(new StackPanel
             {
                 Spacing = 4,
                 Children =
@@ -275,9 +275,11 @@ public sealed class MainWindow : Window
                         "选择文件…",
                         ImportPipelineFilesAsync)
                 }
-            }
+            })
         };
         _pipelineImportButton.Flyout = _pipelineImportFlyout;
+        _pipelineImportButton.Content = UiIcons.Labeled(UiIcon.Import, "导入");
+        ToolTip.SetTip(_pipelineImportButton, "导入已有的分层 TIFF 或 DXF 中间结果。");
         ConfigureAppearanceMenu();
         ToolTip.SetTip(
             _pipelineClearButton,
@@ -295,7 +297,7 @@ public sealed class MainWindow : Window
         var singleStepFlyout = new Flyout
         {
             Placement = PlacementMode.TopEdgeAlignedLeft,
-            Content = new StackPanel
+            Content = UiTheme.FlyoutSurface(new StackPanel
             {
                 Spacing = 4,
                 Children =
@@ -313,7 +315,7 @@ public sealed class MainWindow : Window
                         PipelineRunMode.MachineOnly,
                         pipelineCancelButton)
                 }
-            }
+            })
         };
         _pipelineRunSplitButton.Flyout = singleStepFlyout;
         pipelineCancelButton.Click += (_, _) => _cancellation?.Cancel();
@@ -331,12 +333,6 @@ public sealed class MainWindow : Window
             Spacing = 18,
             Children =
             {
-                new StackPanel
-                {
-                    Orientation = Orientation.Horizontal,
-                    Spacing = 10,
-                    Children = { _pipelineImportButton, _pipelineClearButton, _appearanceButton }
-                },
                 new Border
                 {
                     Padding = new Thickness(12, 10),
@@ -530,11 +526,31 @@ public sealed class MainWindow : Window
         {
             pipelineInputButton, pipelineLayerOutputButton, pipelineDxfOutputButton,
             pipelineCancelButton,
-            _pipelineOpenButton,
-            _pipelineImportButton, _pipelineClearButton, _appearanceButton
+            _pipelineOpenButton
         })
-            UiTheme.ApplyGhostStyle(secondaryButton);
+            UiTheme.ApplySecondaryStyle(secondaryButton);
         UiTheme.MarkDanger(pipelineCancelButton);
+
+        UiTheme.ApplyQuietStyle(_pipelineImportButton);
+        UiTheme.ApplyIconStyle(_pipelineClearButton, "清空缓存");
+        _pipelineClearButton.Content = UiIcons.Create(UiIcon.ClearCache);
+        UiTheme.ApplyQuietStyle(_appearanceButton);
+
+        var headerTools = new Border
+        {
+            Padding = new Thickness(4),
+            CornerRadius = UiTheme.SegmentRadius,
+            Background = UiTheme.CardBrush,
+            BorderBrush = UiTheme.BorderSubtleBrush,
+            BorderThickness = new Thickness(1),
+            VerticalAlignment = VerticalAlignment.Center,
+            Child = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                Spacing = 4,
+                Children = { _pipelineImportButton, _pipelineClearButton, _appearanceButton }
+            }
+        };
 
         var appHeader = new Border
         {
@@ -550,10 +566,10 @@ public sealed class MainWindow : Window
                 {
                     Place(new Border
                     {
-                        Width = 44,
-                        Height = 44,
-                        Padding = new Thickness(7),
-                        CornerRadius = new CornerRadius(10),
+                        Width = 38,
+                        Height = 38,
+                        Padding = new Thickness(6),
+                        CornerRadius = UiTheme.SegmentRadius,
                         Background = UiTheme.CardBrush,
                         BorderBrush = UiTheme.BorderSubtleBrush,
                         BorderThickness = new Thickness(1),
@@ -563,8 +579,8 @@ public sealed class MainWindow : Window
                             Source = new Bitmap(
                                 AssetLoader.Open(
                                     new Uri("avares://GrayscaleLayersMac/Assets/AppIcon.png"))),
-                            Width = 28,
-                            Height = 28
+                            Width = 26,
+                            Height = 26
                         }
                     }, 0),
                     Place(new StackPanel
@@ -576,7 +592,7 @@ public sealed class MainWindow : Window
                             new TextBlock
                             {
                                 Text = "纹理预处理工作台",
-                                FontSize = 16,
+                                FontSize = 15.5,
                                 FontWeight = FontWeight.SemiBold,
                                 LetterSpacing = 0.3
                             },
@@ -588,7 +604,8 @@ public sealed class MainWindow : Window
                                 LetterSpacing = 2.2
                             }
                         }
-                    }, 1)
+                    }, 1),
+                    Place(headerTools, 2)
                 }
             }
         };
@@ -619,18 +636,22 @@ public sealed class MainWindow : Window
         var system = new RadioButton { Content = "跟随系统", GroupName = "appearance" };
         var light = new RadioButton { Content = "浅色", GroupName = "appearance" };
         var dark = new RadioButton { Content = "深色", GroupName = "appearance" };
+        UiTheme.ApplyAppearanceOptionStyle(system);
+        UiTheme.ApplyAppearanceOptionStyle(light);
+        UiTheme.ApplyAppearanceOptionStyle(dark);
 
         void RefreshSelection()
         {
             system.IsChecked = app.Appearance == AppAppearance.System;
             light.IsChecked = app.Appearance == AppAppearance.Light;
             dark.IsChecked = app.Appearance == AppAppearance.Dark;
-            _appearanceButton.Content = app.Appearance switch
+            var label = app.Appearance switch
             {
                 AppAppearance.Light => "外观 · 浅色",
                 AppAppearance.Dark => "外观 · 深色",
                 _ => "外观 · 系统"
             };
+            _appearanceButton.Content = UiIcons.Labeled(UiIcon.Appearance, label);
         }
 
         system.Click += (_, _) => app.SetAppearance(AppAppearance.System);
@@ -641,15 +662,15 @@ public sealed class MainWindow : Window
         _appearanceButton.Flyout = new Flyout
         {
             Placement = PlacementMode.BottomEdgeAlignedLeft,
-            Content = new Border
+            Content = UiTheme.FlyoutSurface(new Border
             {
-                Padding = new Thickness(10, 8),
+                Padding = new Thickness(2),
                 Child = new StackPanel
                 {
-                    Spacing = 8,
+                    Spacing = 2,
                     Children = { system, light, dark }
                 }
-            }
+            })
         };
         ToolTip.SetTip(_appearanceButton, "默认跟随 macOS 外观，也可以在此手动覆盖。");
         RefreshSelection();
@@ -1258,6 +1279,7 @@ public sealed class MainWindow : Window
             HorizontalContentAlignment = HorizontalAlignment.Left,
             HorizontalAlignment = HorizontalAlignment.Stretch
         };
+        UiTheme.ApplyQuietStyle(button, small: true);
         button.Click += async (_, _) =>
         {
             _pipelineRunSplitButton.Flyout?.Hide();
@@ -1281,7 +1303,7 @@ public sealed class MainWindow : Window
             HorizontalContentAlignment = HorizontalAlignment.Left,
             HorizontalAlignment = HorizontalAlignment.Stretch
         };
-        UiTheme.ApplyGhostStyle(button, small: true);
+        UiTheme.ApplyQuietStyle(button, small: true);
         button.Click += async (_, _) =>
         {
             _pipelineImportFlyout?.Hide();

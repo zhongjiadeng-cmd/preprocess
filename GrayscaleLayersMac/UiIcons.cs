@@ -32,6 +32,24 @@ internal static class UiIcons
 
     public static Control CreateSmall(UiIcon kind) => Create(kind, IconSize.Size16);
 
+    public static Control Labeled(UiIcon kind, string text) => new StackPanel
+    {
+        Orientation = Orientation.Horizontal,
+        Spacing = 7,
+        VerticalAlignment = VerticalAlignment.Center,
+        Children =
+        {
+            CreateSmall(kind),
+            new TextBlock
+            {
+                Text = text,
+                FontSize = 12.5,
+                FontWeight = Avalonia.Media.FontWeight.Medium,
+                VerticalAlignment = VerticalAlignment.Center
+            }
+        }
+    };
+
     private static Control Create(UiIcon kind, IconSize size)
     {
         return new FluentIcon

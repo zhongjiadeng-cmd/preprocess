@@ -28,12 +28,14 @@ class PipelineIndependentStepsTests(unittest.TestCase):
         self.assertIn("arrow.RenderTransform = new RotateTransform(180)", THEME_SOURCE)
 
     def test_main_pipeline_exposes_page_level_intermediate_artifact_imports(self):
-        import_button = "_pipelineImportButton,"
-        first_section = 'MakeInspectorSection(\n                    "灰度分层"'
         self.assertIn('private readonly DropDownButton _pipelineImportButton = new() { Content = "导入"', SOURCE)
         self.assertIn('"选择文件夹…"', SOURCE)
         self.assertIn('"选择文件…"', SOURCE)
-        self.assertLess(SOURCE.index(import_button), SOURCE.index(first_section))
+        self.assertIn("var headerTools = new Border", SOURCE)
+        header = SOURCE.split("var headerTools = new Border", 1)[1].split("var appHeader = new Border", 1)[0]
+        self.assertIn("_pipelineImportButton", header)
+        self.assertIn("_pipelineClearButton", header)
+        self.assertIn("_appearanceButton", header)
         self.assertIn('"分层 TIFF 目录"', SOURCE)
         self.assertIn('"DXF 目录"', SOURCE)
 

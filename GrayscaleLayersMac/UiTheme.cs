@@ -849,6 +849,18 @@ internal static class UiTheme
         }
     };
 
+    /// <summary>Flyout 内统一使用弹出层语义表面，保留原生定位与关闭行为。</summary>
+    public static Border FlyoutSurface(Control child) => new()
+    {
+        Padding = new Thickness(6),
+        MinWidth = 156,
+        CornerRadius = CardRadius,
+        Background = PopupBrush,
+        BorderBrush = BorderMediumBrush,
+        BorderThickness = new Thickness(1),
+        Child = child
+    };
+
     /// <summary>
     /// 日志面板展开时日志区的固定高度（与日志框 MinHeight 一致，整卡约 224px）。
     /// 必须写死成具体数值（而非 Auto/NaN），这样折叠时 Height → 0

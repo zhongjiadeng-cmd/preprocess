@@ -44,6 +44,25 @@ public sealed class UiStructureContractTests
     }
 
     [TestMethod]
+    public void HeaderOwnsTheCompactToolGroupWithoutChangingItsActions()
+    {
+        var inspectorStart = MainWindowSource.IndexOf("var pipelineInspector = new StackPanel", StringComparison.Ordinal);
+        var inspectorEnd = MainWindowSource.IndexOf("var pipelinePreviewPanel", inspectorStart, StringComparison.Ordinal);
+        var inspector = MainWindowSource[inspectorStart..inspectorEnd];
+        var toolsStart = MainWindowSource.IndexOf("var headerTools = new Border", StringComparison.Ordinal);
+        var toolsEnd = MainWindowSource.IndexOf("var appHeader = new Border", toolsStart, StringComparison.Ordinal);
+        var tools = MainWindowSource[toolsStart..toolsEnd];
+
+        Assert.DoesNotContain("_pipelineImportButton", inspector);
+        StringAssert.Contains(tools, "_pipelineImportButton");
+        StringAssert.Contains(tools, "_pipelineClearButton");
+        StringAssert.Contains(tools, "_appearanceButton");
+        StringAssert.Contains(MainWindowSource, "UiTheme.ApplyQuietStyle(_pipelineImportButton)");
+        StringAssert.Contains(MainWindowSource, "UiTheme.ApplyIconStyle(_pipelineClearButton, \"清空缓存\")");
+        StringAssert.Contains(MainWindowSource, "UiTheme.ApplyQuietStyle(_appearanceButton)");
+    }
+
+    [TestMethod]
     public void RedesignDoesNotIntroduceAlternateWorkflowNavigation()
     {
         Assert.DoesNotContain("PipelineStepNavigator", MainWindowSource);

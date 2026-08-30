@@ -46,6 +46,17 @@ public sealed class UiIconsTests
         Assert.AreEqual("清空缓存", ((TextBlock)fallback).Text);
     }
 
+    [TestMethod]
+    public void LabeledIconKeepsReadableActionText()
+    {
+        var content = UiIcons.Labeled(UiIcon.Import, "导入");
+
+        Assert.IsInstanceOfType<StackPanel>(content);
+        var panel = (StackPanel)content;
+        Assert.AreEqual("FluentIcon", panel.Children[0].GetType().Name);
+        Assert.AreEqual("导入", ((TextBlock)panel.Children[1]).Text);
+    }
+
     private static void AssertIcon(UiIcon kind, string expected)
     {
         Assert.AreEqual(expected, ReadProperty(UiIcons.Create(kind), "Icon"));
