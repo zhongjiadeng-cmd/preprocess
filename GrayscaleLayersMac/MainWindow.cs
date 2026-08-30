@@ -201,7 +201,7 @@ public sealed class MainWindow : Window
             {
                 _pipelineDxfPreview.ClearTexture();
                 _pipelineDxfPreviewStatus.Text = $"无法加载配准纹理：{error.Message}";
-                _pipelineDxfPreviewStatus.Foreground = Brushes.OrangeRed;
+                _pipelineDxfPreviewStatus.Foreground = UiTheme.DangerTextBrush;
                 _pipelineSharedPreview.UpdateDxfOverlayControls();
                 return false;
             }
@@ -2497,7 +2497,7 @@ public sealed class MainWindow : Window
         catch (Exception ex)
         {
             status.Text = $"无法预览 {Path.GetFileName(path)}：{ex.Message}";
-            status.Foreground = Brushes.OrangeRed;
+            status.Foreground = UiTheme.DangerTextBrush;
             return false;
         }
     }

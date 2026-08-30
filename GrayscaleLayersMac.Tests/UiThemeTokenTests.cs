@@ -1,4 +1,6 @@
 using Avalonia.Media;
+using System;
+using System.IO;
 using System.Linq;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 
@@ -78,5 +80,32 @@ public sealed class UiThemeTokenTests
         {
             UiTheme.ApplyScheme(AppColorScheme.Dark);
         }
+    }
+
+    [TestMethod]
+    public void GeneralStatusUiDoesNotUseHardCodedErrorBrushes()
+    {
+        var root = FindRepositoryRoot();
+        foreach (var file in new[] { "MainWindow.cs", "GrayscaleLayerPreviewControl.cs", "App.cs" })
+        {
+            var source = File.ReadAllText(Path.Combine(root, "GrayscaleLayersMac", file));
+            Assert.DoesNotContain("Brushes.OrangeRed", source, file);
+        }
+
+        var appSource = File.ReadAllText(Path.Combine(root, "GrayscaleLayersMac", "App.cs"));
+        Assert.DoesNotContain("Color.FromRgb", appSource);
+    }
+
+    private static string FindRepositoryRoot()
+    {
+        var directory = new DirectoryInfo(AppContext.BaseDirectory);
+        while (directory is not null)
+        {
+            if (Directory.Exists(Path.Combine(directory.FullName, "GrayscaleLayersMac")))
+                return directory.FullName;
+            directory = directory.Parent;
+        }
+
+        throw new DirectoryNotFoundException("无法定位测试仓库根目录。");
     }
 }

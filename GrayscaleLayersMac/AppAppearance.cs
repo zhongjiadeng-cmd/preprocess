@@ -17,6 +17,9 @@ internal enum AppColorScheme
 
 internal static class AppAppearanceResolver
 {
+    public static bool ShouldFollowSystem(AppAppearance appearance) =>
+        appearance == AppAppearance.System;
+
     public static ThemeVariant RequestedThemeVariant(AppAppearance appearance) => appearance switch
     {
         AppAppearance.Light => ThemeVariant.Light,

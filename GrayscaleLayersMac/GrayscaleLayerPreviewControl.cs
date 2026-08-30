@@ -319,7 +319,7 @@ public sealed class GrayscaleLayerPreviewControl : Grid, IDisposable
     public void SetMetadata(string text, bool isError = false)
     {
         _metadata.Text = text;
-        _metadata.Foreground = isError ? Brushes.OrangeRed : UiTheme.TextSecondaryBrush;
+        _metadata.Foreground = isError ? UiTheme.DangerTextBrush : UiTheme.TextSecondaryBrush;
     }
 
     /// <summary>设置物理尺寸文本。</summary>
@@ -628,7 +628,7 @@ public sealed class GrayscaleLayerPreviewControl : Grid, IDisposable
     private void ShowError(Exception error)
     {
         _layerStatus.Text = $"预览错误：{error.Message}";
-        _layerStatus.Foreground = Brushes.OrangeRed;
+        _layerStatus.Foreground = UiTheme.DangerTextBrush;
     }
 
     private void ToggleThumbnailPanel()

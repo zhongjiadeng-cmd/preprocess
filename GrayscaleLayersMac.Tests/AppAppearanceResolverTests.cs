@@ -34,4 +34,12 @@ public sealed class AppAppearanceResolverTests
             AppColorScheme.Dark,
             AppAppearanceResolver.EffectiveScheme(null));
     }
+
+    [TestMethod]
+    public void SystemChangesOnlyApplyWhileFollowingSystem()
+    {
+        Assert.IsTrue(AppAppearanceResolver.ShouldFollowSystem(AppAppearance.System));
+        Assert.IsFalse(AppAppearanceResolver.ShouldFollowSystem(AppAppearance.Light));
+        Assert.IsFalse(AppAppearanceResolver.ShouldFollowSystem(AppAppearance.Dark));
+    }
 }
