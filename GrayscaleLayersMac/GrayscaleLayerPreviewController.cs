@@ -101,6 +101,30 @@ public sealed class GrayscaleLayerPreviewController : IDisposable
         return RebuildAndSelect();
     }
 
+    /// <summary>
+    /// 用已完整准备好的分层原子替换当前分层。源纹理槽位保持不变，且集合所有权移交给控制器。
+    /// </summary>
+    public void ReplaceLayers(IEnumerable<GrayscaleLayerPreviewItem> layers)
+    {
+        ArgumentNullException.ThrowIfNull(layers);
+
+        // 必须在清理旧项前完成枚举和校验：准备集合有问题时，可见预览保持原状。
+        var replacement = layers.ToList();
+        if (replacement.Any(layer => layer is null))
+            throw new ArgumentException("分层预览不能包含空项。", nameof(layers));
+        if (replacement.Any(layer => layer.IsSourceTexture))
+            throw new ArgumentException("分层预览不能包含源纹理项。", nameof(layers));
+
+        ClearLayers();
+        _layers.AddRange(replacement);
+        Error = null;
+        Rebuild();
+        if (FirstLayerIndex >= 0)
+            Select(FirstLayerIndex);
+        else if (SelectedItem is null && _source is not null)
+            Select(0);
+    }
+
     public bool Select(int index)
     {
         if (index < 0 || index >= _items.Count)

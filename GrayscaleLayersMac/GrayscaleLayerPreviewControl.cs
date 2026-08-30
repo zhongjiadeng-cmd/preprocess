@@ -366,6 +366,52 @@ public sealed class GrayscaleLayerPreviewControl : Grid, IDisposable
     }
 
     /// <summary>
+    /// 在不触及当前可见预览的前提下，解码已经检查过的 TIFF 分层。返回值在提交前拥有各项资源，
+    /// 调用方必须提交或释放它。
+    /// </summary>
+    internal Task<PreparedGrayscaleLayerSet> PrepareLayerFilesAsync(
+        IReadOnlyList<KeyValuePair<string, TextureImageInspection>> layers,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(layers);
+
+        var prepared = new List<GrayscaleLayerPreviewItem>();
+        try
+        {
+            foreach (var pair in layers)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var item = new GrayscaleLayerPreviewItem(pair.Key, prepared.Count + 1);
+                prepared.Add(item);
+
+                using var stream = new MemoryStream(pair.Value.PreviewPng, writable: false);
+                var thumbnail = Bitmap.DecodeToWidth(stream, 120, BitmapInterpolationMode.MediumQuality);
+                item.SetPreview(
+                    pair.Value.PreviewPng,
+                    pair.Value.Info.PixelWidth,
+                    pair.Value.Info.PixelHeight,
+                    thumbnail);
+            }
+
+            return Task.FromResult(new PreparedGrayscaleLayerSet(prepared));
+        }
+        catch
+        {
+            foreach (var item in prepared)
+                item.Dispose();
+            throw;
+        }
+    }
+
+    /// <summary>提交已完成准备的分层；提交后由控制器接管项与缩略图的所有权。</summary>
+    internal void CommitPreparedLayers(PreparedGrayscaleLayerSet prepared)
+    {
+        ArgumentNullException.ThrowIfNull(prepared);
+        _controller.ReplaceLayers(prepared.TakeItems());
+        SyncItems();
+    }
+
+    /// <summary>
     /// 清空源纹理与所有分层预览（只清内存中的缓存，不触碰磁盘文件）。
     /// </summary>
     public void ClearAll()

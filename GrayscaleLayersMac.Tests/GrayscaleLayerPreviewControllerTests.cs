@@ -144,6 +144,40 @@ public sealed class GrayscaleLayerPreviewControllerTests
     }
 
     [TestMethod]
+    public void ReplaceLayersDoesNotChangeTheSourceSlotAndSelectsFirstNewLayer()
+    {
+        using var controller = new GrayscaleLayerPreviewController();
+        controller.SetSource(GrayscaleLayerPreviewItem.ForSourceTexture("/tmp/source.png"));
+        var replacement = new[] { new GrayscaleLayerPreviewItem("/tmp/new.tiff", 1) };
+
+        controller.ReplaceLayers(replacement);
+
+        Assert.AreEqual("source.png", Path.GetFileName(controller.Items[0].FilePath));
+        Assert.AreSame(replacement[0], controller.SelectedItem);
+    }
+
+    [TestMethod]
+    public void ReplaceLayersValidationFailureLeavesVisibleLayersUnchanged()
+    {
+        using var controller = new GrayscaleLayerPreviewController();
+        var existing = new GrayscaleLayerPreviewItem("/tmp/existing.tiff", 1);
+        controller.ReplaceLayers([existing]);
+        var invalidSource = GrayscaleLayerPreviewItem.ForSourceTexture("/tmp/invalid.png");
+
+        try
+        {
+            Assert.ThrowsExactly<ArgumentException>(() => controller.ReplaceLayers([invalidSource]));
+
+            Assert.AreSame(existing, controller.SelectedItem);
+            Assert.AreSame(existing, controller.Items[1]);
+        }
+        finally
+        {
+            invalidSource.Dispose();
+        }
+    }
+
+    [TestMethod]
     public void SettingSourceFocusesSlotZeroWhenUserHasNotPickedALayer()
     {
         using var controller = new GrayscaleLayerPreviewController();
