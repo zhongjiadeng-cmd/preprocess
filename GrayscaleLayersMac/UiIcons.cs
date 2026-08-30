@@ -102,7 +102,7 @@ internal static class UiIcons
     {
         UiIcon.Import => Icon.ArrowImport,
         UiIcon.ClearCache => Icon.DeleteDismiss,
-        UiIcon.Appearance => Icon.DarkTheme,
+        UiIcon.Appearance => Icon.WeatherMoon,
         UiIcon.PreviousLayer => Icon.ArrowPrevious,
         UiIcon.NextLayer => Icon.ArrowNext,
         UiIcon.ZoomOut => Icon.ZoomOut,

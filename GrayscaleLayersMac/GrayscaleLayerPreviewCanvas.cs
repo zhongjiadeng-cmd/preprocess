@@ -438,7 +438,7 @@ public sealed class GrayscaleLayerPreviewCanvas : Control, IDisposable
             text,
             CultureInfo.CurrentCulture,
             FlowDirection.LeftToRight,
-            Typeface.Default,
+            UiTheme.UiTypeface,
             13,
             UiTheme.TextFaintBrush);
         context.DrawText(

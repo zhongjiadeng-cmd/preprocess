@@ -106,4 +106,12 @@ public sealed class LogPanelViewTests
         Assert.IsTrue(panel.ClearButtonUsesFluentIcon);
         Assert.AreEqual("清空日志", panel.ClearButtonName);
     }
+
+    [TestMethod]
+    public void LogTextUsesTheCjkCapableUiFont()
+    {
+        var log = UiTheme.CreateLogBox();
+
+        Assert.AreEqual(UiTheme.UiFont, log.FontFamily);
+    }
 }

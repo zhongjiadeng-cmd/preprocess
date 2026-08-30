@@ -28,7 +28,7 @@ public sealed class UiIconsTests
     {
         AssertIcon(UiIcon.Import, "ArrowImport");
         AssertIcon(UiIcon.ClearCache, "DeleteDismiss");
-        AssertIcon(UiIcon.Appearance, "DarkTheme");
+        AssertIcon(UiIcon.Appearance, "WeatherMoon");
         AssertIcon(UiIcon.PreviousLayer, "ArrowPrevious");
         AssertIcon(UiIcon.NextLayer, "ArrowNext");
         AssertIcon(UiIcon.ZoomOut, "ZoomOut");

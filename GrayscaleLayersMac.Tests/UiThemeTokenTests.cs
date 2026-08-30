@@ -69,6 +69,7 @@ public sealed class UiThemeTokenTests
             Assert.AreEqual("Microsoft YaHei UI", UiTheme.UiFont.Name);
 
         Assert.AreNotEqual("Inter", UiTheme.UiFont.Name);
+        Assert.AreEqual(UiTheme.UiFont, UiTheme.UiTypeface.FontFamily);
     }
 
     [TestMethod]

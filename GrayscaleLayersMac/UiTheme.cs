@@ -220,6 +220,7 @@ internal static class UiTheme
         : OperatingSystem.IsWindows()
             ? FontFamily.Parse("Microsoft YaHei UI")
             : FontFamily.Default;
+    public static readonly Typeface UiTypeface = new(UiFont);
 
     // 日志与数值仍保留平台原生的等宽视觉；缺字继续交给系统字体回退。
     public static readonly FontFamily MonoFont = OperatingSystem.IsMacOS()
@@ -883,14 +884,14 @@ internal static class UiTheme
     /// </summary>
     public const double LogAreaExpandedHeight = 170;
 
-    /// <summary>深色控制台风格的只读日志框。</summary>
+    /// <summary>深色控制台风格的只读日志框；使用界面字体确保中英文混排完整。</summary>
     public static TextBox CreateLogBox(double minHeight = 170) => new()
     {
         AcceptsReturn = true,
         IsReadOnly = true,
         TextWrapping = TextWrapping.Wrap,
         MinHeight = minHeight,
-        FontFamily = MonoFont,
+        FontFamily = UiFont,
         FontSize = 12,
         Foreground = TextSecondaryBrush,
         Background = SunkenBrush,

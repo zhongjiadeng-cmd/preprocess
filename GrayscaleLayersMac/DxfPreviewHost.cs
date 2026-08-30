@@ -157,7 +157,7 @@ public sealed class DxfPreviewHost : Grid
         toolbar.Children.Add(_wheelModeBox);
         toolbar.Children.Add(_keepViewBox);
 
-        status.FontFamily = UiTheme.MonoFont;
+        status.FontFamily = UiTheme.UiFont;
         status.FontSize = 11;
         status.TextWrapping = TextWrapping.Wrap;
 

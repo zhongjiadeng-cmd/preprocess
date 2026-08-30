@@ -66,7 +66,7 @@ public sealed class GrayscaleLayerThumbnailCanvas : Control
                         $"{item.Index:D2}",
                         CultureInfo.CurrentCulture,
                         FlowDirection.LeftToRight,
-                        Typeface.Default,
+                        UiTheme.UiTypeface,
                         11,
                         selected ? UiTheme.TextPrimaryBrush : UiTheme.TextSecondaryBrush);
                     context.DrawText(
@@ -141,7 +141,7 @@ public sealed class GrayscaleLayerThumbnailCanvas : Control
         text,
         CultureInfo.CurrentCulture,
         FlowDirection.LeftToRight,
-        Typeface.Default,
+        UiTheme.UiTypeface,
         10,
         foreground);
 
@@ -153,7 +153,7 @@ public sealed class GrayscaleLayerThumbnailCanvas : Control
             "源",
             CultureInfo.CurrentCulture,
             FlowDirection.LeftToRight,
-            Typeface.Default,
+            UiTheme.UiTypeface,
             10,
             Brushes.White);
         context.DrawText(

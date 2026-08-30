@@ -54,7 +54,7 @@ internal sealed class LogPanelView
 
         _summary = new TextBlock
         {
-            FontFamily = UiTheme.MonoFont,
+            FontFamily = UiTheme.UiFont,
             FontSize = 11.5,
             TextTrimming = TextTrimming.CharacterEllipsis,
             TextWrapping = TextWrapping.NoWrap,

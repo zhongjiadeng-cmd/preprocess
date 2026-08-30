@@ -90,6 +90,28 @@ public sealed class UiStructureContractTests
     }
 
     [TestMethod]
+    public void CustomPreviewCanvasesUseTheCjkCapableUiTypeface()
+    {
+        var root = FindRepositoryRoot();
+        foreach (var file in new[]
+        {
+            "DxfPreviewControl.cs",
+            "DxfLayerRailCanvas.cs",
+            "GrayscaleLayerPreviewCanvas.cs",
+            "GrayscaleLayerThumbnailCanvas.cs"
+        })
+        {
+            var source = File.ReadAllText(Path.Combine(root, "GrayscaleLayersMac", file));
+            Assert.DoesNotContain("Typeface.Default", source, file);
+            StringAssert.Contains(source, "UiTheme.UiTypeface", file);
+        }
+
+        var host = File.ReadAllText(Path.Combine(
+            root, "GrayscaleLayersMac", "DxfPreviewHost.cs"));
+        StringAssert.Contains(host, "status.FontFamily = UiTheme.UiFont;");
+    }
+
+    [TestMethod]
     public void RedesignDoesNotIntroduceAlternateWorkflowNavigation()
     {
         Assert.DoesNotContain("PipelineStepNavigator", MainWindowSource);

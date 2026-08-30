@@ -394,7 +394,7 @@ public sealed class DxfPreviewControl : Control, IDisposable
                 "生成 DXF 后将在这里显示实际文件",
                 CultureInfo.CurrentCulture,
                 FlowDirection.LeftToRight,
-                Typeface.Default,
+                UiTheme.UiTypeface,
                 14,
                 UiTheme.TextSecondaryBrush);
             context.DrawText(text, Bounds.Center - new Vector(text.Width / 2, text.Height / 2));

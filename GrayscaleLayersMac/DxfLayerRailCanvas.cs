@@ -76,7 +76,7 @@ public sealed class DxfLayerRailCanvas : Control
                 $"{index + 1:D2}",
                 CultureInfo.CurrentCulture,
                 FlowDirection.LeftToRight,
-                Typeface.Default,
+                UiTheme.UiTypeface,
                 IsCompact ? 11 : 12,
                 selected ? UiTheme.TextPrimaryBrush : UiTheme.TextSecondaryBrush);
 
@@ -129,7 +129,7 @@ public sealed class DxfLayerRailCanvas : Control
         text,
         CultureInfo.CurrentCulture,
         FlowDirection.LeftToRight,
-        Typeface.Default,
+        UiTheme.UiTypeface,
         10,
         foreground);
 
