@@ -66,4 +66,13 @@ public sealed class CollapseHandleTests
 
         Assert.IsTrue(handle.Classes.Contains("panel-handle"));
     }
+
+    [TestMethod]
+    public void 把手使用Fluent图标_不再依赖手写路径()
+    {
+        var handle = new CollapseHandle(CollapseHandleOrientation.Horizontal, "下缩", "上拉");
+
+        Assert.IsNotNull(handle.Content);
+        Assert.AreEqual("FluentIcon", handle.Content.GetType().Name);
+    }
 }

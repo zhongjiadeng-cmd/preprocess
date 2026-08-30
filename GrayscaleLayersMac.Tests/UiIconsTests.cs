@@ -1,4 +1,6 @@
 using System;
+using System.IO;
+using System.Linq;
 using Avalonia.Controls;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 
@@ -57,6 +59,20 @@ public sealed class UiIconsTests
         Assert.AreEqual("导入", ((TextBlock)panel.Children[1]).Text);
     }
 
+    [TestMethod]
+    public void TexturePreviewUsesNamedFluentIconButtons()
+    {
+        var source = File.ReadAllText(Path.Combine(
+            FindRepositoryRoot(), "GrayscaleLayersMac", "GrayscaleLayerPreviewControl.cs"));
+
+        StringAssert.Contains(source, "MakeButton(UiIcon.ZoomOut, \"缩小\"");
+        StringAssert.Contains(source, "MakeButton(UiIcon.ZoomIn, \"放大\"");
+        StringAssert.Contains(source, "MakeButton(UiIcon.Fit, \"适应窗口\"");
+        StringAssert.Contains(source, "MakeButton(UiIcon.ActualSize, \"实际尺寸\"");
+        Assert.DoesNotContain("MakeButton(\"−\"", source);
+        Assert.DoesNotContain("MakeButton(\"+\"", source);
+    }
+
     private static void AssertIcon(UiIcon kind, string expected)
     {
         Assert.AreEqual(expected, ReadProperty(UiIcons.Create(kind), "Icon"));
@@ -65,4 +81,17 @@ public sealed class UiIconsTests
     private static string ReadProperty(Control control, string propertyName) =>
         control.GetType().GetProperty(propertyName)?.GetValue(control)?.ToString()
         ?? throw new AssertFailedException($"{control.GetType().Name} 缺少 {propertyName} 属性");
+
+    private static string FindRepositoryRoot()
+    {
+        var directory = new DirectoryInfo(AppContext.BaseDirectory);
+        while (directory is not null)
+        {
+            if (Directory.Exists(Path.Combine(directory.FullName, "GrayscaleLayersMac")))
+                return directory.FullName;
+            directory = directory.Parent;
+        }
+
+        throw new DirectoryNotFoundException("无法定位测试仓库根目录。");
+    }
 }

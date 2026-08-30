@@ -835,8 +835,8 @@ public sealed class MainWindow : Window
         _pipelineDxfHost = dxfHost;
         var textureTab = new ToggleButton { Content = "纹理" };
         var dxfTab = new ToggleButton { Content = "DXF" };
-        textureTab.Classes.Add("preview-tab");
-        dxfTab.Classes.Add("preview-tab");
+        UiTheme.ApplyPreviewTabStyle(textureTab);
+        UiTheme.ApplyPreviewTabStyle(dxfTab);
         var sharedView = new SharedPreviewView(
             textureTab,
             dxfTab,
@@ -849,6 +849,21 @@ public sealed class MainWindow : Window
         SelectSharedPreview(sharedView, SharedPreviewKind.Texture);
         view = sharedView;
 
+        var previewSegments = new Border
+        {
+            Padding = new Thickness(3),
+            CornerRadius = UiTheme.SegmentRadius,
+            Background = UiTheme.CardBrush,
+            BorderBrush = UiTheme.BorderSubtleBrush,
+            BorderThickness = new Thickness(1),
+            Child = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                Spacing = 3,
+                Children = { textureTab, dxfTab }
+            }
+        };
+
         return new Grid
         {
             Margin = new Thickness(0, 12, 12, 12),
@@ -858,12 +873,11 @@ public sealed class MainWindow : Window
             {
                 AtRow(new Grid
                 {
-                    ColumnDefinitions = new ColumnDefinitions("*,Auto,Auto"),
+                    ColumnDefinitions = new ColumnDefinitions("*,Auto"),
                     ColumnSpacing = 8,
                     Children =
                     {
-                        Place(textureTab, 1),
-                        Place(dxfTab, 2)
+                        Place(previewSegments, 1)
                     }
                 }, 0),
                 AtRow(new Grid

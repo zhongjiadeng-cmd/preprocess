@@ -85,12 +85,12 @@ public sealed class DxfPreviewHost : Grid
         _rail.LayerClicked += (_, index) => TrySelectCore(index);
         _railHandle.Toggled += (_, _) => ToggleRail();
 
-        _prevButton = MakeButton("上一层", () => TrySelectCore(_selectedIndex - 1));
-        _nextButton = MakeButton("下一层", () => TrySelectCore(_selectedIndex + 1));
-        var minus = MakeButton("−", () => _preview.ZoomOut());
-        var plus = MakeButton("+", () => _preview.ZoomIn());
-        var fit = MakeButton("适应窗口", () => _preview.FitToView());
-        var actual = MakeButton("100%", () => _preview.ActualSize());
+        _prevButton = MakeButton(UiIcon.PreviousLayer, "上一层", () => TrySelectCore(_selectedIndex - 1));
+        _nextButton = MakeButton(UiIcon.NextLayer, "下一层", () => TrySelectCore(_selectedIndex + 1));
+        var minus = MakeButton(UiIcon.ZoomOut, "缩小", () => _preview.ZoomOut());
+        var plus = MakeButton(UiIcon.ZoomIn, "放大", () => _preview.ZoomIn());
+        var fit = MakeButton(UiIcon.Fit, "适应窗口", () => _preview.FitToView());
+        var actual = MakeButton(UiIcon.ActualSize, "实际尺寸", () => _preview.ActualSize());
         ToolTip.SetTip(fit, "缩放到适应窗口，并回到居中位置。");
         ToolTip.SetTip(
             actual,
@@ -119,6 +119,7 @@ public sealed class DxfPreviewHost : Grid
                 "滚轮：始终缩放"
             }
         };
+        UiTheme.ApplyInputStyle(_wheelModeBox);
         _wheelModeBox.SelectionChanged += (_, _) =>
         {
             var index = Math.Clamp(_wheelModeBox.SelectedIndex, 0, WheelModeOrder.Length - 1);
@@ -392,10 +393,11 @@ public sealed class DxfPreviewHost : Grid
         return card;
     }
 
-    private static Button MakeButton(string text, Action action)
+    private static Button MakeButton(UiIcon icon, string actionName, Action action)
     {
-        var button = new Button { Content = text };
-        UiTheme.ApplyGhostStyle(button, small: true);
+        var button = new Button { Content = UiIcons.Create(icon) };
+        UiTheme.ApplyIconStyle(button, actionName);
+        ToolTip.SetTip(button, actionName);
         button.Click += (_, _) => action();
         return button;
     }

@@ -1,6 +1,7 @@
 using Avalonia;
 using Avalonia.Animation;
 using Avalonia.Animation.Easings;
+using Avalonia.Automation;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Media;
@@ -26,10 +27,6 @@ internal enum CollapseHandleOrientation
 /// </summary>
 internal sealed class CollapseHandle : Button
 {
-    /// <summary>24×24 viewbox 的实心人字箭头（默认朝下），笔画约 2px。</summary>
-    private const string ChevronDownGeometry =
-        "M12 16.5 L19.5 9 L18 7.5 L12 13.5 L6 7.5 L4.5 9 Z";
-
     private static readonly TimeSpan IconMotion = TimeSpan.FromMilliseconds(320);
     private static readonly Easing Motion = new CubicEaseOut();
 
@@ -61,13 +58,11 @@ internal sealed class CollapseHandle : Button
 
         _rotation = new RotateTransform { Angle = _expandedAngle };
 
-        var chevron = new PathIcon
-        {
-            Width = 15,
-            Height = 15,
-            RenderTransform = _rotation,
-            RenderTransformOrigin = new RelativePoint(0.5, 0.5, RelativeUnit.Relative)
-        };
+        var chevron = UiIcons.CreateSmall(UiIcon.Collapse);
+        chevron.Width = 15;
+        chevron.Height = 15;
+        chevron.RenderTransform = _rotation;
+        chevron.RenderTransformOrigin = new RelativePoint(0.5, 0.5, RelativeUnit.Relative);
 
         Content = chevron;
         Width = horizontal ? 56 : 20;
@@ -84,13 +79,11 @@ internal sealed class CollapseHandle : Button
         Classes.Add("panel-handle");
         UiTheme.AttachButtonTransitions(this);
 
-        // 光标、路径几何与过渡动画都依赖平台服务（ICursorFactory /
-        // IPlatformRenderInterface / IGlobalClock），无头单测环境里一碰就抛异常，
+        // 光标与过渡动画依赖平台服务（ICursorFactory / IGlobalClock），
         // 因此统一推迟到真正挂上可视化树时再装配。
         AttachedToVisualTree += (_, _) =>
         {
             Cursor = new Cursor(StandardCursorType.Hand);
-            chevron.Data = StreamGeometry.Parse(ChevronDownGeometry);
             AttachMotion();
         };
         Click += (_, _) => SetCollapsed(!_collapsed);
@@ -146,5 +139,10 @@ internal sealed class CollapseHandle : Button
         };
     }
 
-    private void ApplyTooltip() => ToolTip.SetTip(this, _collapsed ? _collapsedTip : _expandedTip);
+    private void ApplyTooltip()
+    {
+        var text = _collapsed ? _collapsedTip : _expandedTip;
+        ToolTip.SetTip(this, text);
+        AutomationProperties.SetName(this, text);
+    }
 }

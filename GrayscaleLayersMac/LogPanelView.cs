@@ -1,6 +1,7 @@
 using Avalonia;
 using Avalonia.Animation;
 using Avalonia.Animation.Easings;
+using Avalonia.Automation;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Layout;
@@ -26,6 +27,7 @@ internal sealed class LogPanelView
     private readonly Grid _layout;
     private readonly TextBlock _summary;
     private readonly CollapseHandle _handle;
+    private readonly Button _clearButton;
     private bool _collapsed;
     private bool _motionAttached;
 
@@ -67,9 +69,10 @@ internal sealed class LogPanelView
         // 走把手的 SetCollapsed 再由 Toggled 回调，保证箭头角度与面板状态一起翻转。
         _summary.PointerReleased += (_, _) => _handle.SetCollapsed(false);
 
-        var clearButton = new Button { Content = "清空" };
-        UiTheme.ApplyGhostStyle(clearButton, small: true);
-        clearButton.Click += (_, _) => log.Clear();
+        _clearButton = new Button { Content = UiIcons.Create(UiIcon.ClearLog) };
+        UiTheme.ApplyIconStyle(_clearButton, "清空日志");
+        ToolTip.SetTip(_clearButton, "清空日志");
+        _clearButton.Click += (_, _) => log.Clear();
 
         var header = new Grid
         {
@@ -79,7 +82,7 @@ internal sealed class LogPanelView
             {
                 Place(UiTheme.PanelLabel(title), 0),
                 Place(_summary, 1),
-                Place(clearButton, 2)
+                Place(_clearButton, 2)
             }
         };
 
@@ -148,6 +151,10 @@ internal sealed class LogPanelView
 
     /// <summary>把手当前提示文案。</summary>
     public string HandleTooltip => _handle.TooltipText;
+
+    public bool ClearButtonUsesFluentIcon => _clearButton.Content?.GetType().Name == "FluentIcon";
+
+    public string ClearButtonName => AutomationProperties.GetName(_clearButton) ?? string.Empty;
 
     /// <summary>折叠状态变化时触发。</summary>
     public event EventHandler? CollapsedChanged;

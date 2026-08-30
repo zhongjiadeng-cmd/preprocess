@@ -1,6 +1,8 @@
 using System.Collections.Generic;
 using System.Linq;
+using Avalonia.Automation;
 using Avalonia.Controls;
+using Avalonia.LogicalTree;
 using GrayscaleLayersMac;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 
@@ -164,6 +166,22 @@ public sealed class DxfPreviewHostTests
         host.SetItems(MakeItems(3));
         host.SetRailCollapsed(true);
         Assert.IsTrue(host.IsRailCollapsed);
+    }
+
+    [TestMethod]
+    public void ToolbarSmallActionsUseNamedFluentIconButtons()
+    {
+        using var preview = new DxfPreviewControl();
+        var host = new DxfPreviewHost(preview, new TextBlock());
+        var buttons = host.GetLogicalDescendants().OfType<Button>().ToArray();
+        var names = buttons.Select(AutomationProperties.GetName).Where(name => name is not null).ToArray();
+
+        CollectionAssert.IsSubsetOf(
+            new[] { "上一层", "下一层", "缩小", "放大", "适应窗口", "实际尺寸" },
+            names!);
+        Assert.IsTrue(buttons
+            .Where(button => names.Contains(AutomationProperties.GetName(button)))
+            .All(button => button.Content?.GetType().Name == "FluentIcon"));
     }
 
     private static DxfLayerPreviewItem[] MakeItems(int count, string tag = "layer") =>

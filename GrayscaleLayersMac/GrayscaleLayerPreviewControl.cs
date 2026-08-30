@@ -189,6 +189,7 @@ public sealed class GrayscaleLayerPreviewControl : Grid, IDisposable
         _canvas.ViewChanged += (_, _) => UpdateStatus();
 
         ToolTip.SetTip(_wheelModeBox, InteractionHint);
+        UiTheme.ApplyInputStyle(_wheelModeBox);
         _wheelModeBox.SelectionChanged += (_, _) =>
         {
             var index = Math.Clamp(_wheelModeBox.SelectedIndex, 0, WheelModeOrder.Length - 1);
@@ -199,15 +200,15 @@ public sealed class GrayscaleLayerPreviewControl : Grid, IDisposable
         {
             _thumbnails!.LayerClicked += (_, index) => TrySelect(index);
             _collapseHandle!.Toggled += (_, _) => ToggleThumbnailPanel();
-            _prevButton = MakeButton("上一层", () => TrySelect(_controller.SelectedIndex - 1));
-            _nextButton = MakeButton("下一层", () => TrySelect(_controller.SelectedIndex + 1));
+            _prevButton = MakeButton(UiIcon.PreviousLayer, "上一层", () => TrySelect(_controller.SelectedIndex - 1));
+            _nextButton = MakeButton(UiIcon.NextLayer, "下一层", () => TrySelect(_controller.SelectedIndex + 1));
             ToolTip.SetTip(_keepViewBox!, "开启后切换图层保留当前缩放与位置，便于逐层对照；关闭则回到 100% 居中。");
         }
 
-        var minus = MakeButton("−", () => _canvas.ZoomOut());
-        var plus = MakeButton("+", () => _canvas.ZoomIn());
-        var fit = MakeButton("适应窗口", () => _canvas.Fit());
-        var actual = MakeButton("100%", () => _canvas.ActualSize());
+        var minus = MakeButton(UiIcon.ZoomOut, "缩小", () => _canvas.ZoomOut());
+        var plus = MakeButton(UiIcon.ZoomIn, "放大", () => _canvas.ZoomIn());
+        var fit = MakeButton(UiIcon.Fit, "适应窗口", () => _canvas.Fit());
+        var actual = MakeButton(UiIcon.ActualSize, "实际尺寸", () => _canvas.ActualSize());
 
         var toolbar = new WrapPanel
         {
@@ -643,10 +644,11 @@ public sealed class GrayscaleLayerPreviewControl : Grid, IDisposable
         ThumbnailsCollapsedChanged?.Invoke(this, EventArgs.Empty);
     }
 
-    private static Button MakeButton(string text, Action action)
+    private static Button MakeButton(UiIcon icon, string actionName, Action action)
     {
-        var button = new Button { Content = text };
-        UiTheme.ApplyGhostStyle(button, small: true);
+        var button = new Button { Content = UiIcons.Create(icon) };
+        UiTheme.ApplyIconStyle(button, actionName);
+        ToolTip.SetTip(button, actionName);
         button.Click += (_, _) => action();
         return button;
     }

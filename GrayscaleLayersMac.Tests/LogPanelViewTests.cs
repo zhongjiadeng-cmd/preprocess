@@ -97,4 +97,13 @@ public sealed class LogPanelViewTests
 
         Assert.AreEqual(2, raised);
     }
+
+    [TestMethod]
+    public void ClearActionUsesNamedFluentIconButton()
+    {
+        var panel = UiTheme.LogPanel(UiTheme.CreateLogBox(), "流程日志");
+
+        Assert.IsTrue(panel.ClearButtonUsesFluentIcon);
+        Assert.AreEqual("清空日志", panel.ClearButtonName);
+    }
 }
