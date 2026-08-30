@@ -198,31 +198,47 @@ internal sealed class LogPanelView
 
         _motionAttached = true;
 
-        _logArea.Transitions = new Transitions
+        var logAreaTransitions = new Transitions
         {
             new DoubleTransition
+            {
+                Property = Visual.OpacityProperty,
+                Duration = MotionPreferences.FadeDuration(FadeMotion),
+                Easing = Motion
+            }
+        };
+        if (MotionPreferences.AnimateSpatialProperties)
+        {
+            logAreaTransitions.Add(new DoubleTransition
             {
                 Property = Layoutable.HeightProperty,
                 Duration = PanelMotion,
                 Easing = Motion
-            },
-            new DoubleTransition
-            {
-                Property = Visual.OpacityProperty,
-                Duration = FadeMotion,
-                Easing = Motion
-            }
-        };
+            });
+        }
+        _logArea.Transitions = logAreaTransitions;
 
         _summary.Transitions = new Transitions
         {
-            new DoubleTransition { Property = Visual.OpacityProperty, Duration = FadeMotion }
+            new DoubleTransition
+            {
+                Property = Visual.OpacityProperty,
+                Duration = MotionPreferences.FadeDuration(FadeMotion)
+            }
         };
 
         _card.Transitions = new Transitions
         {
-            new BrushTransition { Property = Border.BackgroundProperty, Duration = PanelMotion },
-            new BrushTransition { Property = Border.BorderBrushProperty, Duration = PanelMotion }
+            new BrushTransition
+            {
+                Property = Border.BackgroundProperty,
+                Duration = MotionPreferences.ColorDuration(PanelMotion)
+            },
+            new BrushTransition
+            {
+                Property = Border.BorderBrushProperty,
+                Duration = MotionPreferences.ColorDuration(PanelMotion)
+            }
         };
     }
 

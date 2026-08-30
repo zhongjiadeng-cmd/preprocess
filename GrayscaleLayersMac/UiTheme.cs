@@ -805,11 +805,12 @@ internal static class UiTheme
     /// <summary>按钮状态色的过渡动画；把手等自定义按钮也复用这一套。</summary>
     internal static void AttachButtonTransitions(Button button)
     {
+        var duration = MotionPreferences.ColorDuration(HoverDuration);
         button.Transitions = new Transitions
         {
-            new BrushTransition { Property = Button.BackgroundProperty, Duration = HoverDuration },
-            new BrushTransition { Property = Button.BorderBrushProperty, Duration = HoverDuration },
-            new BrushTransition { Property = Button.ForegroundProperty, Duration = HoverDuration }
+            new BrushTransition { Property = Button.BackgroundProperty, Duration = duration },
+            new BrushTransition { Property = Button.BorderBrushProperty, Duration = duration },
+            new BrushTransition { Property = Button.ForegroundProperty, Duration = duration }
         };
     }
 
@@ -964,6 +965,7 @@ internal static class UiTheme
             HorizontalAlignment = HorizontalAlignment.Stretch,
             VerticalAlignment = VerticalAlignment.Stretch
         };
+        AutomationProperties.SetName(control, "调整预览区与参数区宽度");
 
         var isDragging = false;
         control.PointerEntered += (_, _) => control.Background = AccentBrush;

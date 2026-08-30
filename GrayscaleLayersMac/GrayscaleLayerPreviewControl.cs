@@ -268,7 +268,7 @@ public sealed class GrayscaleLayerPreviewControl : Grid, IDisposable
 
         _motionAttached = true;
 
-        if (_thumbnailCard is null)
+        if (_thumbnailCard is null || !MotionPreferences.AnimateSpatialProperties)
             return;
 
         _thumbnailCard.Transitions = new Transitions

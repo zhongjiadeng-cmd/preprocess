@@ -128,6 +128,8 @@ internal sealed class CollapseHandle : Button
             return;
 
         _motionAttached = true;
+        if (!MotionPreferences.AnimateSpatialProperties)
+            return;
         _rotation.Transitions = new Transitions
         {
             new DoubleTransition

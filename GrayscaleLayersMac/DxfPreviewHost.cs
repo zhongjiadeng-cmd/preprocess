@@ -328,7 +328,7 @@ public sealed class DxfPreviewHost : Grid
 
         _motionAttached = true;
 
-        if (_railCard is null)
+        if (_railCard is null || !MotionPreferences.AnimateSpatialProperties)
             return;
 
         _railCard.Transitions = new Transitions

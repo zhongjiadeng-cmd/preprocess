@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Globalization;
 using System.Text;
 using Avalonia;
+using Avalonia.Automation;
 using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
 using Avalonia.Controls.Templates;
@@ -241,6 +242,7 @@ public sealed class MainWindow : Window
             _workspaceSplitSettings.TrySaveThumbnailCollapsed(
                 _pipelineTextureSurface.IsThumbnailsCollapsed);
         UiTheme.ApplyPrimaryStyle(_pipelineRunSplitButton);
+        AutomationProperties.SetName(_pipelineRunSplitButton, "全部执行与单步执行");
         ApplyPipelineInputStyles();
         _pipelineDpiBox.TextChanged += (_, _) =>
         {
@@ -533,9 +535,11 @@ public sealed class MainWindow : Window
         UiTheme.MarkDanger(pipelineCancelButton);
 
         UiTheme.ApplyQuietStyle(_pipelineImportButton);
+        AutomationProperties.SetName(_pipelineImportButton, "导入中间结果");
         UiTheme.ApplyIconStyle(_pipelineClearButton, "清空缓存");
         _pipelineClearButton.Content = UiIcons.Create(UiIcon.ClearCache);
         UiTheme.ApplyQuietStyle(_appearanceButton);
+        AutomationProperties.SetName(_appearanceButton, "切换外观");
 
         var headerTools = new Border
         {
@@ -837,6 +841,8 @@ public sealed class MainWindow : Window
         var dxfTab = new ToggleButton { Content = "DXF" };
         UiTheme.ApplyPreviewTabStyle(textureTab);
         UiTheme.ApplyPreviewTabStyle(dxfTab);
+        AutomationProperties.SetName(textureTab, "显示纹理预览");
+        AutomationProperties.SetName(dxfTab, "显示 DXF 预览");
         var sharedView = new SharedPreviewView(
             textureTab,
             dxfTab,
