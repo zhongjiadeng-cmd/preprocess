@@ -34,6 +34,18 @@ public sealed class UiThemeContrastTests
                 4.5,
                 Contrast(UiTheme.AccentTextColor, UiTheme.AccentColor),
                 "主按钮文字与强调色背景应达到普通文字对比度");
+            Assert.IsGreaterThanOrEqualTo(
+                4.5,
+                Contrast(UiTheme.DangerTextBrush.Color, UiTheme.CardColor),
+                "错误文字与卡片背景应达到普通文字对比度");
+            Assert.IsGreaterThanOrEqualTo(
+                3.0,
+                Contrast(UiTheme.FocusRingColor, UiTheme.CardColor),
+                "焦点环与卡片背景应达到非文字控件对比度");
+            Assert.IsGreaterThanOrEqualTo(
+                3.0,
+                Contrast(UiTheme.BorderStrongColor, UiTheme.SunkenColor),
+                "强输入边界与下沉表面应达到非文字控件对比度");
         }
         finally
         {

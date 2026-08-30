@@ -27,15 +27,25 @@ internal static class UiTheme
         Color Card,
         Color Bar,
         Color Sunken,
+        Color Popup,
         Color TextPrimary,
         Color TextSecondary,
         Color TextFaint,
+        Color TextDisabled,
         Color Accent,
         Color AccentHover,
         Color AccentPressed,
         Color AccentText,
         Color Danger,
         Color DangerText,
+        Color Warning,
+        Color WarningText,
+        Color Success,
+        Color SuccessText,
+        Color Info,
+        Color InfoText,
+        Color FocusRing,
+        Color DisabledBackground,
         Color BorderSubtle,
         Color BorderMedium,
         Color BorderStrong,
@@ -44,7 +54,11 @@ internal static class UiTheme
         Color GhostPressed,
         Color Handle,
         Color HandleHover,
-        Color Selection);
+        Color Selection,
+        Color Icon,
+        Color IconHover,
+        Color IconPressed,
+        Color IconDisabled);
 
     private static readonly Palette DarkPalette = new(
         Root: Color.FromRgb(12, 14, 18),
@@ -53,15 +67,25 @@ internal static class UiTheme
         Card: Color.FromRgb(28, 32, 40),
         Bar: Color.FromRgb(25, 29, 36),
         Sunken: Color.FromRgb(8, 10, 14),
+        Popup: Color.FromRgb(32, 36, 45),
         TextPrimary: Color.FromRgb(242, 244, 248),
         TextSecondary: Color.FromRgb(177, 185, 198),
         TextFaint: Color.FromRgb(121, 131, 147),
+        TextDisabled: Color.FromRgb(104, 113, 128),
         Accent: Color.FromRgb(10, 111, 209),
         AccentHover: Color.FromRgb(42, 134, 224),
         AccentPressed: Color.FromRgb(0, 86, 170),
         AccentText: Colors.White,
         Danger: Color.FromRgb(232, 88, 82),
         DangerText: Color.FromRgb(255, 165, 159),
+        Warning: Color.FromRgb(244, 180, 0),
+        WarningText: Color.FromRgb(255, 214, 102),
+        Success: Color.FromRgb(48, 201, 116),
+        SuccessText: Color.FromRgb(117, 231, 165),
+        Info: Color.FromRgb(76, 154, 255),
+        InfoText: Color.FromRgb(145, 196, 255),
+        FocusRing: Color.FromRgb(91, 174, 255),
+        DisabledBackground: Color.FromArgb(18, 255, 255, 255),
         BorderSubtle: Color.FromArgb(24, 255, 255, 255),
         BorderMedium: Color.FromArgb(48, 255, 255, 255),
         BorderStrong: Color.FromArgb(78, 255, 255, 255),
@@ -70,7 +94,11 @@ internal static class UiTheme
         GhostPressed: Color.FromArgb(38, 255, 255, 255),
         Handle: Color.FromRgb(35, 40, 50),
         HandleHover: Color.FromRgb(47, 54, 67),
-        Selection: Color.FromArgb(48, 10, 111, 209));
+        Selection: Color.FromArgb(48, 10, 111, 209),
+        Icon: Color.FromRgb(177, 185, 198),
+        IconHover: Color.FromRgb(242, 244, 248),
+        IconPressed: Colors.White,
+        IconDisabled: Color.FromRgb(104, 113, 128));
 
     private static readonly Palette LightPalette = new(
         Root: Color.FromRgb(241, 239, 235),
@@ -79,15 +107,25 @@ internal static class UiTheme
         Card: Color.FromRgb(253, 253, 252),
         Bar: Color.FromRgb(247, 248, 250),
         Sunken: Color.FromRgb(231, 235, 240),
+        Popup: Colors.White,
         TextPrimary: Color.FromRgb(28, 32, 39),
         TextSecondary: Color.FromRgb(75, 84, 98),
         TextFaint: Color.FromRgb(108, 118, 132),
+        TextDisabled: Color.FromRgb(136, 143, 154),
         Accent: Color.FromRgb(0, 101, 204),
         AccentHover: Color.FromRgb(0, 119, 230),
         AccentPressed: Color.FromRgb(0, 78, 164),
         AccentText: Colors.White,
         Danger: Color.FromRgb(190, 45, 42),
         DangerText: Color.FromRgb(166, 35, 34),
+        Warning: Color.FromRgb(161, 103, 0),
+        WarningText: Color.FromRgb(126, 75, 0),
+        Success: Color.FromRgb(19, 121, 66),
+        SuccessText: Color.FromRgb(15, 105, 56),
+        Info: Color.FromRgb(0, 93, 184),
+        InfoText: Color.FromRgb(0, 78, 155),
+        FocusRing: Color.FromRgb(0, 101, 204),
+        DisabledBackground: Color.FromArgb(14, 35, 45, 60),
         BorderSubtle: Color.FromArgb(28, 35, 45, 60),
         BorderMedium: Color.FromArgb(52, 35, 45, 60),
         BorderStrong: Color.FromArgb(82, 35, 45, 60),
@@ -96,7 +134,11 @@ internal static class UiTheme
         GhostPressed: Color.FromArgb(28, 35, 45, 60),
         Handle: Color.FromRgb(247, 248, 250),
         HandleHover: Color.FromRgb(232, 237, 243),
-        Selection: Color.FromArgb(32, 0, 101, 204));
+        Selection: Color.FromArgb(32, 0, 101, 204),
+        Icon: Color.FromRgb(75, 84, 98),
+        IconHover: Color.FromRgb(28, 32, 39),
+        IconPressed: Colors.White,
+        IconDisabled: Color.FromRgb(136, 143, 154));
 
     public static AppColorScheme CurrentScheme { get; private set; } = AppColorScheme.Dark;
 
@@ -106,21 +148,28 @@ internal static class UiTheme
     public static Color CardColor { get; private set; } = DarkPalette.Card;
     public static Color BarColor { get; private set; } = DarkPalette.Bar;
     public static Color SunkenColor { get; private set; } = DarkPalette.Sunken;
+    public static Color PopupColor { get; private set; } = DarkPalette.Popup;
     public static Color TextPrimaryColor { get; private set; } = DarkPalette.TextPrimary;
     public static Color TextSecondaryColor { get; private set; } = DarkPalette.TextSecondary;
     public static Color TextFaintColor { get; private set; } = DarkPalette.TextFaint;
+    public static Color TextDisabledColor { get; private set; } = DarkPalette.TextDisabled;
     public static Color AccentColor { get; private set; } = DarkPalette.Accent;
     public static Color AccentHoverColor { get; private set; } = DarkPalette.AccentHover;
     public static Color AccentPressedColor { get; private set; } = DarkPalette.AccentPressed;
     public static Color AccentTextColor { get; private set; } = DarkPalette.AccentText;
     public static Color DangerColor { get; private set; } = DarkPalette.Danger;
+    public static Color FocusRingColor { get; private set; } = DarkPalette.FocusRing;
     public static Color BorderSubtleColor { get; private set; } = DarkPalette.BorderSubtle;
     public static Color BorderMediumColor { get; private set; } = DarkPalette.BorderMedium;
     public static Color BorderStrongColor { get; private set; } = DarkPalette.BorderStrong;
 
     // ---- 圆角 ----
+    public const double ControlHeight = 36;
+    public const double IconButtonSize = 32;
+    public const double PrimaryButtonHeight = 44;
     public static readonly CornerRadius CardRadius = new(12);
     public static readonly CornerRadius ControlRadius = new(8);
+    public static readonly CornerRadius SegmentRadius = new(9);
 
     // ---- 画刷 ----
     public static readonly SolidColorBrush RootBrush = new(RootColor);
@@ -129,6 +178,7 @@ internal static class UiTheme
     public static readonly SolidColorBrush CardBrush = new(CardColor);
     public static readonly SolidColorBrush BarBrush = new(BarColor);
     public static readonly SolidColorBrush SunkenBrush = new(SunkenColor);
+    public static readonly SolidColorBrush PopupBrush = new(PopupColor);
     public static readonly SolidColorBrush AccentBrush = new(AccentColor);
     public static readonly SolidColorBrush AccentHoverBrush = new(AccentHoverColor);
     public static readonly SolidColorBrush AccentPressedBrush = new(AccentPressedColor);
@@ -136,6 +186,7 @@ internal static class UiTheme
     public static readonly SolidColorBrush TextPrimaryBrush = new(TextPrimaryColor);
     public static readonly SolidColorBrush TextSecondaryBrush = new(TextSecondaryColor);
     public static readonly SolidColorBrush TextFaintBrush = new(TextFaintColor);
+    public static readonly SolidColorBrush TextDisabledBrush = new(TextDisabledColor);
     public static readonly SolidColorBrush BorderSubtleBrush = new(BorderSubtleColor);
     public static readonly SolidColorBrush BorderMediumBrush = new(BorderMediumColor);
     public static readonly SolidColorBrush BorderStrongBrush = new(BorderStrongColor);
@@ -146,7 +197,19 @@ internal static class UiTheme
     public static readonly SolidColorBrush HandleHoverBrush = new(DarkPalette.HandleHover);
     public static readonly SolidColorBrush DangerBrush = new(DarkPalette.Danger);
     public static readonly SolidColorBrush DangerTextBrush = new(DarkPalette.DangerText);
+    public static readonly SolidColorBrush WarningBrush = new(DarkPalette.Warning);
+    public static readonly SolidColorBrush WarningTextBrush = new(DarkPalette.WarningText);
+    public static readonly SolidColorBrush SuccessBrush = new(DarkPalette.Success);
+    public static readonly SolidColorBrush SuccessTextBrush = new(DarkPalette.SuccessText);
+    public static readonly SolidColorBrush InfoBrush = new(DarkPalette.Info);
+    public static readonly SolidColorBrush InfoTextBrush = new(DarkPalette.InfoText);
+    public static readonly SolidColorBrush FocusRingBrush = new(DarkPalette.FocusRing);
+    public static readonly SolidColorBrush DisabledBackgroundBrush = new(DarkPalette.DisabledBackground);
     public static readonly SolidColorBrush SelectionBrush = new(DarkPalette.Selection);
+    public static readonly SolidColorBrush IconBrush = new(DarkPalette.Icon);
+    public static readonly SolidColorBrush IconHoverBrush = new(DarkPalette.IconHover);
+    public static readonly SolidColorBrush IconPressedBrush = new(DarkPalette.IconPressed);
+    public static readonly SolidColorBrush IconDisabledBrush = new(DarkPalette.IconDisabled);
 
     public static readonly FontFamily MonoFont = FontFamily.Parse("Menlo, monospace");
 
@@ -163,14 +226,17 @@ internal static class UiTheme
         CardColor = palette.Card;
         BarColor = palette.Bar;
         SunkenColor = palette.Sunken;
+        PopupColor = palette.Popup;
         TextPrimaryColor = palette.TextPrimary;
         TextSecondaryColor = palette.TextSecondary;
         TextFaintColor = palette.TextFaint;
+        TextDisabledColor = palette.TextDisabled;
         AccentColor = palette.Accent;
         AccentHoverColor = palette.AccentHover;
         AccentPressedColor = palette.AccentPressed;
         AccentTextColor = palette.AccentText;
         DangerColor = palette.Danger;
+        FocusRingColor = palette.FocusRing;
         BorderSubtleColor = palette.BorderSubtle;
         BorderMediumColor = palette.BorderMedium;
         BorderStrongColor = palette.BorderStrong;
@@ -181,9 +247,11 @@ internal static class UiTheme
         CardBrush.Color = palette.Card;
         BarBrush.Color = palette.Bar;
         SunkenBrush.Color = palette.Sunken;
+        PopupBrush.Color = palette.Popup;
         TextPrimaryBrush.Color = palette.TextPrimary;
         TextSecondaryBrush.Color = palette.TextSecondary;
         TextFaintBrush.Color = palette.TextFaint;
+        TextDisabledBrush.Color = palette.TextDisabled;
         AccentBrush.Color = palette.Accent;
         AccentHoverBrush.Color = palette.AccentHover;
         AccentPressedBrush.Color = palette.AccentPressed;
@@ -198,7 +266,19 @@ internal static class UiTheme
         HandleHoverBrush.Color = palette.HandleHover;
         DangerBrush.Color = palette.Danger;
         DangerTextBrush.Color = palette.DangerText;
+        WarningBrush.Color = palette.Warning;
+        WarningTextBrush.Color = palette.WarningText;
+        SuccessBrush.Color = palette.Success;
+        SuccessTextBrush.Color = palette.SuccessText;
+        InfoBrush.Color = palette.Info;
+        InfoTextBrush.Color = palette.InfoText;
+        FocusRingBrush.Color = palette.FocusRing;
+        DisabledBackgroundBrush.Color = palette.DisabledBackground;
         SelectionBrush.Color = palette.Selection;
+        IconBrush.Color = palette.Icon;
+        IconHoverBrush.Color = palette.IconHover;
+        IconPressedBrush.Color = palette.IconPressed;
+        IconDisabledBrush.Color = palette.IconDisabled;
 
         SchemeChanged?.Invoke(null, EventArgs.Empty);
     }
