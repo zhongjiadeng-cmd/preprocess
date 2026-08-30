@@ -63,6 +63,35 @@ public sealed class UiStructureContractTests
     }
 
     [TestMethod]
+    public void TopImportEntriesShareOneOverlayAnchoredToTheHeaderImportButton()
+    {
+        Assert.AreEqual(
+            1,
+            CountOccurrences(
+                MainWindowSource,
+                "new ImportProgressOverlay(_pipelineImportButton)"));
+        StringAssert.Contains(
+            MainWindowSource,
+            "_pipelineImportProgress = new ImportProgressOverlay(_pipelineImportButton);");
+        StringAssert.Contains(MainWindowSource, "var root = new Grid");
+        StringAssert.Contains(MainWindowSource, "_pipelineImportProgress.Root");
+    }
+
+    [TestMethod]
+    public void TopImportMethodsDoNotCreateASeparateProgressWindow()
+    {
+        var directoryImport = MethodSource(
+            "private async Task ImportPipelineDirectoryAsync()",
+            "private async Task ImportPipelineFilesAsync()");
+        var fileImport = MethodSource(
+            "private async Task ImportPipelineFilesAsync()",
+            "internal static async Task<bool> RunPreparedImportAsync(");
+
+        Assert.DoesNotContain("ProcessingProgressWindow", directoryImport);
+        Assert.DoesNotContain("ProcessingProgressWindow", fileImport);
+    }
+
+    [TestMethod]
     public void ExistingParameterFieldsUseSharedStylesWithoutAParallelForm()
     {
         StringAssert.Contains(MainWindowSource, "ApplyPipelineInputStyles();");
@@ -134,5 +163,27 @@ public sealed class UiStructureContractTests
         }
 
         throw new DirectoryNotFoundException("无法定位测试仓库根目录。");
+    }
+
+    private static int CountOccurrences(string source, string value)
+    {
+        var count = 0;
+        var offset = 0;
+        while ((offset = source.IndexOf(value, offset, StringComparison.Ordinal)) >= 0)
+        {
+            count++;
+            offset += value.Length;
+        }
+
+        return count;
+    }
+
+    private static string MethodSource(string startMarker, string endMarker)
+    {
+        var start = MainWindowSource.IndexOf(startMarker, StringComparison.Ordinal);
+        var end = MainWindowSource.IndexOf(endMarker, start, StringComparison.Ordinal);
+        Assert.IsGreaterThanOrEqualTo(0, start, startMarker);
+        Assert.IsGreaterThan(start, end, endMarker);
+        return MainWindowSource[start..end];
     }
 }

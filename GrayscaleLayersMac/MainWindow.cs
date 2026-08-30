@@ -18,6 +18,33 @@ using Avalonia.Threading;
 
 namespace GrayscaleLayersMac;
 
+internal sealed record PipelineImportSelection(
+    Func<(string[] Tiffs, string[] Dxfs)> Discover,
+    string SuccessHeading,
+    string EmptySelectionMessage,
+    string? TiffDirectory,
+    string? DxfDirectory);
+
+internal sealed record PreparedImportFlowActions(
+    Func<
+        string[],
+        string[],
+        IProgress<ImportProgressState>,
+        CancellationToken,
+        Task<PreparedPipelineImport>> PrepareAsync,
+    Func<
+        PreparedPipelineImport,
+        CancellationToken,
+        Task<PreparedGrayscaleLayerSet>> PrepareLayersAsync,
+    Action<PreparedGrayscaleLayerSet, string?> CommitTiffs,
+    Action<IReadOnlyList<string>, string?> CommitDxfs,
+    Action<ImportProgressState> Show,
+    Action<ImportProgressState> Update,
+    Func<ImportProgressState, CancellationToken, Task> ShowSucceededAndCollapseAsync,
+    Action<ImportProgressState> ShowFailure,
+    Action<string> AppendLog,
+    Func<string, Task> ShowMessageAsync);
+
 public sealed class MainWindow : Window
 {
     private enum PipelineRunMode
@@ -126,6 +153,7 @@ public sealed class MainWindow : Window
     private DxfPreviewHost? _pipelineDxfHost;
     private readonly TextBox _pipelineLogBox = MakeLogBox();
     private readonly DropDownButton _pipelineImportButton = new() { Content = "导入", HorizontalAlignment = HorizontalAlignment.Left };
+    private readonly ImportProgressOverlay _pipelineImportProgress;
     private readonly Button _pipelineClearButton = new() { Content = "清空缓存", HorizontalAlignment = HorizontalAlignment.Left };
     private readonly DropDownButton _appearanceButton = new() { Content = "外观", HorizontalAlignment = HorizontalAlignment.Left };
     private readonly TextBlock _pipelineReadinessText = new()
@@ -537,6 +565,7 @@ public sealed class MainWindow : Window
 
         UiTheme.ApplyQuietStyle(_pipelineImportButton);
         AutomationProperties.SetName(_pipelineImportButton, "导入中间结果");
+        _pipelineImportProgress = new ImportProgressOverlay(_pipelineImportButton);
         UiTheme.ApplyIconStyle(_pipelineClearButton, "清空缓存");
         _pipelineClearButton.Content = UiIcons.Create(UiIcon.ClearCache);
         UiTheme.ApplyQuietStyle(_appearanceButton);
@@ -616,7 +645,7 @@ public sealed class MainWindow : Window
             }
         };
 
-        Content = new Grid
+        var root = new Grid
         {
             RowDefinitions = new RowDefinitions("64,*"),
             Children =
@@ -626,9 +655,11 @@ public sealed class MainWindow : Window
                 {
                     Child = pipelineContent,
                     Margin = new Thickness(16, 0, 16, 16)
-                }, 1)
+                }, 1),
+                _pipelineImportProgress.Root
             }
         };
+        Content = root;
     }
 
     private void ConfigureAppearanceMenu()
@@ -1394,37 +1425,27 @@ public sealed class MainWindow : Window
     /// </summary>
     private async Task ImportPipelineDirectoryAsync()
     {
-        var directory = await PickPipelineFolderPathAsync("导入文件夹（分层 TIFF 或 DXF）");
-        if (directory is null)
-            return;
-
-        try
-        {
-            var tiffs = PipelineArtifactDiscovery.FindLayerTiffsOrEmpty(directory);
-            var dxfs = PipelineArtifactDiscovery.FindDxfFilesOrEmpty(directory);
-            if (tiffs.Length == 0 && dxfs.Length == 0)
+        await RunPreparedImportAsync(
+            async _ =>
             {
-                await ShowMessageAsync(
+                var directory = await PickPipelineFolderPathAsync(
+                    "导入文件夹（分层 TIFF 或 DXF）");
+                if (directory is null)
+                    return null;
+
+                return new PipelineImportSelection(
+                    () => (
+                        PipelineArtifactDiscovery.FindLayerTiffsOrEmpty(directory),
+                        PipelineArtifactDiscovery.FindDxfFilesOrEmpty(directory)),
+                    $"已导入文件夹：{directory}",
                     "文件夹中没有找到可导入的产物：\n" +
                     $"{directory}\n\n" +
-                    "期望 layer_*.tiff（分层 TIFF）或 *.dxf（Hatch DXF）。");
-                return;
-            }
-
-            var report = new StringBuilder();
-            if (tiffs.Length > 0)
-                await ImportLayerTiffsAsync(tiffs, directory, report);
-            if (dxfs.Length > 0)
-                LoadPipelineDxfImports(dxfs, directory, report);
-
-            AppendPipelineLog($"已导入文件夹：{directory}");
-            AppendPipelineLog(report.ToString().TrimEnd());
-            AppendPipelineLog("");
-        }
-        catch (Exception error)
-        {
-            await ShowMessageAsync($"无法导入文件夹：\n{error.Message}");
-        }
+                    "期望 layer_*.tiff（分层 TIFF）或 *.dxf（Hatch DXF）。",
+                    directory,
+                    directory);
+            },
+            "无法导入文件夹",
+            CreatePreparedImportFlowActions());
     }
 
     /// <summary>
@@ -1433,104 +1454,168 @@ public sealed class MainWindow : Window
     /// </summary>
     private async Task ImportPipelineFilesAsync()
     {
-        var picked = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
-        {
-            Title = "导入分层 TIFF 或 DXF 文件",
-            AllowMultiple = true,
-            FileTypeFilter =
-            [
-                new FilePickerFileType("分层 TIFF 与 DXF")
+        await RunPreparedImportAsync(
+            async _ =>
+            {
+                var picked = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
                 {
-                    Patterns = ["*.tiff", "*.tif", "*.dxf"]
-                },
-                new FilePickerFileType("TIFF 图像") { Patterns = ["*.tiff", "*.tif"] },
-                new FilePickerFileType("DXF 文件") { Patterns = ["*.dxf"] }
-            ]
+                    Title = "导入分层 TIFF 或 DXF 文件",
+                    AllowMultiple = true,
+                    FileTypeFilter =
+                    [
+                        new FilePickerFileType("分层 TIFF 与 DXF")
+                        {
+                            Patterns = ["*.tiff", "*.tif", "*.dxf"]
+                        },
+                        new FilePickerFileType("TIFF 图像") { Patterns = ["*.tiff", "*.tif"] },
+                        new FilePickerFileType("DXF 文件") { Patterns = ["*.dxf"] }
+                    ]
+                });
+
+                var paths = picked
+                    .Select(file => file.TryGetLocalPath())
+                    .Where(path => !string.IsNullOrWhiteSpace(path))
+                    .Select(path => Path.GetFullPath(path!))
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
+                    .ToArray();
+                if (paths.Length == 0)
+                    return null;
+
+                var dxfs = paths.Where(PipelineArtifactDiscovery.IsDxf).ToArray();
+                var tiffs = paths
+                    .Where(path => !PipelineArtifactDiscovery.IsDxf(path))
+                    .ToArray();
+                return new PipelineImportSelection(
+                    () => (tiffs, dxfs),
+                    $"已导入 {paths.Length} 个文件",
+                    "没有可导入的 TIFF 或 DXF 文件。",
+                    DirectoryOf(tiffs),
+                    DirectoryOf(dxfs));
+            },
+            "无法导入文件",
+            CreatePreparedImportFlowActions());
+    }
+
+    internal static async Task<bool> RunPreparedImportAsync(
+        Func<CancellationToken, Task<PipelineImportSelection?>> selectAsync,
+        string pickerFailureHeading,
+        PreparedImportFlowActions actions,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(selectAsync);
+        ArgumentException.ThrowIfNullOrWhiteSpace(pickerFailureHeading);
+        ArgumentNullException.ThrowIfNull(actions);
+
+        PipelineImportSelection? selection;
+        try
+        {
+            selection = await selectAsync(cancellationToken);
+        }
+        catch (Exception error) when (error is not OperationCanceledException)
+        {
+            await actions.ShowMessageAsync($"{pickerFailureHeading}：\n{error.Message}");
+            return false;
+        }
+
+        if (selection is null)
+            return false;
+
+        var latestProgress = ImportProgressState.Scanning("正在扫描文件…");
+        IProgress<ImportProgressState> progress = new Progress<ImportProgressState>(state =>
+        {
+            latestProgress = state;
+            actions.Update(state);
         });
-
-        var paths = picked
-            .Select(file => file.TryGetLocalPath())
-            .Where(path => !string.IsNullOrWhiteSpace(path))
-            .Select(path => Path.GetFullPath(path!))
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
-            .ToArray();
-        if (paths.Length == 0)
-            return;
-
-        var dxfs = paths.Where(PipelineArtifactDiscovery.IsDxf).ToArray();
-        var tiffs = paths
-            .Where(path => !PipelineArtifactDiscovery.IsDxf(path))
-            .ToArray();
+        actions.Show(latestProgress);
 
         try
         {
+            var (tiffs, dxfs) = selection.Discover();
+            if (tiffs.Length == 0 && dxfs.Length == 0)
+                throw new InvalidDataException(selection.EmptySelectionMessage);
+
+            var prepared = await actions.PrepareAsync(
+                tiffs, dxfs, progress, cancellationToken);
+            using var preparedLayers = await actions.PrepareLayersAsync(
+                prepared, cancellationToken);
+            progress.Report(ImportProgressState.LoadingPreview(
+                prepared.TotalCount,
+                prepared.TotalCount,
+                "正在加载预览…"));
+
+            if (prepared.TiffInspections.Count > 0)
+                actions.CommitTiffs(preparedLayers, selection.TiffDirectory);
+            if (prepared.DxfPaths.Count > 0)
+                actions.CommitDxfs(prepared.DxfPaths, selection.DxfDirectory);
+
             var report = new StringBuilder();
-            if (tiffs.Length > 0)
-                await ImportLayerTiffsAsync(tiffs, DirectoryOf(tiffs), report);
-            if (dxfs.Length > 0)
-                LoadPipelineDxfImports(dxfs, DirectoryOf(dxfs), report);
-
-            AppendPipelineLog($"已导入 {paths.Length} 个文件");
-            AppendPipelineLog(report.ToString().TrimEnd());
-            AppendPipelineLog("");
+            if (prepared.TiffInspections.Count > 0)
+                report.AppendLine($"分层 TIFF：已导入 {prepared.TiffInspections.Count} 层。");
+            if (prepared.DxfPaths.Count > 0)
+                report.AppendLine($"DXF：已导入 {prepared.DxfPaths.Count} 层。");
+            actions.AppendLog(selection.SuccessHeading);
+            actions.AppendLog(report.ToString().TrimEnd());
+            actions.AppendLog("");
+            await actions.ShowSucceededAndCollapseAsync(
+                ImportProgressState.Succeeded(prepared.TotalCount), cancellationToken);
+            return true;
         }
-        catch (Exception error)
+        catch (Exception error) when (error is not OperationCanceledException)
         {
-            await ShowMessageAsync($"无法导入文件：\n{error.Message}");
+            actions.AppendLog($"导入失败：{error.Message}");
+            actions.ShowFailure(
+                ImportProgressState.Failed(latestProgress.CurrentFileName, error.Message));
+            return false;
         }
     }
 
-    /// <summary>把一批分层 TIFF 接到纹理界面的第 1..N 层（第 0 层源纹理保持不变）。</summary>
-    private async Task ImportLayerTiffsAsync(
-        string[] files,
-        string? directory,
-        StringBuilder report)
-    {
-        foreach (var file in files)
+    private PreparedImportFlowActions CreatePreparedImportFlowActions() => new(
+        (tiffs, dxfs, progress, cancellationToken) =>
+            PipelineImportPreparation.PrepareAsync(
+                tiffs,
+                dxfs,
+                InspectTextureImageAsync,
+                ValidateImportedDxf,
+                progress,
+                cancellationToken),
+        (prepared, cancellationToken) => ImportLayerTiffsAsync(
+            prepared.TiffInspections, cancellationToken),
+        (preparedLayers, directory) =>
         {
-            try
-            {
-                await InspectTextureImageAsync(file, CancellationToken.None);
-            }
-            catch (Exception error)
-            {
-                throw new InvalidDataException(
-                    $"无法读取分层 TIFF {Path.GetFileName(file)}：{error.Message}",
-                    error);
-            }
-        }
+            _pipelineTextureSurface.CommitPreparedLayers(preparedLayers);
+            SelectSharedPreview(_pipelineSharedPreview, SharedPreviewKind.Texture);
+            if (directory is not null)
+                _pipelineLayerOutputBox.Text = directory;
+        },
+        CommitPipelineDxfImports,
+        _pipelineImportProgress.Show,
+        _pipelineImportProgress.Update,
+        _pipelineImportProgress.ShowSucceededAndCollapseAsync,
+        _pipelineImportProgress.ShowFailure,
+        AppendPipelineLog,
+        ShowMessageAsync);
 
-        await _pipelineTextureSurface.LoadLayerFilesAsync(files, CancellationToken.None);
-        SelectSharedPreview(_pipelineSharedPreview, SharedPreviewKind.Texture);
-        if (directory is not null)
-            _pipelineLayerOutputBox.Text = directory;
-        report.AppendLine($"分层 TIFF：已导入 {files.Length} 层。");
-    }
+    /// <summary>预先解码已检查的 TIFF，但不改变当前可见预览。</summary>
+    private Task<PreparedGrayscaleLayerSet> ImportLayerTiffsAsync(
+        IReadOnlyList<KeyValuePair<string, TextureImageInspection>> inspections,
+        CancellationToken cancellationToken) =>
+        _pipelineTextureSurface.PrepareLayerFilesAsync(inspections, cancellationToken);
 
-    /// <summary>把一批 DXF 填入层选择器（整体替换）并选中第一层。</summary>
-    private void LoadPipelineDxfImports(
-        string[] files,
-        string? directory,
-        StringBuilder report)
+    /// <summary>验证单个 DXF；批次准备阶段会为错误补充文件名上下文。</summary>
+    private void ValidateImportedDxf(string path)
     {
         using var validator = new DxfPreviewControl();
-        foreach (var file in files)
-        {
-            try
-            {
-                validator.LoadFile(file);
-                if (validator.LineCount == 0)
-                    throw new InvalidDataException("DXF 中没有 LINE 实体。");
-            }
-            catch (Exception error)
-            {
-                throw new InvalidDataException(
-                    $"无法读取 DXF {Path.GetFileName(file)}：{error.Message}",
-                    error);
-            }
-        }
+        validator.LoadFile(path);
+        if (validator.LineCount == 0)
+            throw new InvalidDataException("DXF 中没有 LINE 实体。");
+    }
 
+    /// <summary>安装已验证的 DXF，不在提交阶段重新解析文件。</summary>
+    private void CommitPipelineDxfImports(
+        IReadOnlyList<string> files,
+        string? directory)
+    {
         var items = files
             .Select((file, index) => new DxfLayerPreviewItem(
                 $"导入第 {index + 1:D2} 层 · {Path.GetFileName(file)}",
@@ -1548,7 +1633,6 @@ public sealed class MainWindow : Window
         _pipelineDxfHost?.SelectIndex(0);
         if (directory is not null)
             _pipelineDxfOutputBox.Text = directory;
-        report.AppendLine($"DXF：已导入 {items.Length} 层。");
     }
 
     private static string? DirectoryOf(IReadOnlyList<string> files) =>
