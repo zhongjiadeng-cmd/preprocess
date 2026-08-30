@@ -1,6 +1,7 @@
 using System;
 using Avalonia;
 using Avalonia.Animation;
+using Avalonia.Automation;
 using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
 using Avalonia.Input;
@@ -284,7 +285,7 @@ internal static class UiTheme
     }
 
     /// <summary>
-    /// 窗口级全局交互样式：按钮按类名（accent / btn-ghost / danger）提供
+    /// 窗口级全局交互样式：按钮按语义类名提供
     /// 悬停与按压状态。窗口样式优先级高于 Fluent 主题样式，可确定性覆盖。
     /// </summary>
     public static Styles CreateGlobalStyles()
@@ -304,6 +305,101 @@ internal static class UiTheme
         primaryPressed.Setters.Add(new Setter(Button.BackgroundProperty, AccentPressedBrush));
         styles.Add(primaryPressed);
 
+        var primaryDisabled = new Style(x => x.OfType<Button>().Class("accent").Class(":disabled"));
+        primaryDisabled.Setters.Add(new Setter(Button.BackgroundProperty, DisabledBackgroundBrush));
+        primaryDisabled.Setters.Add(new Setter(Button.ForegroundProperty, TextDisabledBrush));
+        primaryDisabled.Setters.Add(new Setter(Button.BorderBrushProperty, BorderSubtleBrush));
+        styles.Add(primaryDisabled);
+
+        // ---- 次级按钮（有边界、有重量，但不与主操作竞争）----
+        var secondary = new Style(x => x.OfType<Button>().Class("btn-secondary"));
+        secondary.Setters.Add(new Setter(Button.BackgroundProperty, CardBrush));
+        secondary.Setters.Add(new Setter(Button.ForegroundProperty, TextPrimaryBrush));
+        secondary.Setters.Add(new Setter(Button.BorderBrushProperty, BorderMediumBrush));
+        secondary.Setters.Add(new Setter(Button.BorderThicknessProperty, new Thickness(1)));
+        styles.Add(secondary);
+
+        var secondaryHover = new Style(
+            x => x.OfType<Button>().Class("btn-secondary").Class(":pointerover"));
+        secondaryHover.Setters.Add(new Setter(Button.BackgroundProperty, GhostHoverBrush));
+        secondaryHover.Setters.Add(new Setter(Button.BorderBrushProperty, BorderStrongBrush));
+        styles.Add(secondaryHover);
+
+        var secondaryPressed = new Style(
+            x => x.OfType<Button>().Class("btn-secondary").Class(":pressed"));
+        secondaryPressed.Setters.Add(new Setter(Button.BackgroundProperty, GhostPressedBrush));
+        secondaryPressed.Setters.Add(new Setter(Button.BorderBrushProperty, AccentBrush));
+        styles.Add(secondaryPressed);
+
+        var secondaryFocus = new Style(
+            x => x.OfType<Button>().Class("btn-secondary").Class(":focus"));
+        secondaryFocus.Setters.Add(new Setter(Button.BorderBrushProperty, FocusRingBrush));
+        secondaryFocus.Setters.Add(new Setter(Button.BorderThicknessProperty, new Thickness(2)));
+        styles.Add(secondaryFocus);
+
+        var secondaryDisabled = new Style(
+            x => x.OfType<Button>().Class("btn-secondary").Class(":disabled"));
+        secondaryDisabled.Setters.Add(new Setter(Button.BackgroundProperty, DisabledBackgroundBrush));
+        secondaryDisabled.Setters.Add(new Setter(Button.ForegroundProperty, TextDisabledBrush));
+        secondaryDisabled.Setters.Add(new Setter(Button.BorderBrushProperty, BorderSubtleBrush));
+        styles.Add(secondaryDisabled);
+
+        // ---- 轻量按钮（菜单与低频操作，默认不显示实线边框）----
+        var quiet = new Style(x => x.OfType<Button>().Class("btn-quiet"));
+        quiet.Setters.Add(new Setter(Button.BackgroundProperty, GhostBrush));
+        quiet.Setters.Add(new Setter(Button.ForegroundProperty, TextSecondaryBrush));
+        quiet.Setters.Add(new Setter(Button.BorderBrushProperty, Brushes.Transparent));
+        quiet.Setters.Add(new Setter(Button.BorderThicknessProperty, new Thickness(1)));
+        styles.Add(quiet);
+
+        var quietHover = new Style(x => x.OfType<Button>().Class("btn-quiet").Class(":pointerover"));
+        quietHover.Setters.Add(new Setter(Button.BackgroundProperty, GhostHoverBrush));
+        quietHover.Setters.Add(new Setter(Button.ForegroundProperty, TextPrimaryBrush));
+        styles.Add(quietHover);
+
+        var quietPressed = new Style(x => x.OfType<Button>().Class("btn-quiet").Class(":pressed"));
+        quietPressed.Setters.Add(new Setter(Button.BackgroundProperty, GhostPressedBrush));
+        quietPressed.Setters.Add(new Setter(Button.ForegroundProperty, TextPrimaryBrush));
+        styles.Add(quietPressed);
+
+        var quietFocus = new Style(x => x.OfType<Button>().Class("btn-quiet").Class(":focus"));
+        quietFocus.Setters.Add(new Setter(Button.BorderBrushProperty, FocusRingBrush));
+        quietFocus.Setters.Add(new Setter(Button.BorderThicknessProperty, new Thickness(2)));
+        styles.Add(quietFocus);
+
+        var quietDisabled = new Style(x => x.OfType<Button>().Class("btn-quiet").Class(":disabled"));
+        quietDisabled.Setters.Add(new Setter(Button.BackgroundProperty, Brushes.Transparent));
+        quietDisabled.Setters.Add(new Setter(Button.ForegroundProperty, TextDisabledBrush));
+        styles.Add(quietDisabled);
+
+        // ---- 纯图标按钮（小操作，命中区固定且状态靠图标与底色同时反馈）----
+        var icon = new Style(x => x.OfType<Button>().Class("btn-icon"));
+        icon.Setters.Add(new Setter(Button.BackgroundProperty, GhostBrush));
+        icon.Setters.Add(new Setter(Button.ForegroundProperty, IconBrush));
+        icon.Setters.Add(new Setter(Button.BorderBrushProperty, Brushes.Transparent));
+        icon.Setters.Add(new Setter(Button.BorderThicknessProperty, new Thickness(1)));
+        styles.Add(icon);
+
+        var iconHover = new Style(x => x.OfType<Button>().Class("btn-icon").Class(":pointerover"));
+        iconHover.Setters.Add(new Setter(Button.BackgroundProperty, GhostHoverBrush));
+        iconHover.Setters.Add(new Setter(Button.ForegroundProperty, IconHoverBrush));
+        styles.Add(iconHover);
+
+        var iconPressed = new Style(x => x.OfType<Button>().Class("btn-icon").Class(":pressed"));
+        iconPressed.Setters.Add(new Setter(Button.BackgroundProperty, AccentPressedBrush));
+        iconPressed.Setters.Add(new Setter(Button.ForegroundProperty, IconPressedBrush));
+        styles.Add(iconPressed);
+
+        var iconFocus = new Style(x => x.OfType<Button>().Class("btn-icon").Class(":focus"));
+        iconFocus.Setters.Add(new Setter(Button.BorderBrushProperty, FocusRingBrush));
+        iconFocus.Setters.Add(new Setter(Button.BorderThicknessProperty, new Thickness(2)));
+        styles.Add(iconFocus);
+
+        var iconDisabled = new Style(x => x.OfType<Button>().Class("btn-icon").Class(":disabled"));
+        iconDisabled.Setters.Add(new Setter(Button.BackgroundProperty, Brushes.Transparent));
+        iconDisabled.Setters.Add(new Setter(Button.ForegroundProperty, IconDisabledBrush));
+        styles.Add(iconDisabled);
+
         // ---- 幽灵按钮（细描边、透明底）----
         var ghost = new Style(x => x.OfType<Button>().Class("btn-ghost"));
         ghost.Setters.Add(new Setter(Button.BackgroundProperty, GhostBrush));
@@ -321,13 +417,61 @@ internal static class UiTheme
         ghostPressed.Setters.Add(new Setter(Button.BackgroundProperty, GhostPressedBrush));
         styles.Add(ghostPressed);
 
+        // ---- 输入控件（文本、数字与下拉框共用一套边界与状态）----
+        AddInputStyles<TextBox>(styles);
+        AddInputStyles<NumericUpDown>(styles);
+        AddInputStyles<ComboBox>(styles);
+
+        var readOnlyInput = new Style(
+            x => x.OfType<TextBox>().Class("input-control").Class("input-readonly"));
+        readOnlyInput.Setters.Add(new Setter(TextBox.BackgroundProperty, DisabledBackgroundBrush));
+        readOnlyInput.Setters.Add(new Setter(TextBox.ForegroundProperty, TextSecondaryBrush));
+        styles.Add(readOnlyInput);
+
+        var errorTextInput = new Style(
+            x => x.OfType<TextBox>().Class("input-control").Class("input-error"));
+        errorTextInput.Setters.Add(new Setter(TextBox.BorderBrushProperty, DangerBrush));
+        errorTextInput.Setters.Add(new Setter(TextBox.BorderThicknessProperty, new Thickness(2)));
+        styles.Add(errorTextInput);
+
+        var errorNumberInput = new Style(
+            x => x.OfType<NumericUpDown>().Class("input-control").Class("input-error"));
+        errorNumberInput.Setters.Add(new Setter(NumericUpDown.BorderBrushProperty, DangerBrush));
+        errorNumberInput.Setters.Add(new Setter(NumericUpDown.BorderThicknessProperty, new Thickness(2)));
+        styles.Add(errorNumberInput);
+
+        var errorComboInput = new Style(
+            x => x.OfType<ComboBox>().Class("input-control").Class("input-error"));
+        errorComboInput.Setters.Add(new Setter(ComboBox.BorderBrushProperty, DangerBrush));
+        errorComboInput.Setters.Add(new Setter(ComboBox.BorderThicknessProperty, new Thickness(2)));
+        styles.Add(errorComboInput);
+
+        // ---- 外观菜单选项：保留原生 RadioButton 语义，只统一命中区与反馈 ----
+        var appearanceOption = new Style(x => x.OfType<RadioButton>().Class("appearance-option"));
+        appearanceOption.Setters.Add(new Setter(RadioButton.ForegroundProperty, TextPrimaryBrush));
+        appearanceOption.Setters.Add(new Setter(RadioButton.BackgroundProperty, Brushes.Transparent));
+        appearanceOption.Setters.Add(new Setter(RadioButton.PaddingProperty, new Thickness(10, 6)));
+        appearanceOption.Setters.Add(new Setter(RadioButton.MinHeightProperty, ControlHeight));
+        styles.Add(appearanceOption);
+
+        var appearanceOptionHover = new Style(
+            x => x.OfType<RadioButton>().Class("appearance-option").Class(":pointerover"));
+        appearanceOptionHover.Setters.Add(new Setter(RadioButton.BackgroundProperty, GhostHoverBrush));
+        styles.Add(appearanceOptionHover);
+
+        var appearanceOptionFocus = new Style(
+            x => x.OfType<RadioButton>().Class("appearance-option").Class(":focus"));
+        appearanceOptionFocus.Setters.Add(new Setter(RadioButton.BorderBrushProperty, FocusRingBrush));
+        appearanceOptionFocus.Setters.Add(new Setter(RadioButton.BorderThicknessProperty, new Thickness(2)));
+        styles.Add(appearanceOptionFocus);
+
         // ---- 危险变体（取消按钮：悬停泛红）----
-        var danger = new Style(x => x.OfType<Button>().Class("btn-ghost").Class("danger"));
+        var danger = new Style(x => x.OfType<Button>().Class("danger"));
         danger.Setters.Add(new Setter(Button.ForegroundProperty, DangerTextBrush));
         styles.Add(danger);
 
         var dangerHover = new Style(
-            x => x.OfType<Button>().Class("btn-ghost").Class("danger").Class(":pointerover"));
+            x => x.OfType<Button>().Class("danger").Class(":pointerover"));
         dangerHover.Setters.Add(new Setter(Button.BackgroundProperty, GhostPressedBrush));
         dangerHover.Setters.Add(new Setter(Button.BorderBrushProperty, DangerBrush));
         dangerHover.Setters.Add(new Setter(Button.ForegroundProperty, DangerTextBrush));
@@ -382,6 +526,35 @@ internal static class UiTheme
         return styles;
     }
 
+    private static void AddInputStyles<TControl>(Styles styles)
+        where TControl : TemplatedControl
+    {
+        var input = new Style(x => x.OfType<TControl>().Class("input-control"));
+        input.Setters.Add(new Setter(TemplatedControl.BackgroundProperty, SunkenBrush));
+        input.Setters.Add(new Setter(TemplatedControl.ForegroundProperty, TextPrimaryBrush));
+        input.Setters.Add(new Setter(TemplatedControl.BorderBrushProperty, BorderMediumBrush));
+        input.Setters.Add(new Setter(TemplatedControl.BorderThicknessProperty, new Thickness(1)));
+        input.Setters.Add(new Setter(TemplatedControl.CornerRadiusProperty, ControlRadius));
+        styles.Add(input);
+
+        var hover = new Style(
+            x => x.OfType<TControl>().Class("input-control").Class(":pointerover"));
+        hover.Setters.Add(new Setter(TemplatedControl.BorderBrushProperty, BorderStrongBrush));
+        styles.Add(hover);
+
+        var focus = new Style(x => x.OfType<TControl>().Class("input-control").Class(":focus"));
+        focus.Setters.Add(new Setter(TemplatedControl.BorderBrushProperty, FocusRingBrush));
+        focus.Setters.Add(new Setter(TemplatedControl.BorderThicknessProperty, new Thickness(2)));
+        styles.Add(focus);
+
+        var disabled = new Style(
+            x => x.OfType<TControl>().Class("input-control").Class(":disabled"));
+        disabled.Setters.Add(new Setter(TemplatedControl.BackgroundProperty, DisabledBackgroundBrush));
+        disabled.Setters.Add(new Setter(TemplatedControl.ForegroundProperty, TextDisabledBrush));
+        disabled.Setters.Add(new Setter(TemplatedControl.BorderBrushProperty, BorderSubtleBrush));
+        styles.Add(disabled);
+    }
+
     /// <summary>
     /// 覆盖 Fluent 按钮状态资源（PointerOver/Pressed/Accent 系列），
     /// 与类名样式形成双保险：无论主题用控件级样式还是模板级资源，悬停反馈都可控。
@@ -400,6 +573,23 @@ internal static class UiTheme
         window.Resources["AccentButtonForeground"] = AccentTextBrush;
         window.Resources["AccentButtonForegroundPointerOver"] = AccentTextBrush;
         window.Resources["AccentButtonForegroundPressed"] = AccentTextBrush;
+        window.Resources["ComboBoxBackground"] = SunkenBrush;
+        window.Resources["ComboBoxBackgroundPointerOver"] = SunkenBrush;
+        window.Resources["ComboBoxBackgroundPressed"] = SunkenBrush;
+        window.Resources["ComboBoxBorderBrush"] = BorderMediumBrush;
+        window.Resources["ComboBoxBorderBrushPointerOver"] = BorderStrongBrush;
+        window.Resources["ComboBoxBorderBrushFocused"] = FocusRingBrush;
+        window.Resources["ComboBoxDropDownBackground"] = PopupBrush;
+        window.Resources["ComboBoxItemBackgroundPointerOver"] = GhostHoverBrush;
+        window.Resources["ComboBoxItemBackgroundSelected"] = SelectionBrush;
+        window.Resources["MenuFlyoutPresenterBackground"] = PopupBrush;
+        window.Resources["MenuFlyoutPresenterBorderBrush"] = BorderMediumBrush;
+        window.Resources["MenuFlyoutItemBackgroundPointerOver"] = GhostHoverBrush;
+        window.Resources["MenuFlyoutItemBackgroundPressed"] = GhostPressedBrush;
+        window.Resources["ScrollBarThumbBackground"] = BorderStrongBrush;
+        window.Resources["ScrollBarThumbBackgroundPointerOver"] = TextFaintBrush;
+        window.Resources["NumericUpDownButtonBackgroundPointerOver"] = GhostHoverBrush;
+        window.Resources["NumericUpDownButtonBackgroundPressed"] = GhostPressedBrush;
     }
 
     /// <summary>页面大标题（检查器顶部）。</summary>
@@ -444,7 +634,7 @@ internal static class UiTheme
     public static void ApplyPrimaryStyle(Button button)
     {
         button.Classes.Add("accent");
-        button.Height = 44;
+        button.Height = PrimaryButtonHeight;
         button.FontSize = 15;
         button.FontWeight = FontWeight.SemiBold;
         button.CornerRadius = ControlRadius;
@@ -512,6 +702,97 @@ internal static class UiTheme
         button.Padding = small ? new Thickness(10, 2, 10, 2) : new Thickness(16, 6, 16, 6);
         button.CornerRadius = small ? new CornerRadius(6) : ControlRadius;
         AttachButtonTransitions(button);
+    }
+
+    /// <summary>标准次级操作：清晰边界、与主按钮保持视觉层级。</summary>
+    public static void ApplySecondaryStyle(Button button, bool small = false)
+    {
+        if (!button.Classes.Contains("btn-secondary"))
+            button.Classes.Add("btn-secondary");
+        button.MinHeight = small ? IconButtonSize : ControlHeight;
+        button.FontSize = small ? 11.5 : 13;
+        button.FontWeight = FontWeight.Medium;
+        button.Padding = small ? new Thickness(10, 3) : new Thickness(14, 6);
+        button.CornerRadius = ControlRadius;
+        AttachButtonTransitions(button);
+    }
+
+    /// <summary>低频轻量操作：静止时克制，悬停与键盘焦点仍然明确。</summary>
+    public static void ApplyQuietStyle(Button button, bool small = false)
+    {
+        if (!button.Classes.Contains("btn-quiet"))
+            button.Classes.Add("btn-quiet");
+        button.MinHeight = small ? IconButtonSize : ControlHeight;
+        button.FontSize = small ? 11.5 : 13;
+        button.FontWeight = FontWeight.Medium;
+        button.Padding = small ? new Thickness(9, 3) : new Thickness(12, 6);
+        button.CornerRadius = ControlRadius;
+        AttachButtonTransitions(button);
+    }
+
+    /// <summary>小操作图标按钮：统一 32×32 命中区，并强制提供无障碍名称。</summary>
+    public static void ApplyIconStyle(Button button, string automationName)
+    {
+        if (!button.Classes.Contains("btn-icon"))
+            button.Classes.Add("btn-icon");
+        button.Width = IconButtonSize;
+        button.Height = IconButtonSize;
+        button.MinWidth = IconButtonSize;
+        button.MinHeight = IconButtonSize;
+        button.Padding = new Thickness(6);
+        button.CornerRadius = ControlRadius;
+        AutomationProperties.SetName(button, automationName);
+        AttachButtonTransitions(button);
+    }
+
+    /// <summary>文本、数字和下拉输入控件的统一高度、圆角与主题状态。</summary>
+    public static void ApplyInputStyle(Control control)
+    {
+        if (!control.Classes.Contains("input-control"))
+            control.Classes.Add("input-control");
+        control.MinHeight = ControlHeight;
+        if (control is TemplatedControl templated)
+            templated.CornerRadius = ControlRadius;
+        if (control is TextBox { IsReadOnly: true } && !control.Classes.Contains("input-readonly"))
+            control.Classes.Add("input-readonly");
+        if (control is TextBox textBox)
+            textBox.Padding = new Thickness(10, 6);
+        else if (control is NumericUpDown numberBox)
+            numberBox.Padding = new Thickness(10, 5);
+        else if (control is ComboBox comboBox)
+            comboBox.Padding = new Thickness(10, 5);
+    }
+
+    /// <summary>显式切换输入错误状态，供校验逻辑复用，不改变字段值或绑定。</summary>
+    public static void SetInputError(Control control, bool hasError)
+    {
+        if (hasError)
+        {
+            if (!control.Classes.Contains("input-error"))
+                control.Classes.Add("input-error");
+        }
+        else
+        {
+            control.Classes.Remove("input-error");
+        }
+    }
+
+    /// <summary>外观 Flyout 内的原生单选项。</summary>
+    public static void ApplyAppearanceOptionStyle(RadioButton option)
+    {
+        if (!option.Classes.Contains("appearance-option"))
+            option.Classes.Add("appearance-option");
+        option.MinHeight = ControlHeight;
+        option.CornerRadius = ControlRadius;
+    }
+
+    /// <summary>纹理 / DXF 原生 ToggleButton 分段项。</summary>
+    public static void ApplyPreviewTabStyle(ToggleButton tab)
+    {
+        if (!tab.Classes.Contains("preview-tab"))
+            tab.Classes.Add("preview-tab");
+        tab.MinHeight = ControlHeight;
+        tab.CornerRadius = ControlRadius;
     }
 
     /// <summary>把幽灵按钮标记为危险操作（悬停泛红），用于"取消"。</summary>
@@ -634,6 +915,8 @@ internal static class UiTheme
     /// <summary>用轻量资源覆盖 Fluent Expander 的重色标题栏，同时保留原生键盘与自动化语义。</summary>
     public static Expander StyleExpander(Expander expander)
     {
+        if (!expander.Classes.Contains("card-expander"))
+            expander.Classes.Add("card-expander");
         expander.Resources["ExpanderHeaderBackground"] = CardBrush;
         expander.Resources["ExpanderHeaderBackgroundPointerOver"] = GhostHoverBrush;
         expander.Resources["ExpanderHeaderBackgroundPressed"] = GhostPressedBrush;
