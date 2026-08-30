@@ -152,7 +152,7 @@ internal sealed class LogPanelView
     /// <summary>把手当前提示文案。</summary>
     public string HandleTooltip => _handle.TooltipText;
 
-    public bool ClearButtonUsesFluentIcon => _clearButton.Content?.GetType().Name == "FluentIcon";
+    public bool ClearButtonUsesFluentIcon => UiIcons.IsFluentIconControl(_clearButton.Content);
 
     public string ClearButtonName => AutomationProperties.GetName(_clearButton) ?? string.Empty;
 

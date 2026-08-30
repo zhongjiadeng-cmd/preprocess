@@ -73,6 +73,23 @@ public sealed class UiStructureContractTests
     }
 
     [TestMethod]
+    public void AppUsesPlatformFontFallbackInsteadOfInterOnlyDefault()
+    {
+        var root = FindRepositoryRoot();
+        var program = File.ReadAllText(Path.Combine(root, "GrayscaleLayersMac", "Program.cs"));
+        var app = File.ReadAllText(Path.Combine(root, "GrayscaleLayersMac", "App.cs"));
+        var project = File.ReadAllText(Path.Combine(
+            root, "GrayscaleLayersMac", "GrayscaleLayersMac.csproj"));
+
+        Assert.DoesNotContain("WithInterFont", program);
+        Assert.DoesNotContain("Avalonia.Fonts.Inter", project);
+        StringAssert.Contains(MainWindowSource, "FontFamily = UiTheme.UiFont;");
+        StringAssert.Contains(
+            app,
+            "Resources[\"ContentControlThemeFontFamily\"] = UiTheme.UiFont;");
+    }
+
+    [TestMethod]
     public void RedesignDoesNotIntroduceAlternateWorkflowNavigation()
     {
         Assert.DoesNotContain("PipelineStepNavigator", MainWindowSource);

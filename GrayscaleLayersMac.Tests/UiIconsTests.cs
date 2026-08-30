@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.Linq;
 using Avalonia.Controls;
+using Avalonia.Media;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 
 namespace GrayscaleLayersMac.Tests;
@@ -15,9 +16,10 @@ public sealed class UiIconsTests
         foreach (var kind in Enum.GetValues<UiIcon>())
         {
             var control = UiIcons.Create(kind);
+            var glyph = MaskGlyph(control);
 
-            Assert.AreEqual("FluentIcon", control.GetType().Name, $"{kind} 应使用 FluentIcon，而不是字符图标");
-            Assert.AreEqual("Regular", ReadProperty(control, "IconVariant"), $"{kind} 必须使用单色 Regular 图标");
+            Assert.AreEqual("FluentIcon", glyph.GetType().Name, $"{kind} 应使用 FluentIcon，而不是字符图标");
+            Assert.AreEqual("Regular", ReadProperty(glyph, "IconVariant"), $"{kind} 必须使用单色 Regular 图标");
         }
     }
 
@@ -55,8 +57,18 @@ public sealed class UiIconsTests
 
         Assert.IsInstanceOfType<StackPanel>(content);
         var panel = (StackPanel)content;
-        Assert.AreEqual("FluentIcon", panel.Children[0].GetType().Name);
+        Assert.AreEqual("FluentIcon", MaskGlyph(panel.Children[0]).GetType().Name);
         Assert.AreEqual("导入", ((TextBlock)panel.Children[1]).Text);
+    }
+
+    [TestMethod]
+    public void FluentIconsUseTheThemeAwareSemanticForeground()
+    {
+        var control = UiIcons.Create(UiIcon.ZoomIn);
+        var foreground = ((Border)control).Background;
+
+        Assert.AreSame(UiTheme.IconBrush, foreground);
+        Assert.IsInstanceOfType<SolidColorBrush>(foreground);
     }
 
     [TestMethod]
@@ -75,7 +87,14 @@ public sealed class UiIconsTests
 
     private static void AssertIcon(UiIcon kind, string expected)
     {
-        Assert.AreEqual(expected, ReadProperty(UiIcons.Create(kind), "Icon"));
+        Assert.AreEqual(expected, ReadProperty(MaskGlyph(UiIcons.Create(kind)), "Icon"));
+    }
+
+    private static Control MaskGlyph(Control control)
+    {
+        var mask = ((Border)control).OpacityMask as VisualBrush;
+        return mask?.Visual as Control
+            ?? throw new AssertFailedException("图标应使用 Fluent 字形透明蒙版");
     }
 
     private static string ReadProperty(Control control, string propertyName) =>

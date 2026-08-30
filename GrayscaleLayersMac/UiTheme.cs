@@ -212,7 +212,21 @@ internal static class UiTheme
     public static readonly SolidColorBrush IconPressedBrush = new(DarkPalette.IconPressed);
     public static readonly SolidColorBrush IconDisabledBrush = new(DarkPalette.IconDisabled);
 
-    public static readonly FontFamily MonoFont = FontFamily.Parse("Menlo, monospace");
+    // 使用系统 CJK 字体作为界面主字体。不能把仅含拉丁字形的 Inter 设为
+    // FontManager 默认字体，否则 Fluent 模板内的粗体、占位文字和按钮内容
+    // 在 macOS 上可能失去中文回退并显示为方框。
+    public static readonly FontFamily UiFont = OperatingSystem.IsMacOS()
+        ? FontFamily.Parse("PingFang SC")
+        : OperatingSystem.IsWindows()
+            ? FontFamily.Parse("Microsoft YaHei UI")
+            : FontFamily.Default;
+
+    // 日志与数值仍保留平台原生的等宽视觉；缺字继续交给系统字体回退。
+    public static readonly FontFamily MonoFont = OperatingSystem.IsMacOS()
+        ? FontFamily.Parse("Menlo")
+        : OperatingSystem.IsWindows()
+            ? FontFamily.Parse("Consolas")
+            : FontFamily.Parse("monospace");
 
     public static event EventHandler? SchemeChanged;
 
@@ -758,7 +772,7 @@ internal static class UiTheme
         if (control is TextBox textBox)
             textBox.Padding = new Thickness(10, 6);
         else if (control is NumericUpDown numberBox)
-            numberBox.Padding = new Thickness(10, 5);
+            numberBox.Padding = new Thickness(6, 5);
         else if (control is ComboBox comboBox)
             comboBox.Padding = new Thickness(10, 5);
     }

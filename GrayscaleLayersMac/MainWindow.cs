@@ -223,6 +223,7 @@ public sealed class MainWindow : Window
         Height = 940;
         MinWidth = 1080;
         MinHeight = 720;
+        FontFamily = UiTheme.UiFont;
         Background = UiTheme.RootBrush;
         WindowStartupLocation = WindowStartupLocation.CenterScreen;
         _pipelinePreviewController = new TexturePreviewController(

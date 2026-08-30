@@ -1,5 +1,6 @@
 using Avalonia.Controls;
 using Avalonia.Layout;
+using Avalonia.Media;
 using FluentIcons.Avalonia;
 using FluentIcons.Common;
 
@@ -24,7 +25,8 @@ internal enum UiIcon
 
 /// <summary>
 /// 应用内可见操作图标的唯一入口。固定使用 Fluent Regular 单色字形，
-/// 让图标继承按钮前景色，从而自动响应浅深主题、悬停、按下与禁用状态。
+/// 并把字形作为透明蒙版交给语义画刷着色，规避 macOS 上字体图标前景色
+/// 被 Avalonia 内容模板重置为黑色的问题。
 /// </summary>
 internal static class UiIcons
 {
@@ -52,13 +54,30 @@ internal static class UiIcons
 
     private static Control Create(UiIcon kind, IconSize size)
     {
-        return new FluentIcon
+        var pixels = size switch
+        {
+            IconSize.Size16 => 16d,
+            IconSize.Size20 => 20d,
+            _ => 20d
+        };
+        var glyph = new FluentIcon
         {
             Icon = Resolve(kind),
             IconVariant = IconVariant.Regular,
             IconSize = size,
+            FontSize = pixels,
+            Width = pixels,
+            Height = pixels,
+            Foreground = Brushes.Black,
             HorizontalAlignment = HorizontalAlignment.Center,
             VerticalAlignment = VerticalAlignment.Center
+        };
+        return new Border
+        {
+            Width = pixels,
+            Height = pixels,
+            Background = UiTheme.IconBrush,
+            OpacityMask = new VisualBrush(glyph)
         };
     }
 
@@ -72,6 +91,12 @@ internal static class UiIcons
         HorizontalAlignment = HorizontalAlignment.Center,
         VerticalAlignment = VerticalAlignment.Center
     };
+
+    internal static bool IsFluentIconControl(object? content) =>
+        content is Border
+        {
+            OpacityMask: VisualBrush { Visual: FluentIcon }
+        };
 
     private static Icon Resolve(UiIcon kind) => kind switch
     {

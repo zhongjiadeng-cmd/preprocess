@@ -26,6 +26,11 @@ public sealed class App : Application
         };
         SetAppearance(_uiSettings.LoadAppearance(), persist: false);
 
+        // FluentTheme 默认把 Inter 放在字体链首位。Popup/Flyout 拥有独立的
+        // 可视根，不会继承 MainWindow.FontFamily，因此必须在应用资源层覆盖，
+        // 才能让 ComboBox、外观菜单和 SplitButton 菜单稳定显示中文。
+        Resources["ContentControlThemeFontFamily"] = UiTheme.UiFont;
+
         // 全局强调色接管：复选框、页签指示条、输入框焦点、下拉、滚动条等
         // Fluent 控件与自定义 UI 统一使用蓝色交互语义；橙色只留给警告与加工数据。
         ApplyAccentResources();

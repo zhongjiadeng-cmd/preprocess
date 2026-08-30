@@ -73,6 +73,6 @@ public sealed class CollapseHandleTests
         var handle = new CollapseHandle(CollapseHandleOrientation.Horizontal, "下缩", "上拉");
 
         Assert.IsNotNull(handle.Content);
-        Assert.AreEqual("FluentIcon", handle.Content.GetType().Name);
+        Assert.IsTrue(UiIcons.IsFluentIconControl(handle.Content));
     }
 }

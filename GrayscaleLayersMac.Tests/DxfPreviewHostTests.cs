@@ -181,7 +181,7 @@ public sealed class DxfPreviewHostTests
             names!);
         Assert.IsTrue(buttons
             .Where(button => names.Contains(AutomationProperties.GetName(button)))
-            .All(button => button.Content?.GetType().Name == "FluentIcon"));
+            .All(button => UiIcons.IsFluentIconControl(button.Content)));
     }
 
     private static DxfLayerPreviewItem[] MakeItems(int count, string tag = "layer") =>

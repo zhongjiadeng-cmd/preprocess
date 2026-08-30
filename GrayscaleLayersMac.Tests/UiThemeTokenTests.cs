@@ -61,6 +61,17 @@ public sealed class UiThemeTokenTests
     }
 
     [TestMethod]
+    public void TypographyProvidesExplicitChineseFallbacks()
+    {
+        if (OperatingSystem.IsMacOS())
+            Assert.AreEqual("PingFang SC", UiTheme.UiFont.Name);
+        else if (OperatingSystem.IsWindows())
+            Assert.AreEqual("Microsoft YaHei UI", UiTheme.UiFont.Name);
+
+        Assert.AreNotEqual("Inter", UiTheme.UiFont.Name);
+    }
+
+    [TestMethod]
     public void ApplySchemeKeepsNewBrushInstancesStable()
     {
         var popup = UiTheme.PopupBrush;

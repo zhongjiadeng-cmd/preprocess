@@ -98,7 +98,6 @@ public sealed class GrayscaleLayerPreviewControl : Grid, IDisposable
     /// <summary>纹理信息（尺寸、位深、DPI…），由 <see cref="SetMetadata"/> 写入。</summary>
     private readonly TextBlock _metadata = new()
     {
-        FontFamily = UiTheme.MonoFont,
         FontSize = 11,
         Text = "尚未选择图片",
         TextWrapping = TextWrapping.Wrap,
@@ -116,7 +115,6 @@ public sealed class GrayscaleLayerPreviewControl : Grid, IDisposable
     /// <summary>当前层、缩放与交互提示。</summary>
     private readonly TextBlock _layerStatus = new()
     {
-        FontFamily = UiTheme.MonoFont,
         FontSize = 11,
         TextWrapping = TextWrapping.Wrap,
         Foreground = UiTheme.TextSecondaryBrush
