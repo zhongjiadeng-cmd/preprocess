@@ -39,6 +39,8 @@ public sealed class UiIconsTests
         AssertIcon(UiIcon.Collapse, "ChevronDown");
         AssertIcon(UiIcon.Expand, "ChevronUp");
         AssertIcon(UiIcon.OpenFolder, "FolderOpen");
+        AssertIcon(UiIcon.Success, "CheckmarkCircle");
+        AssertIcon(UiIcon.Error, "ErrorCircle");
     }
 
     [TestMethod]

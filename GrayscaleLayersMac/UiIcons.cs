@@ -20,7 +20,9 @@ internal enum UiIcon
     ClearLog,
     Collapse,
     Expand,
-    OpenFolder
+    OpenFolder,
+    Success,
+    Error
 }
 
 /// <summary>
@@ -113,6 +115,8 @@ internal static class UiIcons
         UiIcon.Collapse => Icon.ChevronDown,
         UiIcon.Expand => Icon.ChevronUp,
         UiIcon.OpenFolder => Icon.FolderOpen,
+        UiIcon.Success => Icon.CheckmarkCircle,
+        UiIcon.Error => Icon.ErrorCircle,
         _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, null)
     };
 }
