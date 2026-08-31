@@ -62,6 +62,15 @@ public sealed class UiStructureContractTests
     }
 
     [TestMethod]
+    public void MainWindowUsesTheOperatorBooleanTerminology()
+    {
+        StringAssert.Contains(MainWindowSource, "Content = \"scanahead\"");
+        StringAssert.Contains(MainWindowSource, "Content = \"skywritting\"");
+        Assert.DoesNotContain("预扫描", MainWindowSource);
+        Assert.DoesNotContain("空写", MainWindowSource);
+    }
+
+    [TestMethod]
     public void HeaderOwnsTheCompactToolGroupWithoutChangingItsActions()
     {
         var inspectorStart = MainWindowSource.IndexOf("var pipelineInspector = new StackPanel", StringComparison.Ordinal);

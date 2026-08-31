@@ -9,6 +9,16 @@ namespace GrayscaleLayersMac.Tests;
 public sealed class LaserPmtConfigurationTests
 {
     [TestMethod]
+    public void BooleanParametersUseOperatorLabelsWithoutChangingMachineKeys()
+    {
+        var scanAhead = LaserPmtConfiguration.Parameters.Single(item => item.Name == "scan_ahead");
+        var skyWriting = LaserPmtConfiguration.Parameters.Single(item => item.Name == "sky_writing");
+
+        Assert.AreEqual("scanahead", scanAhead.DisplayName);
+        Assert.AreEqual("skywritting", skyWriting.DisplayName);
+    }
+
+    [TestMethod]
     public void EmptyParameterListCreatesOneInheritedJob()
     {
         Assert.IsTrue(LaserPmtConfiguration.TryParseRows(

@@ -60,7 +60,7 @@ public sealed class PmtDetailsEditor : UserControl
 
     public PmtDetailsEditor()
     {
-        Width = 240;
+        Width = 220;
         UiTheme.ApplyIconStyle(_saveButton, "保存覆盖");
         UiTheme.ApplyIconStyle(_resetButton, "还原基础");
         ToolTip.SetTip(_saveButton, "保存覆盖");

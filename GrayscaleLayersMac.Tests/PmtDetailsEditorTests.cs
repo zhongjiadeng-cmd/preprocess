@@ -90,7 +90,7 @@ public sealed class PmtDetailsEditorTests
         {
             var details = new PmtDetailsEditor();
 
-            Assert.AreEqual(240d, details.Width);
+            Assert.AreEqual(220d, details.Width);
             var root = Assert.IsInstanceOfType<Grid>(details.Content);
             Assert.AreEqual(3, root.RowDefinitions.Count);
             Assert.IsInstanceOfType<ScrollViewer>(root.Children.Single(control => Grid.GetRow(control) == 1));
@@ -115,8 +115,12 @@ public sealed class PmtDetailsEditorTests
             CollectionAssert.Contains(labels, "功率");
             CollectionAssert.Contains(labels, "扫描速度");
             CollectionAssert.Contains(labels, "层间进给（μm）");
+            CollectionAssert.Contains(labels, "scanahead");
+            CollectionAssert.Contains(labels, "skywritting");
             Assert.IsFalse(labels.Any(label => label.Contains("power", System.StringComparison.Ordinal)));
             Assert.IsFalse(labels.Any(label => label.Contains("scanSpeed", System.StringComparison.Ordinal)));
+            Assert.IsFalse(labels.Any(label => label.Contains("预扫描", System.StringComparison.Ordinal)));
+            Assert.IsFalse(labels.Any(label => label.Contains("空写", System.StringComparison.Ordinal)));
         }, CancellationToken.None);
     }
 

@@ -154,7 +154,7 @@ public sealed class MainWindow : Window
     private readonly NumericUpDown _pipelineJumpDelayBox = MakeNumberBox(50, 1, int.MaxValue, 0);
     private readonly CheckBox _pipelineScanAheadBox = new()
     {
-        Content = "预扫描（scan_ahead）",
+        Content = "scanahead",
         IsChecked = true
     };
     private readonly NumericUpDown _pipelineAccScaleBox = MakeNumberBox(50, 1, int.MaxValue, 0);
@@ -162,7 +162,7 @@ public sealed class MainWindow : Window
     private readonly NumericUpDown _pipelineEndScaleBox = MakeNumberBox(100, 1, int.MaxValue, 0);
     private readonly CheckBox _pipelineSkyWritingBox = new()
     {
-        Content = "空写（sky_writing）",
+        Content = "skywritting",
         IsChecked = true
     };
     private readonly NumericUpDown _pipelineTimeLagBox = MakeNumberBox(100, 1, int.MaxValue, 0);
