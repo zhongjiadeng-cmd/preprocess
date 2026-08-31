@@ -52,6 +52,14 @@ internal sealed class InlineProgress<T>(Action<T> report) : IProgress<T>
 
 public sealed class MainWindow : Window
 {
+    internal const double AppHeaderHeight = 64;
+    internal static readonly bool AppExtendsIntoWindowDecorations = true;
+    internal static readonly SystemDecorations AppSystemDecorations = SystemDecorations.Full;
+    internal static readonly ExtendClientAreaChromeHints AppChromeHints =
+        ExtendClientAreaChromeHints.PreferSystemChrome |
+        ExtendClientAreaChromeHints.OSXThickTitleBar;
+    internal static readonly Thickness AppHeaderPadding = new(80, 8, 20, 8);
+
     private enum PipelineRunMode
     {
         All,
@@ -159,6 +167,7 @@ public sealed class MainWindow : Window
     private readonly TextBox _pipelineLogBox = MakeLogBox();
     private readonly DropDownButton _pipelineImportButton = new() { Content = "导入", HorizontalAlignment = HorizontalAlignment.Left };
     private readonly ImportProgressOverlay _pipelineImportProgress;
+    private readonly ImportProgressOverlay _pipelineRunProgress;
     private readonly Button _pipelineClearButton = new() { Content = "清空缓存", HorizontalAlignment = HorizontalAlignment.Left };
     private readonly DropDownButton _appearanceButton = new() { Content = "外观", HorizontalAlignment = HorizontalAlignment.Left };
     private readonly TextBlock _pipelineReadinessText = new()
@@ -266,6 +275,7 @@ public sealed class MainWindow : Window
     public MainWindow()
     {
         Title = "纹理预处理工具";
+        ConfigureIntegratedTitleBar(this);
         Icon = new WindowIcon(
             AssetLoader.Open(
                 new Uri("avares://GrayscaleLayersMac/Assets/AppIcon.png")));
@@ -308,7 +318,6 @@ public sealed class MainWindow : Window
         var pipelineInputButton = new Button { Content = "选择图片…" };
         var pipelineLayerOutputButton = new Button { Content = "选择目录…" };
         var pipelineDxfOutputButton = new Button { Content = "选择目录…" };
-        var pipelineCancelButton = new Button { Content = "取消", IsEnabled = false };
         pipelineInputButton.Click += async (_, _) => await PickPipelineInputAsync();
         pipelineLayerOutputButton.Click += async (_, _) =>
             await PickPipelineFolderAsync(_pipelineLayerOutputBox, "选择分层 TIFF 保存目录");
@@ -331,6 +340,7 @@ public sealed class MainWindow : Window
                 }
             })
         };
+        UiTheme.RemoveFlyoutOuterChrome(_pipelineImportFlyout);
         _pipelineImportButton.Flyout = _pipelineImportFlyout;
         _pipelineImportButton.Content = UiIcons.Labeled(UiIcon.Import, "导入");
         ToolTip.SetTip(_pipelineImportButton, "导入已有的分层 TIFF 或 DXF 中间结果。");
@@ -342,11 +352,7 @@ public sealed class MainWindow : Window
         _pipelineRunSplitButton.Click += async (_, _) =>
         {
             if (_cancellation is null)
-            {
-                pipelineCancelButton.IsEnabled = true;
                 await RunPipelineAsync(PipelineRunMode.All);
-                pipelineCancelButton.IsEnabled = false;
-            }
         };
         var singleStepFlyout = new Flyout
         {
@@ -358,21 +364,18 @@ public sealed class MainWindow : Window
                 {
                     CreatePipelineStepMenuButton(
                         "第 1 步：灰度分层",
-                        PipelineRunMode.GrayscaleOnly,
-                        pipelineCancelButton),
+                        PipelineRunMode.GrayscaleOnly),
                     CreatePipelineStepMenuButton(
                         "第 2 步：生成 DXF",
-                        PipelineRunMode.DxfOnly,
-                        pipelineCancelButton),
+                        PipelineRunMode.DxfOnly),
                     CreatePipelineStepMenuButton(
                         "第 3 步：生成加工文件",
-                        PipelineRunMode.MachineOnly,
-                        pipelineCancelButton)
+                        PipelineRunMode.MachineOnly)
                 }
             })
         };
+        UiTheme.RemoveFlyoutOuterChrome(singleStepFlyout);
         _pipelineRunSplitButton.Flyout = singleStepFlyout;
-        pipelineCancelButton.Click += (_, _) => _cancellation?.Cancel();
         _pipelineOpenButton.Click += (_, _) => OpenDirectory(_lastMachineOutputPath);
         _pipelineBlocksBox.ValueChanged += (_, _) => UpdateBlockCenterMotionAvailability();
         UpdateBlockCenterMotionAvailability();
@@ -582,15 +585,17 @@ public sealed class MainWindow : Window
         foreach (var secondaryButton in new[]
         {
             pipelineInputButton, pipelineLayerOutputButton, pipelineDxfOutputButton,
-            pipelineCancelButton,
             _pipelineOpenButton
         })
             UiTheme.ApplySecondaryStyle(secondaryButton);
-        UiTheme.MarkDanger(pipelineCancelButton);
 
         UiTheme.ApplyQuietStyle(_pipelineImportButton);
         AutomationProperties.SetName(_pipelineImportButton, "导入中间结果");
         _pipelineImportProgress = new ImportProgressOverlay(_pipelineImportButton);
+        _pipelineRunProgress = new ImportProgressOverlay(
+            _pipelineRunSplitButton,
+            cancelRequested: () => _cancellation?.Cancel(),
+            placement: PlacementMode.TopEdgeAlignedLeft);
         UiTheme.ApplyIconStyle(_pipelineClearButton, "清空缓存");
         _pipelineClearButton.Content = UiIcons.Create(UiIcon.ClearCache);
         UiTheme.ApplyQuietStyle(_appearanceButton);
@@ -612,60 +617,72 @@ public sealed class MainWindow : Window
             }
         };
 
+        var headerDragRegion = new Grid
+        {
+            Background = Brushes.Transparent,
+            ColumnDefinitions = new ColumnDefinitions("Auto,*"),
+            ColumnSpacing = 12,
+            Children =
+            {
+                Place(new Border
+                {
+                    Width = 38,
+                    Height = 38,
+                    Padding = new Thickness(6),
+                    CornerRadius = UiTheme.SegmentRadius,
+                    Background = UiTheme.CardBrush,
+                    BorderBrush = UiTheme.BorderSubtleBrush,
+                    BorderThickness = new Thickness(1),
+                    VerticalAlignment = VerticalAlignment.Center,
+                    Child = new Image
+                    {
+                        Source = new Bitmap(
+                            AssetLoader.Open(
+                                new Uri("avares://GrayscaleLayersMac/Assets/AppIcon.png"))),
+                        Width = 26,
+                        Height = 26
+                    }
+                }, 0),
+                Place(new StackPanel
+                {
+                    Spacing = 2,
+                    VerticalAlignment = VerticalAlignment.Center,
+                    Children =
+                    {
+                        new TextBlock
+                        {
+                            Text = "纹理预处理工作台",
+                            FontSize = 15.5,
+                            FontWeight = FontWeight.SemiBold,
+                            LetterSpacing = 0.3
+                        },
+                        new TextBlock
+                        {
+                            Text = "GRAYSCALE · HATCH · DXF",
+                            FontSize = 9.5,
+                            Foreground = UiTheme.TextFaintBrush,
+                            LetterSpacing = 2.2
+                        }
+                    }
+                }, 1)
+            }
+        };
+        headerDragRegion.PointerPressed += (_, args) => BeginHeaderDrag(args);
+
         var appHeader = new Border
         {
-            Padding = new Thickness(20, 8),
+            Padding = AppHeaderPadding,
             BorderBrush = UiTheme.BorderSubtleBrush,
             BorderThickness = new Thickness(0, 0, 0, 1),
             Background = UiTheme.HeaderBrush,
             Child = new Grid
             {
-                ColumnDefinitions = new ColumnDefinitions("Auto,*,Auto"),
+                ColumnDefinitions = new ColumnDefinitions("*,Auto"),
                 ColumnSpacing = 12,
                 Children =
                 {
-                    Place(new Border
-                    {
-                        Width = 38,
-                        Height = 38,
-                        Padding = new Thickness(6),
-                        CornerRadius = UiTheme.SegmentRadius,
-                        Background = UiTheme.CardBrush,
-                        BorderBrush = UiTheme.BorderSubtleBrush,
-                        BorderThickness = new Thickness(1),
-                        VerticalAlignment = VerticalAlignment.Center,
-                        Child = new Image
-                        {
-                            Source = new Bitmap(
-                                AssetLoader.Open(
-                                    new Uri("avares://GrayscaleLayersMac/Assets/AppIcon.png"))),
-                            Width = 26,
-                            Height = 26
-                        }
-                    }, 0),
-                    Place(new StackPanel
-                    {
-                        Spacing = 2,
-                        VerticalAlignment = VerticalAlignment.Center,
-                        Children =
-                        {
-                            new TextBlock
-                            {
-                                Text = "纹理预处理工作台",
-                                FontSize = 15.5,
-                                FontWeight = FontWeight.SemiBold,
-                                LetterSpacing = 0.3
-                            },
-                            new TextBlock
-                            {
-                                Text = "GRAYSCALE · HATCH · DXF",
-                                FontSize = 9.5,
-                                Foreground = UiTheme.TextFaintBrush,
-                                LetterSpacing = 2.2
-                            }
-                        }
-                    }, 1),
-                    Place(headerTools, 2)
+                    Place(headerDragRegion, 0),
+                    Place(headerTools, 1)
                 }
             }
         };
@@ -681,11 +698,30 @@ public sealed class MainWindow : Window
                     Child = pipelineContent,
                     Margin = new Thickness(16, 0, 16, 16)
                 }, 1),
-                _pipelineImportProgress.Root
+                _pipelineImportProgress.Root,
+                _pipelineRunProgress.Root
             }
         };
         Content = root;
     }
+
+    internal static void ConfigureIntegratedTitleBar(Window window)
+    {
+        window.SystemDecorations = AppSystemDecorations;
+        window.ExtendClientAreaToDecorationsHint = AppExtendsIntoWindowDecorations;
+        window.ExtendClientAreaChromeHints = AppChromeHints;
+        window.ExtendClientAreaTitleBarHeightHint = AppHeaderHeight;
+    }
+
+    private void BeginHeaderDrag(PointerPressedEventArgs args)
+    {
+        var updateKind = args.GetCurrentPoint(this).Properties.PointerUpdateKind;
+        if (IsHeaderDragGesture(updateKind))
+            BeginMoveDrag(args);
+    }
+
+    internal static bool IsHeaderDragGesture(PointerUpdateKind updateKind) =>
+        updateKind == PointerUpdateKind.LeftButtonPressed;
 
     private void ConfigureAppearanceMenu()
     {
@@ -721,7 +757,7 @@ public sealed class MainWindow : Window
         dark.Click += (_, _) => app.SetAppearance(AppAppearance.Dark);
         app.AppearanceChanged += (_, _) => RefreshSelection();
 
-        _appearanceButton.Flyout = new Flyout
+        var appearanceFlyout = new Flyout
         {
             Placement = PlacementMode.BottomEdgeAlignedLeft,
             Content = UiTheme.FlyoutSurface(new Border
@@ -734,6 +770,8 @@ public sealed class MainWindow : Window
                 }
             })
         };
+        UiTheme.RemoveFlyoutOuterChrome(appearanceFlyout);
+        _appearanceButton.Flyout = appearanceFlyout;
         ToolTip.SetTip(_appearanceButton, "默认跟随 macOS 外观，也可以在此手动覆盖。");
         RefreshSelection();
     }
@@ -1380,8 +1418,7 @@ public sealed class MainWindow : Window
 
     private Button CreatePipelineStepMenuButton(
         string label,
-        PipelineRunMode mode,
-        Button cancelButton)
+        PipelineRunMode mode)
     {
         var button = new Button
         {
@@ -1394,11 +1431,7 @@ public sealed class MainWindow : Window
         {
             _pipelineRunSplitButton.Flyout?.Hide();
             if (_cancellation is null)
-            {
-                cancelButton.IsEnabled = true;
                 await RunPipelineAsync(mode);
-                cancelButton.IsEnabled = false;
-            }
         };
         return button;
     }
@@ -2040,18 +2073,16 @@ public sealed class MainWindow : Window
         _pipelineDxfHost?.SetItems(_pipelineDxfFiles);
         string[] layerFiles = [];
         var currentRunDxfFiles = new List<string>();
-        var progressWindow = new ProcessingProgressWindow(
-            mode == PipelineRunMode.All ? "执行全部流程" : "执行单步流程",
-            mode == PipelineRunMode.All
-                ? "正在执行全部流程，请稍候…"
-                : "正在执行所选步骤，请稍候…");
-        progressWindow.CancelRequested += (_, _) => _cancellation?.Cancel();
-        progressWindow.Show(this);
+        string? latestPipelineFile = null;
+        _pipelineRunProgress.Show(PipelineProgressState.Starting(mode == PipelineRunMode.All));
         try
         {
             if (needsLayers)
             {
-                progressWindow.UpdateMessage("正在执行第 1 步：灰度分层…");
+                _pipelineRunProgress.Update(PipelineProgressState.Step(
+                    PipelineProgressStage.Grayscale,
+                    "正在执行第 1 步：灰度分层…",
+                    mode == PipelineRunMode.All ? "步骤 1/3" : "第 1 步"));
                 Directory.CreateDirectory(layerOutputActual);
                 AppendPipelineLog(mode == PipelineRunMode.All
                     ? "步骤 1/3：开始生成灰度分层 TIFF…"
@@ -2095,12 +2126,21 @@ public sealed class MainWindow : Window
                     layerOutputActual,
                     _cancellation.Token);
                 if (mode == PipelineRunMode.GrayscaleOnly)
+                {
+                    await _pipelineRunProgress.ShowAndCollapseAsync(
+                        PipelineProgressState.Succeeded(
+                            $"已生成 {layerFiles.Length} 个分层 TIFF"),
+                        CancellationToken.None);
                     return;
+                }
             }
 
             if (needsDxf)
             {
-                progressWindow.UpdateMessage("正在执行第 2 步：生成 DXF…");
+                _pipelineRunProgress.Update(PipelineProgressState.Step(
+                    PipelineProgressStage.Dxf,
+                    "正在执行第 2 步：生成 DXF…",
+                    mode == PipelineRunMode.All ? "步骤 2/3" : "第 2 步"));
                 if (layerFiles.Length == 0)
                 {
                     try
@@ -2128,6 +2168,12 @@ public sealed class MainWindow : Window
                 {
                     _cancellation.Token.ThrowIfCancellationRequested();
                     var layerFile = layerFiles[index];
+                    latestPipelineFile = layerFile;
+                    _pipelineRunProgress.Update(PipelineProgressState.DxfLayer(
+                        index + 1,
+                        layerFiles.Length,
+                        layerFile,
+                        mode == PipelineRunMode.All ? "步骤 2/3" : "第 2 步"));
                     var outputFile = Path.Combine(
                         dxfOutputAbsolute,
                         $"{Path.GetFileNameWithoutExtension(layerFile)}.dxf");
@@ -2246,11 +2292,21 @@ public sealed class MainWindow : Window
             }
 
             if (mode == PipelineRunMode.DxfOnly)
+            {
+                await _pipelineRunProgress.ShowAndCollapseAsync(
+                    PipelineProgressState.Succeeded(
+                        $"已生成 {currentRunDxfFiles.Count} 个 DXF"),
+                    CancellationToken.None);
                 return;
+            }
 
             if (needsMachine)
             {
-                progressWindow.UpdateMessage("正在执行第 3 步：生成加工文件…");
+                latestPipelineFile = null;
+                _pipelineRunProgress.Update(PipelineProgressState.Step(
+                    PipelineProgressStage.Machine,
+                    "正在执行第 3 步：生成加工文件…",
+                    mode == PipelineRunMode.All ? "步骤 3/3" : "第 3 步"));
                 if (currentRunDxfFiles.Count == 0)
                 {
                     try
@@ -2350,6 +2406,12 @@ public sealed class MainWindow : Window
                     AppendPipelineLog(
                         $"三步流程完成：已生成 {layerFiles.Length} 个 TIFF、{layerFiles.Length} 个 DXF 和 1 个加工文件。");
                 _pipelineOpenButton.IsEnabled = true;
+                await _pipelineRunProgress.ShowAndCollapseAsync(
+                    PipelineProgressState.Succeeded(
+                        mode == PipelineRunMode.All
+                            ? "全部文件生成流程已完成"
+                            : "加工文件生成成功"),
+                    CancellationToken.None);
             }
         }
         catch (OperationCanceledException)
@@ -2360,15 +2422,18 @@ public sealed class MainWindow : Window
                 "请确认没有生成进程仍在运行后再手动检查以下路径：");
             AppendPipelineLog($"临时目录：{machineTempPath}");
             AppendPipelineLog($"锁文件：{machineLockPath}");
+            await _pipelineRunProgress.ShowAndCollapseAsync(
+                PipelineProgressState.Cancelled(),
+                CancellationToken.None);
         }
         catch (Exception ex)
         {
             AppendPipelineLog($"\n流程失败：{ex.Message}");
-            await ShowMessageAsync(ex.Message);
+            _pipelineRunProgress.ShowFailure(
+                PipelineProgressState.Failed(latestPipelineFile, ex.Message));
         }
         finally
         {
-            progressWindow.CloseFromOwner();
             _cancellation.Dispose();
             _cancellation = null;
             _pipelineRunSplitButton.IsEnabled = true;

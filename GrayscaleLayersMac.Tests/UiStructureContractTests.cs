@@ -63,6 +63,30 @@ public sealed class UiStructureContractTests
     }
 
     [TestMethod]
+    public void MainWindowAppliesTheIntegratedMacTitleBarConfiguration()
+    {
+        StringAssert.Contains(MainWindowSource, "ConfigureIntegratedTitleBar(this);");
+        StringAssert.Contains(MainWindowSource, "Padding = AppHeaderPadding");
+        StringAssert.Contains(
+            MainWindowSource,
+            "window.ExtendClientAreaToDecorationsHint = AppExtendsIntoWindowDecorations;");
+        StringAssert.Contains(
+            MainWindowSource,
+            "window.ExtendClientAreaChromeHints = AppChromeHints;");
+    }
+
+    [TestMethod]
+    public void HeaderDragRegionIsSeparateFromTheInteractiveToolGroup()
+    {
+        StringAssert.Contains(MainWindowSource, "var headerDragRegion = new Grid");
+        StringAssert.Contains(
+            MainWindowSource,
+            "headerDragRegion.PointerPressed += (_, args) => BeginHeaderDrag(args);");
+        StringAssert.Contains(MainWindowSource, "Place(headerDragRegion, 0)");
+        StringAssert.Contains(MainWindowSource, "Place(headerTools, 1)");
+    }
+
+    [TestMethod]
     public void TopImportEntriesShareOneOverlayAnchoredToTheHeaderImportButton()
     {
         Assert.AreEqual(
@@ -89,6 +113,25 @@ public sealed class UiStructureContractTests
 
         Assert.DoesNotContain("ProcessingProgressWindow", directoryImport);
         Assert.DoesNotContain("ProcessingProgressWindow", fileImport);
+    }
+
+    [TestMethod]
+    public void GenerationUsesTheAnchoredOverlayInsteadOfASeparateWindow()
+    {
+        StringAssert.Contains(
+            MainWindowSource,
+            "_pipelineRunProgress = new ImportProgressOverlay(");
+        StringAssert.Contains(MainWindowSource, "_pipelineRunProgress.Root");
+        StringAssert.Contains(
+            MainWindowSource,
+            "placement: PlacementMode.TopEdgeAlignedLeft");
+        Assert.DoesNotContain("new ProcessingProgressWindow", MainWindowSource);
+        StringAssert.Contains(
+            MainWindowSource,
+            "PipelineProgressState.DxfLayer(");
+        StringAssert.Contains(
+            MainWindowSource,
+            "_pipelineRunProgress.ShowFailure(");
     }
 
     [TestMethod]

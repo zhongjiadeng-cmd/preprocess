@@ -28,6 +28,29 @@ public sealed class ImportProgressOverlayTests
     }
 
     [TestMethod]
+    public void PipelineOverlayIsAnchoredAboveTheRunButtonAndOffersCancel()
+    {
+        var anchor = new Button();
+        var cancelCount = 0;
+        var overlay = new ImportProgressOverlay(
+            anchor,
+            cancelRequested: () => cancelCount++,
+            placement: PlacementMode.TopEdgeAlignedLeft);
+
+        overlay.Show(PipelineProgressState.Starting(allSteps: true));
+
+        Assert.AreEqual(PlacementMode.TopEdgeAlignedLeft, overlay.Placement);
+        Assert.IsTrue(overlay.CancelButtonVisible);
+        Assert.IsTrue(overlay.ActionButtonEnabled);
+
+        InvokeAction(overlay);
+        InvokeAction(overlay);
+
+        Assert.AreEqual(1, cancelCount);
+        Assert.IsFalse(overlay.ActionButtonEnabled);
+    }
+
+    [TestMethod]
     public void NormalMotionStartsCollapsedAndInstallsSpatialAndOpacityTransitions()
     {
         using var _ = MotionPreferences.OverrideForTesting(false);
@@ -117,6 +140,27 @@ public sealed class ImportProgressOverlayTests
     }
 
     [TestMethod]
+    public async Task PipelineCancellationUsesTheSameTransientCollapsePath()
+    {
+        var hold = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var overlay = new ImportProgressOverlay(
+            new Button(),
+            (_, _) => hold.Task,
+            cancelRequested: () => { },
+            placement: PlacementMode.TopEdgeAlignedLeft);
+        overlay.Show(PipelineProgressState.Starting(allSteps: true));
+
+        var collapse = overlay.ShowAndCollapseAsync(PipelineProgressState.Cancelled());
+
+        Assert.IsTrue(overlay.IsOpen);
+        Assert.IsFalse(overlay.CancelButtonVisible);
+        hold.SetResult();
+        await collapse;
+
+        Assert.IsFalse(overlay.IsOpen);
+    }
+
+    [TestMethod]
     public async Task ANewShowInterruptsAStaleSuccessClose()
     {
         var hold = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -155,6 +199,13 @@ public sealed class ImportProgressOverlayTests
     {
         typeof(ImportProgressOverlay)
             .GetMethod("AttachMotion", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .Invoke(overlay, null);
+    }
+
+    private static void InvokeAction(ImportProgressOverlay overlay)
+    {
+        typeof(ImportProgressOverlay)
+            .GetMethod("InvokeAction", BindingFlags.Instance | BindingFlags.NonPublic)!
             .Invoke(overlay, null);
     }
 

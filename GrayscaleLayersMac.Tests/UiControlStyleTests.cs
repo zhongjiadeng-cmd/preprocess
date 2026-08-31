@@ -1,6 +1,8 @@
+using Avalonia;
 using Avalonia.Automation;
 using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
+using Avalonia.Media;
 using Avalonia.Styling;
 using System.Linq;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
@@ -111,6 +113,43 @@ public sealed class UiControlStyleTests
     }
 
     [TestMethod]
+    public void EmbeddedFlyoutSurfaceRequestsAChromeFreePresenter()
+    {
+        var flyout = new Flyout();
+
+        UiTheme.RemoveFlyoutOuterChrome(flyout);
+
+        Assert.IsTrue(
+            flyout.FlyoutPresenterClasses.Contains(UiTheme.EmbeddedFlyoutPresenterClass));
+    }
+
+    [TestMethod]
+    public void EmbeddedFlyoutPresenterStyleClearsEveryOuterChromeLayer()
+    {
+        var style = UiTheme.CreateGlobalStyles()
+            .OfType<Style>()
+            .Single(candidate => candidate.Selector?.ToString()
+                .Contains(UiTheme.EmbeddedFlyoutPresenterClass) == true);
+        var setters = style.Setters.OfType<Setter>().ToArray();
+
+        Assert.AreSame(
+            Brushes.Transparent,
+            setters.Single(x => x.Property == TemplatedControl.BackgroundProperty).Value);
+        Assert.AreSame(
+            Brushes.Transparent,
+            setters.Single(x => x.Property == TemplatedControl.BorderBrushProperty).Value);
+        Assert.AreEqual(
+            new Thickness(0),
+            setters.Single(x => x.Property == TemplatedControl.BorderThicknessProperty).Value);
+        Assert.AreEqual(
+            new Thickness(0),
+            setters.Single(x => x.Property == TemplatedControl.PaddingProperty).Value);
+        Assert.AreEqual(
+            new CornerRadius(0),
+            setters.Single(x => x.Property == TemplatedControl.CornerRadiusProperty).Value);
+    }
+
+    [TestMethod]
     public void GlobalStylesContainAllApprovedVisualRoles()
     {
         var styles = UiTheme.CreateGlobalStyles();
@@ -123,6 +162,8 @@ public sealed class UiControlStyleTests
         Assert.IsTrue(selectors.Any(selector => selector.Contains("btn-icon")));
         Assert.IsTrue(selectors.Any(selector => selector.Contains("input-control")));
         Assert.IsTrue(selectors.Any(selector => selector.Contains("appearance-option")));
+        Assert.IsTrue(selectors.Any(selector =>
+            selector.Contains(UiTheme.EmbeddedFlyoutPresenterClass)));
         Assert.IsTrue(selectors.Any(selector => selector.Contains("input-error")));
     }
 }

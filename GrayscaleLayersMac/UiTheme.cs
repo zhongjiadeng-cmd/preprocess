@@ -20,6 +20,7 @@ namespace GrayscaleLayersMac;
 internal static class UiTheme
 {
     private static readonly TimeSpan HoverDuration = TimeSpan.FromMilliseconds(140);
+    internal const string EmbeddedFlyoutPresenterClass = "embedded-flyout-surface";
 
     private sealed record Palette(
         Color Root,
@@ -480,6 +481,22 @@ internal static class UiTheme
         appearanceOptionFocus.Setters.Add(new Setter(RadioButton.BorderThicknessProperty, new Thickness(2)));
         styles.Add(appearanceOptionFocus);
 
+        // 普通 Flyout 的 Fluent presenter 自带背景、描边与内容留白。这里仅对已经
+        // 使用 FlyoutSurface 的弹窗去掉这层外壳，让自定义表面成为唯一可见容器。
+        var embeddedFlyoutPresenter = new Style(
+            x => x.OfType<FlyoutPresenter>().Class(EmbeddedFlyoutPresenterClass));
+        embeddedFlyoutPresenter.Setters.Add(
+            new Setter(TemplatedControl.BackgroundProperty, Brushes.Transparent));
+        embeddedFlyoutPresenter.Setters.Add(
+            new Setter(TemplatedControl.BorderBrushProperty, Brushes.Transparent));
+        embeddedFlyoutPresenter.Setters.Add(
+            new Setter(TemplatedControl.BorderThicknessProperty, new Thickness(0)));
+        embeddedFlyoutPresenter.Setters.Add(
+            new Setter(TemplatedControl.PaddingProperty, new Thickness(0)));
+        embeddedFlyoutPresenter.Setters.Add(
+            new Setter(TemplatedControl.CornerRadiusProperty, new CornerRadius(0)));
+        styles.Add(embeddedFlyoutPresenter);
+
         // ---- 危险变体（取消按钮：悬停泛红）----
         var danger = new Style(x => x.OfType<Button>().Class("danger"));
         danger.Setters.Add(new Setter(Button.ForegroundProperty, DangerTextBrush));
@@ -876,6 +893,10 @@ internal static class UiTheme
         BorderThickness = new Thickness(1),
         Child = child
     };
+
+    /// <summary>让自带 FlyoutSurface 的普通 Flyout 不再重复绘制原生外壳。</summary>
+    public static void RemoveFlyoutOuterChrome(Flyout flyout) =>
+        flyout.FlyoutPresenterClasses.Add(EmbeddedFlyoutPresenterClass);
 
     /// <summary>
     /// 日志面板展开时日志区的固定高度（与日志框 MinHeight 一致，整卡约 224px）。

@@ -32,19 +32,25 @@ internal sealed class ImportProgressOverlay
     private readonly TextBlock _counter;
     private readonly TextBlock _liveRegion;
     private readonly ProgressBar _progress;
-    private readonly Button _closeButton;
-    private ImportProgressStage? _lastAnnouncedStage;
+    private readonly Button _actionButton;
+    private readonly Action? _cancelRequested;
+    private object? _lastAnnouncedStage;
     private long _generation;
     private bool _motionAttached;
     private bool _showPending;
     private bool _closeButtonFocusRequested;
+    private bool _actionCancels;
+    private bool _cancelRequestedForCurrentRun;
 
     public ImportProgressOverlay(
         Control anchor,
-        Func<TimeSpan, CancellationToken, Task>? delay = null)
+        Func<TimeSpan, CancellationToken, Task>? delay = null,
+        Action? cancelRequested = null,
+        PlacementMode placement = PlacementMode.BottomEdgeAlignedRight)
     {
         ArgumentNullException.ThrowIfNull(anchor);
         _delay = delay ?? Task.Delay;
+        _cancelRequested = cancelRequested;
         _hasSpatialTransitions = MotionPreferences.AnimateSpatialProperties;
 
         _icon = (Border)UiIcons.Create(UiIcon.Import);
@@ -85,14 +91,14 @@ internal sealed class ImportProgressOverlay
         _progress = UiTheme.CreateProgress();
         _progress.Maximum = 1;
 
-        _closeButton = new Button
+        _actionButton = new Button
         {
             Content = "关闭",
             IsVisible = false,
             HorizontalAlignment = HorizontalAlignment.Right
         };
-        UiTheme.ApplyGhostStyle(_closeButton, small: true);
-        _closeButton.Click += (_, _) => Close();
+        UiTheme.ApplyGhostStyle(_actionButton, small: true);
+        _actionButton.Click += (_, _) => InvokeAction();
 
         var titleRow = new Grid
         {
@@ -112,7 +118,7 @@ internal sealed class ImportProgressOverlay
                 AtRow(new Grid
                 {
                     ColumnDefinitions = new ColumnDefinitions("*,Auto"),
-                    Children = { Place(_counter, 0), Place(_closeButton, 1) }
+                    Children = { Place(_counter, 0), Place(_actionButton, 1) }
                 }, 3),
                 _liveRegion
             }
@@ -137,8 +143,12 @@ internal sealed class ImportProgressOverlay
         Root = new Popup
         {
             PlacementTarget = anchor,
-            Placement = PlacementMode.BottomEdgeAlignedRight,
-            VerticalOffset = 8,
+            Placement = placement,
+            VerticalOffset = placement is PlacementMode.Top or
+                PlacementMode.TopEdgeAlignedLeft or
+                PlacementMode.TopEdgeAlignedRight
+                    ? -8
+                    : 8,
             IsLightDismissEnabled = false,
             Child = _surface
         };
@@ -152,7 +162,9 @@ internal sealed class ImportProgressOverlay
     public string TitleText => _title.Text ?? string.Empty;
     public string DetailText => _detail.Text ?? string.Empty;
     public string CounterText => _counter.Text ?? string.Empty;
-    public bool CloseButtonVisible => _closeButton.IsVisible;
+    public bool CloseButtonVisible => _actionButton.IsVisible && !_actionCancels;
+    public bool CancelButtonVisible => _actionButton.IsVisible && _actionCancels;
+    public bool ActionButtonEnabled => _actionButton.IsEnabled;
     public bool HasSpatialTransitions => _hasSpatialTransitions;
     public PlacementMode Placement => Root.Placement;
     internal string LiveRegionText => AutomationProperties.GetName(_liveRegion) ?? string.Empty;
@@ -167,11 +179,12 @@ internal sealed class ImportProgressOverlay
     internal IBrush TitleForeground => _title.Foreground ?? Brushes.Transparent;
     internal IBrush ProgressForeground => _progress.Foreground ?? Brushes.Transparent;
 
-    public void Show(ImportProgressState state)
+    public void Show(IProgressOverlayState state)
     {
         ArgumentNullException.ThrowIfNull(state);
         _generation++;
         _closeButtonFocusRequested = false;
+        _cancelRequestedForCurrentRun = false;
         Apply(state);
         _surface.IsHitTestVisible = true;
         _showPending = true;
@@ -181,14 +194,21 @@ internal sealed class ImportProgressOverlay
     }
 
     /// <summary>刷新当前进度，不重新打开 Popup，也不改变已有关闭代次。</summary>
-    public void Update(ImportProgressState state)
+    public void Update(IProgressOverlayState state)
     {
         ArgumentNullException.ThrowIfNull(state);
         Apply(state);
     }
 
     public async Task ShowSucceededAndCollapseAsync(
-        ImportProgressState state,
+        IProgressOverlayState state,
+        CancellationToken cancellationToken = default)
+    {
+        await ShowAndCollapseAsync(state, cancellationToken);
+    }
+
+    public async Task ShowAndCollapseAsync(
+        IProgressOverlayState state,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(state);
@@ -199,16 +219,16 @@ internal sealed class ImportProgressOverlay
             Close();
     }
 
-    public void ShowFailure(ImportProgressState state)
+    public void ShowFailure(IProgressOverlayState state)
     {
         ArgumentNullException.ThrowIfNull(state);
         if (!state.IsError)
             throw new ArgumentException("Failure overlay requires a failed progress state.", nameof(state));
 
         Show(state);
-        _closeButton.IsVisible = true;
+        _actionButton.IsVisible = true;
         _closeButtonFocusRequested = true;
-        _closeButton.Focus();
+        _actionButton.Focus();
     }
 
     public void Close()
@@ -236,9 +256,9 @@ internal sealed class ImportProgressOverlay
             Root.IsOpen = false;
     }
 
-    private void Apply(ImportProgressState state)
+    private void Apply(IProgressOverlayState state)
     {
-        var isSuccess = state.Stage == ImportProgressStage.Succeeded;
+        var isSuccess = state.IsSuccess;
         var isFailure = state.IsError;
         _title.Text = state.Message;
         _detail.Text = state.CurrentFileName is null
@@ -252,15 +272,35 @@ internal sealed class ImportProgressOverlay
         _title.Foreground = isSuccess ? UiTheme.SuccessTextBrush : isFailure ? UiTheme.WarningTextBrush : UiTheme.TextPrimaryBrush;
         _detail.Foreground = isFailure ? UiTheme.WarningTextBrush : UiTheme.TextSecondaryBrush;
         _counter.Foreground = isFailure ? UiTheme.WarningTextBrush : UiTheme.TextSecondaryBrush;
-        _closeButton.IsVisible = isFailure;
+        _actionCancels = !state.IsTerminal && _cancelRequested is not null;
+        _actionButton.Content = _actionCancels ? "取消" : "关闭";
+        _actionButton.IsVisible = isFailure || _actionCancels;
+        _actionButton.IsEnabled = !_actionCancels || !_cancelRequestedForCurrentRun;
         SetIcon(isSuccess ? UiIcon.Success : isFailure ? UiIcon.Error : UiIcon.Import,
-            isSuccess ? UiTheme.SuccessBrush : isFailure ? UiTheme.WarningBrush : UiTheme.IconBrush);
+            isSuccess ? UiTheme.SuccessBrush : isFailure ? UiTheme.WarningBrush :
+            state.IsCancelled ? UiTheme.TextSecondaryBrush : UiTheme.IconBrush);
 
-        if (_lastAnnouncedStage != state.Stage || state.IsTerminal)
+        if (!Equals(_lastAnnouncedStage, state.StageKey) || state.IsTerminal)
         {
-            _lastAnnouncedStage = state.Stage;
+            _lastAnnouncedStage = state.StageKey;
             AutomationProperties.SetName(_liveRegion, state.AutomationText);
         }
+    }
+
+    private void InvokeAction()
+    {
+        if (!_actionCancels)
+        {
+            Close();
+            return;
+        }
+
+        if (_cancelRequestedForCurrentRun)
+            return;
+
+        _cancelRequestedForCurrentRun = true;
+        _actionButton.IsEnabled = false;
+        _cancelRequested?.Invoke();
     }
 
     private void SetIcon(UiIcon kind, IBrush brush)

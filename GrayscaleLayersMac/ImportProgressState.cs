@@ -1,5 +1,20 @@
 namespace GrayscaleLayersMac;
 
+internal interface IProgressOverlayState
+{
+    object StageKey { get; }
+    bool IsTerminal { get; }
+    bool IsSuccess { get; }
+    bool IsError { get; }
+    bool IsCancelled { get; }
+    bool IsIndeterminate { get; }
+    double? ProgressValue { get; }
+    string? CurrentFileName { get; }
+    string Message { get; }
+    string CounterText { get; }
+    string AutomationText { get; }
+}
+
 internal enum ImportProgressStage
 {
     Scanning,
@@ -15,10 +30,13 @@ internal sealed record ImportProgressState(
     int Current,
     int? Total,
     string? CurrentFileName,
-    string Message)
+    string Message) : IProgressOverlayState
 {
+    object IProgressOverlayState.StageKey => Stage;
     public bool IsTerminal => Stage is ImportProgressStage.Succeeded or ImportProgressStage.Failed;
+    public bool IsSuccess => Stage == ImportProgressStage.Succeeded;
     public bool IsError => Stage == ImportProgressStage.Failed;
+    public bool IsCancelled => false;
     public bool IsIndeterminate => Total is null;
     public double? ProgressValue => Total is > 0 ? (double)Current / Total.Value : null;
 
