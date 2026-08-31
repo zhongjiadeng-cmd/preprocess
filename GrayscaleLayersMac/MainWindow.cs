@@ -1062,22 +1062,16 @@ public sealed class MainWindow : Window
         };
         Grid.SetColumn(detailsPanel, 1);
 
-        // 工具栏悬浮在预览区左上角，避免单独占一行造成上方空白过大。
-        var toolbarOverlay = new Border
+        return new Grid
         {
-            Background = new SolidColorBrush(UiTheme.PanelColor, 0.82),
-            BorderBrush = UiTheme.BorderSubtleBrush,
-            BorderThickness = new Thickness(1),
-            Padding = new Thickness(6),
-            CornerRadius = UiTheme.ControlRadius,
-            HorizontalAlignment = HorizontalAlignment.Left,
-            VerticalAlignment = VerticalAlignment.Top,
-            Margin = new Thickness(8, 8, 0, 0),
-            Child = toolbar
+            RowDefinitions = new RowDefinitions("Auto,*"),
+            RowSpacing = 8,
+            Children =
+            {
+                AtRow(toolbar, 0),
+                AtRow(body, 1)
+            }
         };
-        body.Children.Add(toolbarOverlay);
-
-        return body;
     }
 
     /// <summary>
