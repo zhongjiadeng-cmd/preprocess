@@ -244,7 +244,7 @@ public sealed class PmtDetailsEditor : UserControl
             _textBox = new TextBox
             {
                 Watermark = "沿用基础加工参数",
-                FontFamily = UiTheme.MonoFont,
+                FontFamily = UiTheme.UiFont,
                 FontSize = 11
             };
             UiTheme.ApplyInputStyle(_textBox);

@@ -119,7 +119,7 @@ internal static class UiIcons
         UiIcon.OpenFolder => Icon.FolderOpen,
         UiIcon.Success => Icon.CheckmarkCircle,
         UiIcon.Error => Icon.ErrorCircle,
-        UiIcon.Save => Icon.SaveEdit,
+        UiIcon.Save => Icon.DocumentCheckmark,
         UiIcon.Undo => Icon.ArrowUndo,
         _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, null)
     };
