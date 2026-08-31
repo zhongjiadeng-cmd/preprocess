@@ -242,6 +242,19 @@ public sealed class DxfPreviewHost : Grid
             throw new InvalidDataException("无法安装已验证的 DXF 预览。");
     }
 
+    /// <summary>
+    /// 整批替换时旧列表可能与调用方共享同一个可变集合；先清除旧选择，确保新批次首层
+    /// 必定调用加载器，而不会把相同索引误判成重复选择。
+    /// </summary>
+    internal void ReplaceItemsAndSelectIndexOrThrow(
+        IReadOnlyList<DxfLayerPreviewItem> items,
+        int index)
+    {
+        ClearSelection();
+        SetItems(items);
+        SelectIndexOrThrow(index);
+    }
+
     /// <summary>选中指定层；不在列表中或加载失败返回 false。</summary>
     public bool SelectItem(DxfLayerPreviewItem item)
     {

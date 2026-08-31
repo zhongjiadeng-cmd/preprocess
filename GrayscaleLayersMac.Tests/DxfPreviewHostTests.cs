@@ -81,10 +81,34 @@ public sealed class DxfPreviewHostTests
         {
             LoadLayer = _ => false
         };
-        host.SetItems(MakeItems(1));
 
-        Assert.ThrowsExactly<InvalidDataException>(() => host.SelectIndexOrThrow(0));
+        Assert.ThrowsExactly<InvalidDataException>(() =>
+            host.ReplaceItemsAndSelectIndexOrThrow(MakeItems(1), 0));
         Assert.AreEqual(-1, host.SelectedIndex);
+    }
+
+    [TestMethod]
+    public void ReplacingTheSameMutableListForcesFirstLayerInstallationAgain()
+    {
+        using var preview = new DxfPreviewControl();
+        var host = new DxfPreviewHost(preview, new TextBlock());
+        var loaded = new List<DxfLayerPreviewItem>();
+        host.LoadLayer = item =>
+        {
+            loaded.Add(item);
+            return true;
+        };
+        var items = MakeItems(1, "first").ToList();
+        host.ReplaceItemsAndSelectIndexOrThrow(items, 0);
+        var replacement = MakeItems(1, "second")[0];
+        items.Clear();
+        items.Add(replacement);
+
+        host.ReplaceItemsAndSelectIndexOrThrow(items, 0);
+
+        Assert.AreEqual(0, host.SelectedIndex);
+        Assert.AreSame(replacement, loaded[^1]);
+        Assert.AreEqual(2, loaded.Count);
     }
 
     [TestMethod]

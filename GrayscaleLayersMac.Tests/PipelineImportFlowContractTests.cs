@@ -180,6 +180,9 @@ public sealed class PipelineImportFlowContractTests
             CreateActions(calls));
 
         Assert.IsFalse(imported);
+        Assert.AreEqual(0, calls.TiffCommitCount,
+            "DXF 首层安装失败必须发生在混合批次任何提交之前。");
+        Assert.AreEqual(0, calls.DxfCommitCount);
         Assert.AreEqual(0, calls.SuccessCount);
         Assert.AreEqual(1, calls.FailureCount);
         Assert.AreEqual(ImportProgressStage.Failed, calls.VisibleStages.Last());
@@ -206,10 +209,13 @@ public sealed class PipelineImportFlowContractTests
         },
         (_, _) =>
         {
-            calls.DxfCommitCount++;
-            calls.CommitAndSuccessOrder.Add("dxf");
             if (calls.DxfCommitError is not null)
                 throw calls.DxfCommitError;
+            return () =>
+            {
+                calls.DxfCommitCount++;
+                calls.CommitAndSuccessOrder.Add("dxf");
+            };
         },
         state =>
         {
