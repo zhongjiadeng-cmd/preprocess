@@ -841,6 +841,7 @@ def generate_machine_file(
     block_center_positioning: bool = False,
     *,
     layer_files: list[Path] | None = None,
+    output_dir: Path | None = None,
 ) -> Path:
     """Generate, validate, and atomically publish a machine-file directory."""
     step_um = _validate_layer_step(layer_step_um)
@@ -850,9 +851,10 @@ def generate_machine_file(
     dxf_dir = dxf_dir.absolute()
     selected_layer_files = select_layer_dxf_files(dxf_dir, layer_files)
     resolved_name = resolve_output_name(output_name)
-    final_path = dxf_dir.parent / resolved_name
-    temp_path = dxf_dir.parent / f".{resolved_name}.building"
-    lock_path = dxf_dir.parent / f".{resolved_name}.lock"
+    publish_dir = (output_dir or dxf_dir.parent).absolute()
+    final_path = publish_dir / resolved_name
+    temp_path = publish_dir / f".{resolved_name}.building"
+    lock_path = publish_dir / f".{resolved_name}.lock"
     if os.path.lexists(final_path):
         raise FileExistsError(f"output path already exists: {final_path}")
     if os.path.lexists(temp_path):
@@ -1003,6 +1005,7 @@ def _build_argument_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Generate an atomic machine-file package from layered DXFs")
     parser.add_argument("dxf_dir", type=Path)
     parser.add_argument("output_name", nargs="?")
+    parser.add_argument("--output-dir", type=Path)
     parser.add_argument("--owner-token")
     parser.add_argument("--layer-dxf", action="append", type=Path)
     parser.add_argument("--layer-step-um", type=_parse_layer_step_argument, default=3)
@@ -1061,6 +1064,7 @@ def main(argv: list[str] | None = None) -> int:
         owner_token=args.owner_token,
         block_center_positioning=args.block_center_positioning,
         layer_files=layer_files,
+        output_dir=args.output_dir,
     )
     patches = [
         np.load(path, allow_pickle=False)

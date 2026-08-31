@@ -88,9 +88,9 @@ public sealed class MainWindow : Window
     private readonly List<WorkspaceColumns> _workspaceColumns = [];
     private double _workspacePreviewRatio = WorkspaceSplitSettings.DefaultPreviewRatio;
 
-    private readonly TextBox _pipelineInputBox = new() { Watermark = "请选择一张灰度纹理图", IsReadOnly = true };
-    private readonly TextBox _pipelineLayerOutputBox = new() { Watermark = "请选择分层 TIFF 保存目录", IsReadOnly = true };
-    private readonly TextBox _pipelineDxfOutputBox = new() { Watermark = "请选择 DXF 保存目录", IsReadOnly = true };
+    private readonly TextBox _pipelineInputBox = new() { Watermark = "请选择一张灰度纹理图" };
+    private readonly TextBox _pipelineLayerOutputBox = new() { Watermark = "请选择分层 TIFF 保存目录" };
+    private readonly TextBox _pipelineDxfOutputBox = new() { Watermark = "请选择 DXF 保存目录" };
     private readonly NumericUpDown _pipelineLayersBox = MakeNumberBox(10, 1, 255, 0, showButtons: false);
     private readonly NumericUpDown _pipelineMinLevelBox = MakeNumberBox(0, 1, 254, 0, showButtons: false);
     private readonly NumericUpDown _pipelineMaxLevelBox = MakeNumberBox(255, 1, 255, 0, showButtons: false);
@@ -380,6 +380,9 @@ public sealed class MainWindow : Window
         _pipelineInputBox.TextChanged += (_, _) => UpdatePipelineReadiness();
         _pipelineLayerOutputBox.TextChanged += (_, _) => UpdatePipelineReadiness();
         _pipelineDxfOutputBox.TextChanged += (_, _) => UpdatePipelineReadiness();
+        _pipelineInputBox.LostFocus += async (_, _) => await OnPipelineInputBoxLostFocusAsync();
+        _pipelineLayerOutputBox.LostFocus += (_, _) => NormalizeDirectoryBox(_pipelineLayerOutputBox);
+        _pipelineDxfOutputBox.LostFocus += (_, _) => NormalizeDirectoryBox(_pipelineDxfOutputBox);
         UpdatePipelineReadiness();
 
         var pipelineInspector = new StackPanel
@@ -1360,11 +1363,10 @@ public sealed class MainWindow : Window
 
         _pipelineInputBox.Text = path;
         var parent = Path.GetDirectoryName(path)!;
-        var name = Path.GetFileNameWithoutExtension(path);
         if (string.IsNullOrWhiteSpace(_pipelineLayerOutputBox.Text))
-            _pipelineLayerOutputBox.Text = Path.Combine(parent, $"{name}_layers");
+            _pipelineLayerOutputBox.Text = parent;
         if (string.IsNullOrWhiteSpace(_pipelineDxfOutputBox.Text))
-            _pipelineDxfOutputBox.Text = Path.Combine(parent, $"{name}_dxf");
+            _pipelineDxfOutputBox.Text = parent;
 
         await LoadTexturePreviewAsync(
             path,
@@ -1722,6 +1724,111 @@ public sealed class MainWindow : Window
         return string.IsNullOrWhiteSpace(path) ? null : Path.GetFullPath(path);
     }
 
+    private async Task OnPipelineInputBoxLostFocusAsync()
+    {
+        var text = _pipelineInputBox.Text?.Trim();
+        if (string.IsNullOrWhiteSpace(text))
+            return;
+        if (TryGetFullPath(text) is not { } normalized)
+            return;
+        _pipelineInputBox.Text = normalized;
+        if (File.Exists(normalized))
+        {
+            await LoadTexturePreviewAsync(
+                normalized,
+                _pipelineTextureSurface,
+                _pipelineDpiBox,
+                _pipelineWidthBox,
+                _pipelineHeightBox,
+                _pipelinePreviewController,
+                _pipelineSharedPreview);
+        }
+    }
+
+    private static void NormalizeDirectoryBox(TextBox box)
+    {
+        var text = box.Text?.Trim();
+        if (string.IsNullOrWhiteSpace(text))
+            return;
+        if (TryGetFullPath(text) is { } normalized)
+            box.Text = normalized;
+    }
+
+    private static string? TryGetFullPath(string path)
+    {
+        try
+        {
+            return Path.GetFullPath(path);
+        }
+        catch (ArgumentException)
+        {
+            return null;
+        }
+        catch (NotSupportedException)
+        {
+            return null;
+        }
+        catch (PathTooLongException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// 把用户选定的输出目录解析为实际输出目录：
+    /// 若基础目录里已经存在目标产物（来自导入），则直接用它；
+    /// 否则在基础目录下创建一层以源文件名为前缀的子目录，避免不同源文件混乱。
+    /// </summary>
+    private static string ResolvePipelineOutputDirectory(
+        string input,
+        string baseDirectory,
+        string suffix,
+        string existingFilePattern)
+    {
+        if (string.IsNullOrWhiteSpace(baseDirectory))
+            return baseDirectory;
+        if (Directory.Exists(baseDirectory))
+        {
+            try
+            {
+                if (Directory.EnumerateFiles(baseDirectory, existingFilePattern)
+                        .Any())
+                    return baseDirectory;
+            }
+            catch (UnauthorizedAccessException)
+            {
+            }
+        }
+        var safeName = GetSafeFileName(Path.GetFileNameWithoutExtension(input));
+        return Path.Combine(baseDirectory, $"{safeName}{suffix}");
+    }
+
+    private static string ResolveLayerOutputDirectory(string input, string baseDirectory) =>
+        ResolvePipelineOutputDirectory(input, baseDirectory, "_layers", "layer_*.tiff");
+
+    private static string ResolveDxfOutputDirectory(string input, string baseDirectory) =>
+        ResolvePipelineOutputDirectory(input, baseDirectory, "_dxf", "layer_*.dxf");
+
+    private static string ResolveMachineOutputParentDirectory(string input, string baseDirectory)
+    {
+        if (string.IsNullOrWhiteSpace(baseDirectory))
+            return baseDirectory;
+        var safeName = GetSafeFileName(Path.GetFileNameWithoutExtension(input));
+        return Path.Combine(baseDirectory, $"{safeName}_machine");
+    }
+
+    private static string GetSafeFileName(string? name)
+    {
+        if (string.IsNullOrWhiteSpace(name))
+            return "output";
+        var invalid = Path.GetInvalidFileNameChars();
+        var builder = new System.Text.StringBuilder(name.Length);
+        foreach (var ch in name)
+            builder.Append(invalid.Contains(ch) ? '_' : ch);
+        var result = builder.ToString().Trim('.', ' ');
+        return string.IsNullOrWhiteSpace(result) ? "output" : result;
+    }
+
     private async Task RunPipelineAsync(PipelineRunMode mode)
     {
         var input = _pipelineInputBox.Text?.Trim();
@@ -1865,26 +1972,33 @@ public sealed class MainWindow : Window
             return;
         }
 
+        var layerOutputActual = (needsLayers || needsDxf) && !string.IsNullOrWhiteSpace(layerOutput)
+            ? ResolveLayerOutputDirectory(input ?? string.Empty, layerOutput)
+            : layerOutput!;
+        var dxfOutputActual = (needsDxf || needsMachine) && !string.IsNullOrWhiteSpace(dxfOutput)
+            ? ResolveDxfOutputDirectory(input ?? string.Empty, dxfOutput)
+            : dxfOutput!;
+        var machineOutputParent = needsMachine && !string.IsNullOrWhiteSpace(dxfOutput)
+            ? ResolveMachineOutputParentDirectory(input ?? string.Empty, dxfOutput)
+            : null;
+
         var dxfOutputAbsolute = "";
         string machineOutputPath = "";
         string machineTempPath = "";
         string machineLockPath = "";
+        string? machineOutputParentAbsolute = null;
         try
         {
-            if (!string.IsNullOrWhiteSpace(dxfOutput))
+            if (!string.IsNullOrWhiteSpace(dxfOutputActual))
             {
-                dxfOutputAbsolute = Path.GetFullPath(dxfOutput);
-                if (needsMachine)
+                dxfOutputAbsolute = Path.GetFullPath(dxfOutputActual);
+                if (needsMachine && machineOutputParent is not null)
                 {
-                    var dxfParent = new DirectoryInfo(dxfOutputAbsolute).Parent?.FullName;
-                    if (string.IsNullOrWhiteSpace(dxfParent))
-                    {
-                        await ShowMessageAsync("DXF 输出目录必须有可用的父目录。");
-                        return;
-                    }
-                    machineOutputPath = Path.Combine(dxfParent, machineName!);
-                    machineTempPath = Path.Combine(dxfParent, $".{machineName}.building");
-                    machineLockPath = Path.Combine(dxfParent, $".{machineName}.lock");
+                    machineOutputParentAbsolute = Path.GetFullPath(machineOutputParent);
+                    Directory.CreateDirectory(machineOutputParentAbsolute);
+                    machineOutputPath = Path.Combine(machineOutputParentAbsolute, machineName!);
+                    machineTempPath = Path.Combine(machineOutputParentAbsolute, $".{machineName}.building");
+                    machineLockPath = Path.Combine(machineOutputParentAbsolute, $".{machineName}.lock");
                 }
             }
         }
@@ -1896,14 +2010,6 @@ public sealed class MainWindow : Window
 
         _lastMachineOutputPath = null;
         _pipelineOpenButton.IsEnabled = false;
-        if (needsMachine && string.Equals(
-                Path.TrimEndingDirectorySeparator(machineOutputPath),
-                Path.TrimEndingDirectorySeparator(dxfOutputAbsolute),
-                StringComparison.OrdinalIgnoreCase))
-        {
-            await ShowMessageAsync("加工文件名不能与 DXF 输出目录同名。");
-            return;
-        }
 
         foreach (var collisionPath in needsMachine
                      ? new[] { machineOutputPath, machineTempPath, machineLockPath }
@@ -1946,19 +2052,19 @@ public sealed class MainWindow : Window
             if (needsLayers)
             {
                 progressWindow.UpdateMessage("正在执行第 1 步：灰度分层…");
-                Directory.CreateDirectory(layerOutput!);
+                Directory.CreateDirectory(layerOutputActual);
                 AppendPipelineLog(mode == PipelineRunMode.All
                     ? "步骤 1/3：开始生成灰度分层 TIFF…"
                     : "第 1 步：开始生成灰度分层 TIFF…");
                 AppendPipelineLog($"输入：{input}");
-                AppendPipelineLog($"分层目录：{layerOutput}");
+                AppendPipelineLog($"分层目录：{layerOutputActual}");
                 AppendPipelineLog($"灰阶区间：[{minLevel}, {maxLevel}]，分层数量：{layers}\n");
 
                 var layerStartedAt = DateTime.UtcNow.AddSeconds(-2);
                 var layerInfo = CreatePythonProcess(python);
                 foreach (var argument in new[]
                 {
-                    layerScript, input!, layerOutput!,
+                    layerScript, input!, layerOutputActual,
                     "--layers", layers.ToString(CultureInfo.InvariantCulture)
                 })
                     layerInfo.ArgumentList.Add(argument);
@@ -1974,7 +2080,7 @@ public sealed class MainWindow : Window
                     throw new InvalidOperationException($"灰度分层失败，退出代码：{layerExitCode}");
 
                 layerFiles = Directory
-                    .EnumerateFiles(layerOutput!, "layer_*.tiff")
+                    .EnumerateFiles(layerOutputActual, "layer_*.tiff")
                     .Where(path => File.GetLastWriteTimeUtc(path) >= layerStartedAt)
                     .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
                     .ToArray();
@@ -1986,7 +2092,7 @@ public sealed class MainWindow : Window
                     ? $"\n步骤 1/3 完成：共生成 {layerFiles.Length} 个 TIFF。"
                     : $"\n第 1 步完成：共生成 {layerFiles.Length} 个 TIFF。");
                 await RefreshPipelineLayersAsync(
-                    layerOutput!,
+                    layerOutputActual,
                     _cancellation.Token);
                 if (mode == PipelineRunMode.GrayscaleOnly)
                     return;
@@ -1999,7 +2105,7 @@ public sealed class MainWindow : Window
                 {
                     try
                     {
-                        layerFiles = PipelineArtifactDiscovery.FindLayerTiffs(layerOutput!);
+                        layerFiles = PipelineArtifactDiscovery.FindLayerTiffs(layerOutputActual);
                     }
                     catch (Exception error) when (
                         error is DirectoryNotFoundException or InvalidDataException)
@@ -2011,7 +2117,7 @@ public sealed class MainWindow : Window
                     }
                 }
 
-                Directory.CreateDirectory(dxfOutput!);
+                Directory.CreateDirectory(dxfOutputActual);
                 AppendPipelineLog(mode == PipelineRunMode.All
                     ? "步骤 2/3：开始逐层生成 Hatch DXF…\n"
                     : "第 2 步：开始逐层生成 Hatch DXF…\n");
@@ -2106,7 +2212,7 @@ public sealed class MainWindow : Window
                 AppendPipelineLog(mode == PipelineRunMode.All
                     ? $"\n步骤 2/3 完成：共生成 {layerFiles.Length} 个 DXF。"
                     : $"\n第 2 步完成：共生成 {layerFiles.Length} 个 DXF。");
-                AppendPipelineLog($"DXF 目录：{dxfOutput}");
+                AppendPipelineLog($"DXF 目录：{dxfOutputActual}");
             }
 
             if (mode == PipelineRunMode.DxfOnly)
@@ -2120,7 +2226,7 @@ public sealed class MainWindow : Window
                     try
                     {
                         currentRunDxfFiles = PipelineArtifactDiscovery
-                            .FindDxfFiles(dxfOutput!)
+                            .FindDxfFiles(dxfOutputActual)
                             .ToList();
                     }
                     catch (Exception error) when (
@@ -2164,6 +2270,7 @@ public sealed class MainWindow : Window
                 foreach (var argument in new[]
                 {
                 machineScript, dxfOutputAbsolute, machineName!,
+                "--output-dir", machineOutputParentAbsolute ?? Path.GetDirectoryName(dxfOutputAbsolute)!,
                 "--owner-token", ownerToken,
                 "--layer-step-um", Invariant(layerStep!.Value),
                 "--power", power.ToString(CultureInfo.InvariantCulture),
