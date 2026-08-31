@@ -1948,11 +1948,14 @@ def export_horizontal_hatch_dxf(
         requested_outputs.append(preview_output)
     if publish_bundle:
         output_parent = os.path.abspath(output_path.parent)
-        if any(
-            os.path.abspath(final_path.parent) != output_parent
-            for final_path in requested_outputs
-        ):
-            raise ValueError("DXF, block metadata, and preview must use the same output directory")
+        for final_path in requested_outputs:
+            # DXF、块元数据与预览允许落在 DXF 目录下的同级子文件夹
+            # （如 metadata/、previews/），但都不得逸出 DXF 输出目录。
+            relative_parent = os.path.relpath(
+                os.path.abspath(final_path.parent), output_parent)
+            if relative_parent.startswith(".."):
+                raise ValueError(
+                    "DXF, block metadata, and preview must stay within the DXF output directory")
         if len({os.path.abspath(final_path) for final_path in requested_outputs}) != len(
             requested_outputs
         ):
@@ -2357,6 +2360,7 @@ def convert_texture_to_dxf(
     voronoi_lloyd_iterations: int = 8,
     voronoi_attempts: int = 80,
     preview_output_path: Path | None = None,
+    block_metadata_dir: Path | None = None,
 ) -> None:
     if target_width_mm <= 0 or target_height_mm <= 0:
         raise ValueError("目标毫米尺寸必须大于 0")
@@ -2432,7 +2436,14 @@ def convert_texture_to_dxf(
         if voronoi_block_count > 0
         else None
     )
-    metadata_output = block_metadata_path(output_path) if voronoi_blocks else None
+    if voronoi_blocks:
+        if block_metadata_dir is not None:
+            block_metadata_dir.mkdir(parents=True, exist_ok=True)
+            metadata_output = block_metadata_dir / block_metadata_path(output_path).name
+        else:
+            metadata_output = block_metadata_path(output_path)
+    else:
+        metadata_output = None
 
     line_count, block_line_counts = export_horizontal_hatch_dxf(
         fitted,
@@ -2549,6 +2560,11 @@ def parse_args() -> argparse.Namespace:
         "--preview-output",
         type=Path,
         help="输出与拟合掩膜完全一致的 PNG 预览",
+    )
+    parser.add_argument(
+        "--block-metadata-dir",
+        type=Path,
+        help="将块元数据 JSON 写入该子目录（而非与 DXF 同目录），便于文件归整",
     )
     parser.add_argument(
         "--size",
@@ -2709,6 +2725,7 @@ def main() -> None:
             voronoi_lloyd_iterations=args.voronoi_lloyd_iterations,
             voronoi_attempts=args.voronoi_attempts,
             preview_output_path=args.preview_output,
+            block_metadata_dir=args.block_metadata_dir,
         )
 
 

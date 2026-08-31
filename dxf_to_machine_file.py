@@ -494,9 +494,28 @@ def _reject_duplicate_json_keys(pairs: list[tuple[str, object]]) -> dict[str, ob
     return result
 
 
+def _resolve_block_metadata_path(dxf_path: Path) -> Path | None:
+    """Locate the v1 sidecar for one DXF.
+
+    New runs write the JSON into a ``metadata/`` subfolder next to the DXF;
+    imported or legacy DXFs may still keep it co-located. Prefer the subfolder
+    and fall back to the co-located file.
+    """
+    candidates = [
+        dxf_path.parent / "metadata" / dxf_path.with_suffix(".blocks.json").name,
+        dxf_path.with_suffix(".blocks.json"),
+    ]
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate
+    return None
+
+
 def read_block_metadata(dxf_path: Path) -> BlockMetadata:
     """Read and strictly validate the v1 sidecar for one DXF."""
-    sidecar_path = dxf_path.with_suffix(".blocks.json")
+    sidecar_path = _resolve_block_metadata_path(dxf_path)
+    if sidecar_path is None:
+        raise ValueError(f"missing block metadata sidecar for {dxf_path}")
     no_follow_flag = getattr(os, "O_NOFOLLOW", None)
     nonblock_flag = getattr(os, "O_NONBLOCK", None)
     if type(no_follow_flag) is not int or no_follow_flag == 0:

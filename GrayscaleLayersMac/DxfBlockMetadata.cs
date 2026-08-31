@@ -34,56 +34,71 @@ internal sealed class DxfBlockMetadata
 
     public static DxfBlockMetadata? LoadForDxf(string dxfPath)
     {
-        var sidecarPath = Path.ChangeExtension(dxfPath, ".blocks.json");
-        FileAttributes attributes;
-        try
+        // 新生成的产物把 JSON 放在 DXF 同级的 metadata/ 子目录下；
+        // 导入或旧版产物仍可能把 JSON 与 DXF 同目录，因此优先查子目录，缺失再回退。
+        var candidates = new[]
         {
-            attributes = File.GetAttributes(sidecarPath);
-        }
-        catch (FileNotFoundException)
+            Path.Combine(
+                Path.GetDirectoryName(dxfPath) ?? string.Empty,
+                "metadata",
+                Path.GetFileName(Path.ChangeExtension(dxfPath, ".blocks.json"))),
+            Path.ChangeExtension(dxfPath, ".blocks.json"),
+        };
+
+        foreach (var sidecarPath in candidates)
         {
-            return null;
-        }
-        catch (DirectoryNotFoundException)
-        {
-            return null;
-        }
-        catch (IOException exception)
-        {
-            throw Invalid(sidecarPath, "无法读取", exception);
-        }
-        catch (UnauthorizedAccessException exception)
-        {
-            throw Invalid(sidecarPath, "无法读取", exception);
+            FileAttributes attributes;
+            try
+            {
+                attributes = File.GetAttributes(sidecarPath);
+            }
+            catch (FileNotFoundException)
+            {
+                continue;
+            }
+            catch (DirectoryNotFoundException)
+            {
+                continue;
+            }
+            catch (IOException exception)
+            {
+                throw Invalid(sidecarPath, "无法读取", exception);
+            }
+            catch (UnauthorizedAccessException exception)
+            {
+                throw Invalid(sidecarPath, "无法读取", exception);
+            }
+
+            if ((attributes & (FileAttributes.Directory | FileAttributes.ReparsePoint)) != 0)
+                throw Invalid(sidecarPath, "必须是非空普通文件");
+
+            try
+            {
+                if (new FileInfo(sidecarPath).Length == 0)
+                    throw Invalid(sidecarPath, "不能为空");
+
+                using var document = JsonDocument.Parse(File.ReadAllText(sidecarPath));
+                return Parse(sidecarPath, document.RootElement);
+            }
+            catch (InvalidDataException)
+            {
+                throw;
+            }
+            catch (JsonException exception)
+            {
+                throw Invalid(sidecarPath, "JSON 无效", exception);
+            }
+            catch (IOException exception)
+            {
+                throw Invalid(sidecarPath, "无法读取", exception);
+            }
+            catch (UnauthorizedAccessException exception)
+            {
+                throw Invalid(sidecarPath, "无法读取", exception);
+            }
         }
 
-        if ((attributes & (FileAttributes.Directory | FileAttributes.ReparsePoint)) != 0)
-            throw Invalid(sidecarPath, "必须是非空普通文件");
-
-        try
-        {
-            if (new FileInfo(sidecarPath).Length == 0)
-                throw Invalid(sidecarPath, "不能为空");
-
-            using var document = JsonDocument.Parse(File.ReadAllText(sidecarPath));
-            return Parse(sidecarPath, document.RootElement);
-        }
-        catch (InvalidDataException)
-        {
-            throw;
-        }
-        catch (JsonException exception)
-        {
-            throw Invalid(sidecarPath, "JSON 无效", exception);
-        }
-        catch (IOException exception)
-        {
-            throw Invalid(sidecarPath, "无法读取", exception);
-        }
-        catch (UnauthorizedAccessException exception)
-        {
-            throw Invalid(sidecarPath, "无法读取", exception);
-        }
+        return null;
     }
 
     public void ValidateLineCount(int lineCount)

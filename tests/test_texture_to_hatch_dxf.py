@@ -2356,10 +2356,9 @@ class FittedPreviewOutputTests(unittest.TestCase):
             self.assertFalse(dxf_path.exists())
 
     def test_invalid_cross_directory_bundle_does_not_reclaim_same_named_companion(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
+        with tempfile.TemporaryDirectory() as directory, tempfile.TemporaryDirectory() as outside:
             root = Path(directory)
-            other = root / "other"
-            other.mkdir()
+            other = Path(outside)
             input_path = root / "layer.tiff"
             dxf_path = root / "layer.dxf"
             local_preview = root / "layer.preview.png"
@@ -2396,7 +2395,7 @@ class FittedPreviewOutputTests(unittest.TestCase):
             original_identity = (local_preview.stat().st_dev, local_preview.stat().st_ino)
             cross_directory_preview.write_bytes(b"foreign same-name companion")
 
-            with self.assertRaisesRegex(ValueError, "same output directory"):
+            with self.assertRaisesRegex(ValueError, "stay within the DXF output directory"):
                 convert_texture_to_dxf(
                     input_path,
                     dxf_path,
@@ -2434,7 +2433,7 @@ class AvaloniaArtifactValidationSourceContractTests(unittest.TestCase):
         helper_start = source.index("private static void ValidateGeneratedLayerArtifacts")
         helper_end = source.index("\n    private ", helper_start + 1)
         helper = source[helper_start:helper_end]
-        self.assertIn('Path.ChangeExtension(dxfPath, ".blocks.json")', helper)
+        self.assertIn("ResolveBlockMetadataPath(dxfPath)", helper)
         self.assertIn("ValidateRegularNonEmptyFile(previewPath", helper)
         self.assertIn("FileAttributes.Directory", helper)
         self.assertIn("FileAttributes.ReparsePoint", helper)

@@ -2213,6 +2213,36 @@ public sealed class MainWindow : Window
                     ? $"\n步骤 2/3 完成：共生成 {layerFiles.Length} 个 DXF。"
                     : $"\n第 2 步完成：共生成 {layerFiles.Length} 个 DXF。");
                 AppendPipelineLog($"DXF 目录：{dxfOutputActual}");
+
+                // 生成阶段产物（DXF/预览 PNG/块元数据 JSON）默认落在同一目录；
+                // 这里把它们归整到 DXF 目录下的 previews/ 与 metadata/ 子文件夹，
+                // 避免文件混杂。DXF 预览与加工打包均会从子文件夹回读这些侧车。
+                var reorganized = ReorganizeDxfCompanions(dxfOutputActual);
+                if (reorganized.MovedPreviews.Count > 0 || reorganized.MovedMetadata.Count > 0)
+                {
+                    foreach (var moved in reorganized.MovedPreviews)
+                        AppendPipelineLog($"预览 PNG → {moved}");
+                    foreach (var moved in reorganized.MovedMetadata)
+                        AppendPipelineLog($"块元数据 → {moved}");
+                    // 同步更新内存中已加载的预览条目，使其指向子文件夹内的 PNG。
+                    for (var i = 0; i < _pipelineDxfFiles.Count; i++)
+                    {
+                        var item = _pipelineDxfFiles[i];
+                        if (item.TexturePath is not null)
+                        {
+                            var newTexture = Path.Combine(
+                                reorganized.PreviewsDir,
+                                Path.GetFileName(item.TexturePath));
+                            if (File.Exists(newTexture))
+                                _pipelineDxfFiles[i] = new DxfLayerPreviewItem(
+                                    item.Name,
+                                    item.DxfPath,
+                                    newTexture,
+                                    item.TextureRegistration);
+                        }
+                    }
+                    _pipelineDxfHost?.SetItems(_pipelineDxfFiles);
+                }
             }
 
             if (mode == PipelineRunMode.DxfOnly)
@@ -2374,7 +2404,7 @@ public sealed class MainWindow : Window
         if (expectBlockMetadata)
         {
             ValidateRegularNonEmptyFile(
-                Path.ChangeExtension(dxfPath, ".blocks.json"),
+                ResolveBlockMetadataPath(dxfPath),
                 "块元数据");
         }
     }
@@ -2387,6 +2417,73 @@ public sealed class MainWindow : Window
                (file.Attributes &
                    (FileAttributes.Directory | FileAttributes.ReparsePoint)) == 0 &&
                file.Length > 0;
+    }
+
+    /// <summary>
+    /// 解析与某 DXF 配套的块元数据 JSON 路径：优先查 DXF 同级的
+    /// <c>metadata/</c> 子目录（新生成产物），缺失时回退到与 DXF 同目录（导入/旧版）。
+    /// </summary>
+    private static string ResolveBlockMetadataPath(string dxfPath)
+    {
+        var subfolder = Path.Combine(
+            Path.GetDirectoryName(dxfPath) ?? string.Empty,
+            "metadata",
+            Path.GetFileName(Path.ChangeExtension(dxfPath, ".blocks.json")));
+        return IsRegularNonEmptyFile(subfolder)
+            ? subfolder
+            : Path.ChangeExtension(dxfPath, ".blocks.json");
+    }
+
+    private sealed record DxfCompanionReorganization(
+        string PreviewsDir,
+        IReadOnlyList<string> MovedPreviews,
+        IReadOnlyList<string> MovedMetadata);
+
+    /// <summary>
+    /// 把 DXF 目录中散落的预览 PNG 与块元数据 JSON 分别归整到
+    /// <c>previews/</c> 与 <c>metadata/</c> 子文件夹，避免与 DXF 混杂。
+    /// 仅移动目录顶层文件，子文件夹内已有文件不受影响（可重复运行）。
+    /// </summary>
+    private static DxfCompanionReorganization ReorganizeDxfCompanions(string dxfDirectory)
+    {
+        var previewsDir = Path.Combine(dxfDirectory, "previews");
+        var metadataDir = Path.Combine(dxfDirectory, "metadata");
+        var movedPreviews = new List<string>();
+        var movedMetadata = new List<string>();
+
+        foreach (var source in Directory.EnumerateFiles(dxfDirectory, "*.preview.png"))
+        {
+            Directory.CreateDirectory(previewsDir);
+            var destination = Path.Combine(previewsDir, Path.GetFileName(source));
+            if (!string.Equals(
+                    Path.GetFullPath(source),
+                    Path.GetFullPath(destination),
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                if (File.Exists(destination))
+                    File.Delete(destination);
+                File.Move(source, destination);
+            }
+            movedPreviews.Add(Path.GetRelativePath(dxfDirectory, destination));
+        }
+
+        foreach (var source in Directory.EnumerateFiles(dxfDirectory, "*.blocks.json"))
+        {
+            Directory.CreateDirectory(metadataDir);
+            var destination = Path.Combine(metadataDir, Path.GetFileName(source));
+            if (!string.Equals(
+                    Path.GetFullPath(source),
+                    Path.GetFullPath(destination),
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                if (File.Exists(destination))
+                    File.Delete(destination);
+                File.Move(source, destination);
+            }
+            movedMetadata.Add(Path.GetRelativePath(dxfDirectory, destination));
+        }
+
+        return new DxfCompanionReorganization(previewsDir, movedPreviews, movedMetadata);
     }
 
     private void UpdateBlockCenterMotionAvailability()
