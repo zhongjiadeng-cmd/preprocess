@@ -280,7 +280,8 @@ public sealed class PipelineImportFlowContractTests
             string[],
             IProgress<ImportProgressState>,
             CancellationToken,
-            Task<PreparedPipelineImport>> Prepare { get; init; } =
+            Task<PreparedPipelineImport>> Prepare
+        { get; init; } =
             (tiffs, dxfs, _, _) => Task.FromResult(new PreparedPipelineImport(
                 tiffs.Length == 0
                     ? []

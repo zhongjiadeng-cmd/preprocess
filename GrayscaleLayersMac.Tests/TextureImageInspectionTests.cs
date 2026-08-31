@@ -19,7 +19,7 @@ public sealed class TextureImageInspectionTests
         var value = TextureImageInspection.ParseJson(
             $$"""{"pixel_width":1500,"pixel_height":1500,"dpi_x":1270,"dpi_y":1270,"preview_png_base64":"{{OnePixelPng}}"}""");
         Assert.AreEqual(1500, value.Info.PixelWidth);
-        CollectionAssert.AreEqual(new byte[] {137,80,78,71,13,10,26,10}, value.PreviewPng[..8]);
+        CollectionAssert.AreEqual(new byte[] { 137, 80, 78, 71, 13, 10, 26, 10 }, value.PreviewPng[..8]);
     }
 
     [TestMethod]
