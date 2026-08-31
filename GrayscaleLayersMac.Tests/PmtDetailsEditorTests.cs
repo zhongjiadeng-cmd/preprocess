@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
+using Avalonia.Automation;
 using Avalonia.Controls;
 using Avalonia.Headless;
 using Avalonia.VisualTree;
@@ -75,7 +76,7 @@ public sealed class PmtDetailsEditorTests
         {
             var details = new PmtDetailsEditor();
             details.LoadJob(BuildJob());
-            var numbers = details.GetVisualDescendants().OfType<NumericUpDown>().Count();
+            var numbers = details.GetVisualDescendants().OfType<TextBox>().Count();
             var checkBoxes = details.GetVisualDescendants().OfType<CheckBox>().Count();
             var expected = LaserPmtConfiguration.Parameters.Count;
             Assert.AreEqual(expected, numbers + checkBoxes,
@@ -101,12 +102,12 @@ public sealed class PmtDetailsEditorTests
             ["scan_ahead"] = "true"
         });
 
-    private static Button GetButton(PmtDetailsEditor editor, string text)
+    private static Button GetButton(PmtDetailsEditor editor, string automationName)
     {
         return editor.GetVisualDescendants()
             .OfType<Button>()
-            .FirstOrDefault(button => (button.Content as string) == text)
-            ?? throw new AssertFailedException($"找不到按钮：{text}");
+            .FirstOrDefault(button => AutomationProperties.GetName(button) == automationName)
+            ?? throw new AssertFailedException($"找不到按钮：{automationName}");
     }
 
     private static List<TextBlock> GetTextBlocks(PmtDetailsEditor editor)

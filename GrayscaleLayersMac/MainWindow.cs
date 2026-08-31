@@ -164,7 +164,7 @@ public sealed class MainWindow : Window
     private readonly NumericUpDown _pipelineDelayLaserOnBox = MakeNumberBox(0, 1, int.MaxValue, 0);
     private readonly LaserPmtPanel _pipelinePmtPanel = new();
     private readonly PmtPreviewControl _pipelinePmtPreview = new();
-    private readonly PmtDetailsEditor _pipelinePmtDetails = new() { MaxHeight = 160 };
+    private readonly PmtDetailsEditor _pipelinePmtDetails = new();
     private string? _pipelinePmtLayoutPath;
     private readonly DxfPreviewControl _pipelineDxfPreview = new(startInTopView: true);
     private readonly TextBlock _pipelineDxfPreviewStatus = new() { Foreground = UiTheme.TextSecondaryBrush };
@@ -1036,28 +1036,40 @@ public sealed class MainWindow : Window
         fit.Click += (_, _) => preview.FitToView();
         zoomOut.Click += (_, _) => preview.ZoomOut();
         zoomIn.Click += (_, _) => preview.ZoomIn();
+
+        var toolbar = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 8,
+            Children = { fit, zoomOut, zoomIn }
+        };
+
+        var detailsPanel = new Border
+        {
+            Padding = new Thickness(10, 8),
+            CornerRadius = UiTheme.ControlRadius,
+            Background = UiTheme.CardBrush,
+            BorderBrush = UiTheme.BorderSubtleBrush,
+            BorderThickness = new Thickness(1),
+            Child = details
+        };
+
+        var body = new Grid
+        {
+            ColumnDefinitions = new ColumnDefinitions("*,Auto"),
+            ColumnSpacing = 8,
+            Children = { preview, detailsPanel }
+        };
+        Grid.SetColumn(detailsPanel, 1);
+
         return new Grid
         {
-            RowDefinitions = new RowDefinitions("Auto,*,Auto"),
+            RowDefinitions = new RowDefinitions("Auto,*"),
             RowSpacing = 8,
             Children =
             {
-                AtRow(new StackPanel
-                {
-                    Orientation = Orientation.Horizontal,
-                    Spacing = 8,
-                    Children = { fit, zoomOut, zoomIn }
-                }, 0),
-                AtRow(preview, 1),
-                AtRow(new Border
-                {
-                    Padding = new Thickness(10, 8),
-                    CornerRadius = UiTheme.ControlRadius,
-                    Background = UiTheme.CardBrush,
-                    BorderBrush = UiTheme.BorderSubtleBrush,
-                    BorderThickness = new Thickness(1),
-                    Child = details
-                }, 2)
+                AtRow(toolbar, 0),
+                AtRow(body, 1)
             }
         };
     }

@@ -22,7 +22,9 @@ internal enum UiIcon
     Expand,
     OpenFolder,
     Success,
-    Error
+    Error,
+    Save,
+    Undo
 }
 
 /// <summary>
@@ -117,6 +119,8 @@ internal static class UiIcons
         UiIcon.OpenFolder => Icon.FolderOpen,
         UiIcon.Success => Icon.CheckmarkCircle,
         UiIcon.Error => Icon.ErrorCircle,
+        UiIcon.Save => Icon.SaveEdit,
+        UiIcon.Undo => Icon.ArrowUndo,
         _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, null)
     };
 }
