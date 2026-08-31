@@ -164,7 +164,7 @@ public sealed class MainWindow : Window
     private readonly NumericUpDown _pipelineDelayLaserOnBox = MakeNumberBox(0, 1, int.MaxValue, 0);
     private readonly LaserPmtPanel _pipelinePmtPanel = new();
     private readonly PmtPreviewControl _pipelinePmtPreview = new();
-    private readonly PmtDetailsEditor _pipelinePmtDetails = new() { MinHeight = 260 };
+    private readonly PmtDetailsEditor _pipelinePmtDetails = new() { MaxHeight = 160 };
     private string? _pipelinePmtLayoutPath;
     private readonly DxfPreviewControl _pipelineDxfPreview = new(startInTopView: true);
     private readonly TextBlock _pipelineDxfPreviewStatus = new() { Foreground = UiTheme.TextSecondaryBrush };

@@ -9,9 +9,10 @@ using Avalonia.Media;
 namespace GrayscaleLayersMac;
 
 /// <summary>
-/// 选中 PMT 单元时右侧显示的可编辑详情面板：
-/// 上方是单元标识 + 文件名，下方是激光参数的竖向编辑列表（一行一项，对应
-/// <see cref="LaserPmtConfiguration.Parameters"/> 全部 16 项），最下面是"保存覆盖"与"还原基础"。
+/// 选中 PMT 单元时底部详情栏的可编辑参数列表。
+/// 保持与原先只读 TextBlock 同位置的底部小横条尺寸，仅把"横向参数文本"改为"竖向紧凑滚动列表"，
+/// 不做其它布局改动：上方仍是单元标识+文件名，下方是 <see cref="LaserPmtConfiguration.Parameters"/>
+/// 全部 16 项（一行一项，整数 NumericUpDown / 布尔 CheckBox），最底下是"保存覆盖"与"还原基础"。
 /// </summary>
 public sealed class PmtDetailsEditor : UserControl
 {
@@ -23,22 +24,22 @@ public sealed class PmtDetailsEditor : UserControl
 
     private readonly TextBlock _identifierText = new()
     {
-        FontSize = 13,
+        FontSize = 12,
         FontWeight = FontWeight.SemiBold,
         Foreground = UiTheme.TextPrimaryBrush,
         TextWrapping = TextWrapping.Wrap
     };
     private readonly TextBlock _jsonFileText = new()
     {
-        FontSize = 11.5,
+        FontSize = 10.5,
         Foreground = UiTheme.TextSecondaryBrush,
         FontFamily = UiTheme.MonoFont,
         TextWrapping = TextWrapping.Wrap
     };
-    private readonly StackPanel _parameterRows = new() { Spacing = 6 };
+    private readonly StackPanel _parameterRows = new() { Spacing = 3 };
     private readonly TextBlock _statusText = new()
     {
-        FontSize = 11.5,
+        FontSize = 11,
         Foreground = UiTheme.TextSecondaryBrush,
         TextWrapping = TextWrapping.Wrap
     };
@@ -72,7 +73,7 @@ public sealed class PmtDetailsEditor : UserControl
 
         var header = new StackPanel
         {
-            Spacing = 4,
+            Spacing = 2,
             Children = { _identifierText, _jsonFileText }
         };
         var scroll = new ScrollViewer
@@ -91,7 +92,7 @@ public sealed class PmtDetailsEditor : UserControl
         var root = new Grid
         {
             RowDefinitions = new RowDefinitions("Auto,*,Auto"),
-            RowSpacing = 10
+            RowSpacing = 6
         };
         Grid.SetRow(header, 0);
         Grid.SetRow(scroll, 1);
@@ -205,12 +206,6 @@ public sealed class PmtDetailsEditor : UserControl
         private readonly NumericUpDown? _numberBox;
         private readonly CheckBox? _checkBox;
         private readonly Control _editor;
-        private readonly TextBlock _errorText = new()
-        {
-            FontSize = 10.5,
-            Foreground = UiTheme.DangerTextBrush,
-            TextWrapping = TextWrapping.Wrap
-        };
         private bool _isEnabled;
 
         public LaserPmtParameterDefinition Definition => _definition;
@@ -223,7 +218,7 @@ public sealed class PmtDetailsEditor : UserControl
                 _checkBox = new CheckBox
                 {
                     Content = definition.DisplayName,
-                    IsThreeState = false
+                    IsThreeState = true
                 };
                 _checkBox.IsCheckedChanged += (_, _) => UpdateErrorIndicator();
                 _editor = _checkBox;
@@ -240,24 +235,33 @@ public sealed class PmtDetailsEditor : UserControl
                     Watermark = "沿用基础加工参数"
                 };
                 UiTheme.ApplyInputStyle(_numberBox);
+                // ApplyInputStyle 会设定默认内边距/最小高度，这里收紧以匹配紧凑横条。
+                _numberBox.Padding = new Thickness(4, 1);
+                _numberBox.MinHeight = 0;
+                _numberBox.Height = 22;
                 _numberBox.ValueChanged += (_, _) => UpdateErrorIndicator();
                 _editor = _numberBox;
             }
 
-            var label = UiTheme.FieldLabel(
-                definition.IsBoolean ? "勾选 = 启用覆盖" : $"{definition.DisplayName}（{definition.Name}）");
+            var label = new TextBlock
+            {
+                Text = definition.IsBoolean ? "勾选 = 启用覆盖" : $"{definition.DisplayName}（{definition.Name}）",
+                FontSize = 10.5,
+                Foreground = UiTheme.TextSecondaryBrush,
+                VerticalAlignment = VerticalAlignment.Center,
+                TextTrimming = TextTrimming.CharacterEllipsis,
+                TextWrapping = TextWrapping.NoWrap
+            };
             var rowGrid = new Grid
             {
-                ColumnDefinitions = new ColumnDefinitions("Auto,*,Auto"),
-                ColumnSpacing = 10,
+                ColumnDefinitions = new ColumnDefinitions("Auto,*"),
+                ColumnSpacing = 8,
                 VerticalAlignment = VerticalAlignment.Center
             };
             Grid.SetColumn(label, 0);
             Grid.SetColumn(_editor, 1);
-            Grid.SetColumn(_errorText, 2);
             rowGrid.Children.Add(label);
             rowGrid.Children.Add(_editor);
-            rowGrid.Children.Add(_errorText);
             container.Children.Add(rowGrid);
             _isEnabled = true;
         }
@@ -272,7 +276,6 @@ public sealed class PmtDetailsEditor : UserControl
                 if (!hasValue || !bool.TryParse(raw, out var boolean))
                 {
                     _checkBox.IsChecked = null;
-                    _checkBox.IsThreeState = true;
                     return;
                 }
                 _checkBox.IsThreeState = false;
@@ -317,7 +320,7 @@ public sealed class PmtDetailsEditor : UserControl
             {
                 if (_checkBox is null)
                     return null;
-                if (_checkBox.IsThreeState || _checkBox.IsChecked is null)
+                if (_checkBox.IsChecked is null)
                     return null;
                 return _checkBox.IsChecked.Value ? "true" : "false";
             }
@@ -336,29 +339,22 @@ public sealed class PmtDetailsEditor : UserControl
             if (!_isEnabled)
                 return true;
             if (_definition.IsBoolean)
-                return _checkBox is { IsThreeState: false } || _checkBox is null;
+                return true;
             return true;
         }
 
         private void UpdateErrorIndicator()
         {
             if (_numberBox is null)
-            {
-                _errorText.Text = string.Empty;
                 return;
-            }
             if (_numberBox.Value is null)
             {
-                _errorText.Text = string.Empty;
                 UiTheme.SetInputError(_numberBox, false);
                 return;
             }
             var raw = decimal.ToInt32(_numberBox.Value.Value);
             var valid = raw >= _definition.Minimum && raw <= _definition.Maximum;
             UiTheme.SetInputError(_numberBox, !valid);
-            _errorText.Text = valid
-                ? string.Empty
-                : $"允许 {_definition.Minimum}–{(_definition.Maximum == int.MaxValue ? "无穷" : _definition.Maximum.ToString(CultureInfo.InvariantCulture))}";
         }
     }
 }
