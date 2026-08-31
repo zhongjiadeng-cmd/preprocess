@@ -92,6 +92,38 @@ public sealed class UiStructureContractTests
     }
 
     [TestMethod]
+    public void DxfCommitPreparationIsDetachedAndPublicationEndsOnDxf()
+    {
+        var prepare = MethodSource(
+            "private Action CreatePipelineDxfCommit(",
+            "private void CommitPipelineDxfImports(");
+        foreach (var liveField in new[]
+        {
+            "_pipelineDxfHost",
+            "_pipelineDxfPreview",
+            "_pipelineSharedPreview",
+            "_pipelineDxfFiles"
+        })
+            Assert.DoesNotContain(liveField, prepare);
+
+        var publish = MethodSource(
+            "private void CommitPipelineDxfImports(",
+            "private static string? DirectoryOf(");
+        StringAssert.Contains(publish, "InstallPreparedFile(");
+        StringAssert.Contains(publish, "ReplaceItemsWithLoadedSelection(");
+        StringAssert.Contains(
+            publish,
+            "SelectSharedPreview(_pipelineSharedPreview, SharedPreviewKind.Dxf)");
+
+        var coordinator = MethodSource(
+            "internal static async Task<bool> RunPreparedImportAsync(",
+            "private PreparedImportFlowActions CreatePreparedImportFlowActions()");
+        Assert.IsGreaterThan(
+            coordinator.IndexOf("actions.CommitTiffs", StringComparison.Ordinal),
+            coordinator.IndexOf("commitDxfs?.Invoke", StringComparison.Ordinal));
+    }
+
+    [TestMethod]
     public void ExistingParameterFieldsUseSharedStylesWithoutAParallelForm()
     {
         StringAssert.Contains(MainWindowSource, "ApplyPipelineInputStyles();");

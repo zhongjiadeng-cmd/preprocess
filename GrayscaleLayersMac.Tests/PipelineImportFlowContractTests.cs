@@ -70,6 +70,8 @@ public sealed class PipelineImportFlowContractTests
         Assert.AreEqual(1, calls.TiffCommitCount);
         Assert.AreEqual(1, calls.DxfCommitCount);
         Assert.AreEqual(1, calls.SuccessCount);
+        Assert.AreEqual("dxf", calls.VisiblePreview);
+        Assert.AreSame(calls.NewDxfBatch, calls.PublishedDxfBatch);
         CollectionAssert.AreEqual(
             new[]
             {
@@ -167,7 +169,7 @@ public sealed class PipelineImportFlowContractTests
     }
 
     [TestMethod]
-    public async Task DxfInstallationFailurePreventsSuccessAndShowsFailure()
+    public async Task DxfPreparationFailureLeavesOldBatchAndViewUntouched()
     {
         var calls = new FlowCalls
         {
@@ -186,6 +188,30 @@ public sealed class PipelineImportFlowContractTests
         Assert.AreEqual(0, calls.SuccessCount);
         Assert.AreEqual(1, calls.FailureCount);
         Assert.AreEqual(ImportProgressStage.Failed, calls.VisibleStages.Last());
+        Assert.AreEqual("old", calls.VisiblePreview);
+        Assert.AreSame(calls.OldDxfBatch, calls.PublishedDxfBatch);
+    }
+
+    [TestMethod]
+    public async Task TiffCommitFailureDoesNotPublishOrRevealPreparedDxf()
+    {
+        var calls = new FlowCalls
+        {
+            TiffCommitError = new InvalidDataException("TIFF 提交失败。")
+        };
+
+        var imported = await MainWindow.RunPreparedImportAsync(
+            _ => Task.FromResult<PipelineImportSelection?>(MixedSelection()),
+            "无法导入文件",
+            CreateActions(calls));
+
+        Assert.IsFalse(imported);
+        Assert.AreEqual(0, calls.TiffCommitCount);
+        Assert.AreEqual(0, calls.DxfCommitCount);
+        Assert.AreEqual(0, calls.SuccessCount);
+        Assert.AreEqual(1, calls.FailureCount);
+        Assert.AreEqual("old", calls.VisiblePreview);
+        Assert.AreSame(calls.OldDxfBatch, calls.PublishedDxfBatch);
     }
 
     private static PipelineImportSelection MixedSelection() => new(
@@ -204,8 +230,11 @@ public sealed class PipelineImportFlowContractTests
         (_, _) => Task.FromResult(new PreparedGrayscaleLayerSet([])),
         (_, _) =>
         {
+            if (calls.TiffCommitError is not null)
+                throw calls.TiffCommitError;
             calls.TiffCommitCount++;
             calls.CommitAndSuccessOrder.Add("tiff");
+            calls.VisiblePreview = "texture";
         },
         (_, _) =>
         {
@@ -215,6 +244,8 @@ public sealed class PipelineImportFlowContractTests
             {
                 calls.DxfCommitCount++;
                 calls.CommitAndSuccessOrder.Add("dxf");
+                calls.PublishedDxfBatch = calls.NewDxfBatch;
+                calls.VisiblePreview = "dxf";
             };
         },
         state =>
@@ -268,9 +299,19 @@ public sealed class PipelineImportFlowContractTests
         public int FailureCount { get; set; }
         public int MessageCount { get; set; }
         public Exception? DxfCommitError { get; init; }
+        public Exception? TiffCommitError { get; init; }
+        public object OldDxfBatch { get; } = new();
+        public object NewDxfBatch { get; } = new();
+        public object PublishedDxfBatch { get; set; }
+        public string VisiblePreview { get; set; } = "old";
         public List<string> CommitAndSuccessOrder { get; } = [];
         public List<string> Logs { get; } = [];
         public List<ImportProgressStage> VisibleStages { get; } = [];
+
+        public FlowCalls()
+        {
+            PublishedDxfBatch = OldDxfBatch;
+        }
     }
 
     private static DxfPreviewControl.PreparedDxfPreview FakeDxfPreview(string path) => new(

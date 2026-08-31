@@ -96,6 +96,24 @@ public sealed class DxfPreviewControlTests
     }
 
     [TestMethod]
+    public void InvalidPreparedPreviewCheckDoesNotMutateLoadedCanvas()
+    {
+        var oldDxf = Path.Combine(_root, "old.dxf");
+        WriteDxf(oldDxf, (0d, 0d, 10d, 0d));
+        using var preview = new DxfPreviewControl();
+        preview.LoadFile(oldDxf);
+        var oldSummary = preview.Summary;
+        var invalid = new DxfPreviewControl.PreparedDxfPreview(
+            "/tmp/invalid.dxf", 1, new Rect(0, 0, 1, 1), [], 0, 0, "invalid");
+
+        Assert.ThrowsExactly<InvalidDataException>(() =>
+            DxfPreviewControl.EnsurePreparedFileInstallable(invalid));
+
+        Assert.AreEqual(oldSummary, preview.Summary);
+        Assert.AreEqual(1, preview.LineCount);
+    }
+
+    [TestMethod]
     public void SamplingAcrossBlockBoundaryKeepsSourceOrdinalClassifications()
     {
         var dxf = Path.Combine(_root, "sampled.dxf");

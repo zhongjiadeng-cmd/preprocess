@@ -235,24 +235,26 @@ public sealed class DxfPreviewHost : Grid
     /// <summary>选中指定索引的层；索引越界或与当前选中项相同时不做任何事。</summary>
     public bool SelectIndex(int index) => TrySelectCore(index);
 
-    /// <summary>导入提交时要求首层必须成功安装；失败必须阻止导入报告成功。</summary>
-    internal void SelectIndexOrThrow(int index)
-    {
-        if (!TrySelectCore(index))
-            throw new InvalidDataException("无法安装已验证的 DXF 预览。");
-    }
-
     /// <summary>
-    /// 整批替换时旧列表可能与调用方共享同一个可变集合；先清除旧选择，确保新批次首层
-    /// 必定调用加载器，而不会把相同索引误判成重复选择。
+    /// 采纳调用方已经安装到画布的整批层与选中项。这里绝不调用 LoadLayer，因而发布阶段
+    /// 不会重新解析、重新安装或触发任意外部 loader。
     /// </summary>
-    internal void ReplaceItemsAndSelectIndexOrThrow(
+    internal void ReplaceItemsWithLoadedSelection(
         IReadOnlyList<DxfLayerPreviewItem> items,
         int index)
     {
-        ClearSelection();
-        SetItems(items);
-        SelectIndexOrThrow(index);
+        ArgumentNullException.ThrowIfNull(items);
+        if (index < 0 || index >= items.Count)
+            throw new ArgumentOutOfRangeException(nameof(index));
+
+        _items = items;
+        _selectedIndex = index;
+        _rail.SetItems(_items);
+        _rail.SelectedIndex = index;
+        _rail.InvalidateVisual();
+        UpdateRailVisibility();
+        UpdateNavigation();
+        UpdateZoomLabel();
     }
 
     /// <summary>选中指定层；不在列表中或加载失败返回 false。</summary>

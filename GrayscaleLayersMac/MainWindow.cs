@@ -37,7 +37,7 @@ internal sealed record PreparedImportFlowActions(
         CancellationToken,
         Task<PreparedGrayscaleLayerSet>> PrepareLayersAsync,
     Action<PreparedGrayscaleLayerSet, string?> CommitTiffs,
-    Func<IReadOnlyList<DxfPreviewControl.PreparedDxfPreview>, string?, Action> PrepareDxfCommit,
+    Func<IReadOnlyList<DxfPreviewControl.PreparedDxfPreview>, string?, Action> CreateDxfCommit,
     Action<ImportProgressState> Show,
     Action<ImportProgressState> Update,
     Func<ImportProgressState, CancellationToken, Task> ShowSucceededAndCollapseAsync,
@@ -1568,7 +1568,7 @@ public sealed class MainWindow : Window
 
             Action? commitDxfs = null;
             if (prepared.DxfPreviews.Count > 0)
-                commitDxfs = actions.PrepareDxfCommit(
+                commitDxfs = actions.CreateDxfCommit(
                     prepared.DxfPreviews, selection.DxfDirectory);
             if (prepared.TiffInspections.Count > 0)
                 actions.CommitTiffs(preparedLayers, selection.TiffDirectory);
@@ -1613,7 +1613,7 @@ public sealed class MainWindow : Window
             if (directory is not null)
                 _pipelineLayerOutputBox.Text = directory;
         },
-        PreparePipelineDxfCommit,
+        CreatePipelineDxfCommit,
         _pipelineImportProgress.Show,
         _pipelineImportProgress.Update,
         _pipelineImportProgress.ShowSucceededAndCollapseAsync,
@@ -1631,35 +1631,40 @@ public sealed class MainWindow : Window
     private static DxfPreviewControl.PreparedDxfPreview ValidateImportedDxf(string path) =>
         DxfPreviewControl.PrepareFile(path);
 
-    /// <summary>
-    /// 在任何产物提交前安装新批次首个 staged 预览；成功后返回不再安装或解析的发布动作。
-    /// </summary>
-    private Action PreparePipelineDxfCommit(
+    /// <summary>纯准备：只检查 staged 数据并构造批次快照，不读取或改变任何真实 UI 状态。</summary>
+    private Action CreatePipelineDxfCommit(
         IReadOnlyList<DxfPreviewControl.PreparedDxfPreview> previews,
         string? directory)
     {
+        foreach (var preview in previews)
+            DxfPreviewControl.EnsurePreparedFileInstallable(preview);
         var items = previews
             .Select((preview, index) => new DxfLayerPreviewItem(
                 $"导入第 {index + 1:D2} 层 · {Path.GetFileName(preview.Path)}",
                 preview))
             .ToArray();
-        var host = _pipelineDxfHost ??
-            throw new InvalidOperationException("DXF 预览宿主尚未初始化。");
-        _pipelineDxfPreview.ClearTexture();
-        _pipelineSharedPreview.UpdateDxfOverlayControls();
-        _pipelineSharedPreview.Selection.ClearDxf();
-        host.ReplaceItemsAndSelectIndexOrThrow(items, 0);
         return () => CommitPipelineDxfImports(items, directory);
     }
 
-    /// <summary>发布已成功安装的 DXF 批次；不解析文件，也不再次触发层加载。</summary>
+    /// <summary>确定性发布已准备批次：不解析文件、不构造行组，也不触发层加载器。</summary>
     private void CommitPipelineDxfImports(
         IReadOnlyList<DxfLayerPreviewItem> items,
         string? directory)
     {
+        var firstPreview = items[0].PreparedPreview!;
+        _pipelineDxfPreview.ClearTexture();
+        _pipelineDxfPreview.InstallPreparedFile(
+            firstPreview, keepView: false, raiseViewChanged: false);
+        _pipelineDxfPreviewStatus.Text = _pipelineDxfPreview.Summary;
+        _pipelineDxfPreviewStatus.ClearValue(TextBlock.ForegroundProperty);
+        _pipelineSharedPreview.UpdateDxfOverlayControls();
+        _pipelineSharedPreview.Selection.ClearDxf();
         _pipelineDxfFiles.Clear();
         foreach (var item in items)
             _pipelineDxfFiles.Add(item);
+        _pipelineDxfHost!.ReplaceItemsWithLoadedSelection(items, 0);
+        _pipelineSharedPreview.Selection.CompleteDxfLoad();
+        SelectSharedPreview(_pipelineSharedPreview, SharedPreviewKind.Dxf);
         if (directory is not null)
             _pipelineDxfOutputBox.Text = directory;
     }

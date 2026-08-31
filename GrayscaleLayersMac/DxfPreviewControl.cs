@@ -25,8 +25,11 @@ public sealed class DxfPreviewControl : Control, IDisposable
         List<Segment> Segments,
         double MinZ,
         double MaxZ,
-        string Summary);
-    private sealed record RowGroup(
+        string Summary)
+    {
+        internal List<RowGroup> RowGroups { get; } = BuildRowGroups(Segments);
+    }
+    internal sealed record RowGroup(
         int StartIndex,
         int Count,
         int BlockIndex,
@@ -379,7 +382,7 @@ public sealed class DxfPreviewControl : Control, IDisposable
         var summary = stride == 1
             ? $"{Path.GetFileName(path)} · {count:N0} 条 LINE{blockSummary}"
             : $"{Path.GetFileName(path)} · {count:N0} 条 LINE{blockSummary} · 抽样显示 {secondPass.Segments.Count:N0} 条";
-        return new PreparedDxfPreview(
+        var prepared = new PreparedDxfPreview(
             path,
             count,
             bounds,
@@ -387,15 +390,34 @@ public sealed class DxfPreviewControl : Control, IDisposable
             secondPass.MinZ,
             secondPass.MaxZ,
             summary);
+        EnsurePreparedFileInstallable(prepared);
+        return prepared;
     }
 
-    /// <summary>安装已完整解析的 DXF 预览；不访问 DXF 或 companion 文件。</summary>
-    internal void InstallPreparedFile(PreparedDxfPreview prepared, bool keepView)
+    /// <summary>纯数据不变量检查；不访问或改变任何画布 / 宿主状态。</summary>
+    internal static void EnsurePreparedFileInstallable(PreparedDxfPreview prepared)
+    {
+        ArgumentNullException.ThrowIfNull(prepared);
+        if (string.IsNullOrWhiteSpace(prepared.Path) ||
+            prepared.LineCount <= 0 ||
+            prepared.Segments.Count == 0 ||
+            prepared.RowGroups.Count == 0 ||
+            string.IsNullOrWhiteSpace(prepared.Summary))
+            throw new InvalidDataException("已准备的 DXF 预览数据不完整。");
+    }
+
+    /// <summary>
+    /// 安装已完整解析且通过不变量检查的 DXF 预览；不访问磁盘、不构造行组，也不调用层加载器。
+    /// </summary>
+    internal void InstallPreparedFile(
+        PreparedDxfPreview prepared,
+        bool keepView,
+        bool raiseViewChanged = true)
     {
         ArgumentNullException.ThrowIfNull(prepared);
         LineCount = prepared.LineCount;
         _segments = prepared.Segments;
-        _rowGroups = BuildRowGroups(prepared.Segments);
+        _rowGroups = prepared.RowGroups;
         _modelBounds = HasTexture ? _textureFrameBounds : prepared.Bounds;
         _minZ = prepared.MinZ;
         _maxZ = prepared.MaxZ;
@@ -404,11 +426,16 @@ public sealed class DxfPreviewControl : Control, IDisposable
         {
             ClampPan();
             InvalidateVisual();
-            RaiseViewChanged();
+            if (raiseViewChanged)
+                RaiseViewChanged();
         }
         else
         {
-            FitToView();
+            _zoom = 1;
+            _pan = default;
+            InvalidateVisual();
+            if (raiseViewChanged)
+                RaiseViewChanged();
         }
     }
 

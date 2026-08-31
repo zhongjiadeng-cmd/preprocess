@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -74,41 +75,37 @@ public sealed class DxfPreviewHostTests
     }
 
     [TestMethod]
-    public void RequiredSelectionPropagatesInstallationFailure()
-    {
-        using var preview = new DxfPreviewControl();
-        var host = new DxfPreviewHost(preview, new TextBlock())
-        {
-            LoadLayer = _ => false
-        };
-
-        Assert.ThrowsExactly<InvalidDataException>(() =>
-            host.ReplaceItemsAndSelectIndexOrThrow(MakeItems(1), 0));
-        Assert.AreEqual(-1, host.SelectedIndex);
-    }
-
-    [TestMethod]
-    public void ReplacingTheSameMutableListForcesFirstLayerInstallationAgain()
+    public void AdoptingLoadedSelectionDoesNotInvokeLayerLoader()
     {
         using var preview = new DxfPreviewControl();
         var host = new DxfPreviewHost(preview, new TextBlock());
-        var loaded = new List<DxfLayerPreviewItem>();
-        host.LoadLayer = item =>
-        {
-            loaded.Add(item);
-            return true;
-        };
+        host.LoadLayer = _ => throw new InvalidOperationException(
+            "已在画布安装的层不应再次调用 loader。");
+        var items = MakeItems(1);
+
+        host.ReplaceItemsWithLoadedSelection(items, 0);
+
+        Assert.AreEqual(0, host.SelectedIndex);
+        Assert.AreSame(items[0], host.Items[0]);
+    }
+
+    [TestMethod]
+    public void ReplacingTheSameMutableListTwiceAdoptsTheNewFirstLayer()
+    {
+        using var preview = new DxfPreviewControl();
+        var host = new DxfPreviewHost(preview, new TextBlock());
+        host.LoadLayer = _ => throw new InvalidOperationException(
+            "已安装的 replacement 不应再次调用 loader。");
         var items = MakeItems(1, "first").ToList();
-        host.ReplaceItemsAndSelectIndexOrThrow(items, 0);
+        host.ReplaceItemsWithLoadedSelection(items, 0);
         var replacement = MakeItems(1, "second")[0];
         items.Clear();
         items.Add(replacement);
 
-        host.ReplaceItemsAndSelectIndexOrThrow(items, 0);
+        host.ReplaceItemsWithLoadedSelection(items, 0);
 
         Assert.AreEqual(0, host.SelectedIndex);
-        Assert.AreSame(replacement, loaded[^1]);
-        Assert.AreEqual(2, loaded.Count);
+        Assert.AreSame(replacement, host.Items[0]);
     }
 
     [TestMethod]
