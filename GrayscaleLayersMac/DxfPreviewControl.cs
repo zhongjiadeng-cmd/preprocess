@@ -686,9 +686,9 @@ public sealed class DxfPreviewControl : Control, IDisposable
         var projection = CreateProjection(1, default);
         var corners = new List<Vector>();
         foreach (var x in new[] { _modelBounds.Left, _modelBounds.Right })
-        foreach (var y in new[] { _modelBounds.Top, _modelBounds.Bottom })
-        foreach (var z in new[] { _minZ, _maxZ })
-            corners.Add(projection.Project(x, y, z));
+            foreach (var y in new[] { _modelBounds.Top, _modelBounds.Bottom })
+                foreach (var z in new[] { _minZ, _maxZ })
+                    corners.Add(projection.Project(x, y, z));
         return new Size(
             corners.Max(point => point.X) - corners.Min(point => point.X),
             corners.Max(point => point.Y) - corners.Min(point => point.Y));

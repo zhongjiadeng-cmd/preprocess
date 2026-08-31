@@ -2015,30 +2015,30 @@ public sealed class MainWindow : Window
                 AppendPipelineLog(mode == PipelineRunMode.All
                     ? "步骤 2/3：开始逐层生成 Hatch DXF…\n"
                     : "第 2 步：开始逐层生成 Hatch DXF…\n");
-            var baseVoronoiSeed = (int)(_pipelineVoronoiSeedBox.Value ?? 12345);
+                var baseVoronoiSeed = (int)(_pipelineVoronoiSeedBox.Value ?? 12345);
                 currentRunDxfFiles = new List<string>(layerFiles.Length);
 
-            for (var index = 0; index < layerFiles.Length; index++)
-            {
-                _cancellation.Token.ThrowIfCancellationRequested();
-                var layerFile = layerFiles[index];
-                var outputFile = Path.Combine(
-                    dxfOutputAbsolute,
-                    $"{Path.GetFileNameWithoutExtension(layerFile)}.dxf");
-                var previewFile = Path.ChangeExtension(outputFile, ".preview.png");
-                // 每层从用户设置的基础种子派生出不同且可复现的种子，避免多层
-                // 使用完全相同的 Voronoi 分块。使用质数步长可避免相邻层相关。
-                var layerVoronoiSeed = (int)(
-                    ((baseVoronoiSeed - 1L + index * 104729L) % int.MaxValue) + 1);
-                var layerHatchAngle = ((layerFiles.Length == 1 ? 1 : index) * hatchAngleStep) % 180m;
-                AppendPipelineLog(
-                    $"[{index + 1}/{layerFiles.Length}] {Path.GetFileName(layerFile)} → {Path.GetFileName(outputFile)}" +
-                    $"（填充角度：{Invariant(layerHatchAngle)}°）" +
-                    (_pipelineBlocksBox.Value > 0 ? $"（分块种子：{layerVoronoiSeed}）" : ""));
-
-                var hatchInfo = CreatePythonProcess(python);
-                foreach (var argument in new[]
+                for (var index = 0; index < layerFiles.Length; index++)
                 {
+                    _cancellation.Token.ThrowIfCancellationRequested();
+                    var layerFile = layerFiles[index];
+                    var outputFile = Path.Combine(
+                        dxfOutputAbsolute,
+                        $"{Path.GetFileNameWithoutExtension(layerFile)}.dxf");
+                    var previewFile = Path.ChangeExtension(outputFile, ".preview.png");
+                    // 每层从用户设置的基础种子派生出不同且可复现的种子，避免多层
+                    // 使用完全相同的 Voronoi 分块。使用质数步长可避免相邻层相关。
+                    var layerVoronoiSeed = (int)(
+                        ((baseVoronoiSeed - 1L + index * 104729L) % int.MaxValue) + 1);
+                    var layerHatchAngle = ((layerFiles.Length == 1 ? 1 : index) * hatchAngleStep) % 180m;
+                    AppendPipelineLog(
+                        $"[{index + 1}/{layerFiles.Length}] {Path.GetFileName(layerFile)} → {Path.GetFileName(outputFile)}" +
+                        $"（填充角度：{Invariant(layerHatchAngle)}°）" +
+                        (_pipelineBlocksBox.Value > 0 ? $"（分块种子：{layerVoronoiSeed}）" : ""));
+
+                    var hatchInfo = CreatePythonProcess(python);
+                    foreach (var argument in new[]
+                    {
                     hatchScript, layerFile, outputFile,
                     "--width", Invariant(width),
                     "--height", Invariant(height),
@@ -2046,62 +2046,62 @@ public sealed class MainWindow : Window
                     "--angle", Invariant(layerHatchAngle),
                     "--anchor", _pipelineAnchorBox.SelectedIndex == 1 ? "top-left" : "center"
                 })
-                    hatchInfo.ArgumentList.Add(argument);
-                if (dpi.HasValue)
-                {
-                    hatchInfo.ArgumentList.Add("--dpi");
-                    hatchInfo.ArgumentList.Add(dpi.Value.ToString(CultureInfo.InvariantCulture));
-                }
-                if (_pipelineIncludeBorder.IsChecked == true)
-                    hatchInfo.ArgumentList.Add("--border");
-                if (_pipelineBidirectionalHatch.IsChecked == true)
-                    hatchInfo.ArgumentList.Add("--bidirectional");
-                hatchInfo.ArgumentList.Add("--preview-output");
-                hatchInfo.ArgumentList.Add(previewFile);
-                AddVoronoiArguments(
-                    hatchInfo,
-                    width,
-                    height,
-                    _pipelineBlocksBox,
-                    _pipelineMinBlockPercentBox,
-                    _pipelineMaxBlockPercentBox,
-                    _pipelineBoundaryBlurBox,
-                    _pipelineBoundaryCorrelationBox,
-                    _pipelineVoronoiSeedBox,
-                    layerVoronoiSeed);
-
-                DxfTextureRegistration? textureRegistration = null;
-                var hatchExitCode = await RunProcessAsync(
-                    hatchInfo,
-                    line =>
+                        hatchInfo.ArgumentList.Add(argument);
+                    if (dpi.HasValue)
                     {
-                        if (DxfTextureRegistration.TryParseProcessOutput(
-                                line,
-                                out var emittedRegistration))
-                            textureRegistration = emittedRegistration;
-                        AppendPipelineLog($"    {line}");
-                    },
-                    _cancellation.Token);
-                if (hatchExitCode != 0)
-                    throw new InvalidOperationException(
-                        $"{Path.GetFileName(layerFile)} 转换失败，退出代码：{hatchExitCode}");
-                ValidateGeneratedLayerArtifacts(
-                    outputFile,
-                    previewFile,
-                    (_pipelineBlocksBox.Value ?? 0) > 0);
-                if (textureRegistration is null)
-                    throw new InvalidOperationException(
-                        "Hatch 生成结束，但未返回预览配准信息。");
-                currentRunDxfFiles.Add(Path.GetFullPath(outputFile));
-                var previewItem = new DxfLayerPreviewItem(
-                    $"第 {index + 1:D2} 层 · {Path.GetFileName(outputFile)}",
-                    outputFile,
-                    previewFile,
-                    textureRegistration);
-                _pipelineDxfFiles.Add(previewItem);
-                _pipelineDxfHost?.SetItems(_pipelineDxfFiles);
-                _pipelineDxfHost?.SelectIndex(_pipelineDxfFiles.Count - 1);
-            }
+                        hatchInfo.ArgumentList.Add("--dpi");
+                        hatchInfo.ArgumentList.Add(dpi.Value.ToString(CultureInfo.InvariantCulture));
+                    }
+                    if (_pipelineIncludeBorder.IsChecked == true)
+                        hatchInfo.ArgumentList.Add("--border");
+                    if (_pipelineBidirectionalHatch.IsChecked == true)
+                        hatchInfo.ArgumentList.Add("--bidirectional");
+                    hatchInfo.ArgumentList.Add("--preview-output");
+                    hatchInfo.ArgumentList.Add(previewFile);
+                    AddVoronoiArguments(
+                        hatchInfo,
+                        width,
+                        height,
+                        _pipelineBlocksBox,
+                        _pipelineMinBlockPercentBox,
+                        _pipelineMaxBlockPercentBox,
+                        _pipelineBoundaryBlurBox,
+                        _pipelineBoundaryCorrelationBox,
+                        _pipelineVoronoiSeedBox,
+                        layerVoronoiSeed);
+
+                    DxfTextureRegistration? textureRegistration = null;
+                    var hatchExitCode = await RunProcessAsync(
+                        hatchInfo,
+                        line =>
+                        {
+                            if (DxfTextureRegistration.TryParseProcessOutput(
+                                    line,
+                                    out var emittedRegistration))
+                                textureRegistration = emittedRegistration;
+                            AppendPipelineLog($"    {line}");
+                        },
+                        _cancellation.Token);
+                    if (hatchExitCode != 0)
+                        throw new InvalidOperationException(
+                            $"{Path.GetFileName(layerFile)} 转换失败，退出代码：{hatchExitCode}");
+                    ValidateGeneratedLayerArtifacts(
+                        outputFile,
+                        previewFile,
+                        (_pipelineBlocksBox.Value ?? 0) > 0);
+                    if (textureRegistration is null)
+                        throw new InvalidOperationException(
+                            "Hatch 生成结束，但未返回预览配准信息。");
+                    currentRunDxfFiles.Add(Path.GetFullPath(outputFile));
+                    var previewItem = new DxfLayerPreviewItem(
+                        $"第 {index + 1:D2} 层 · {Path.GetFileName(outputFile)}",
+                        outputFile,
+                        previewFile,
+                        textureRegistration);
+                    _pipelineDxfFiles.Add(previewItem);
+                    _pipelineDxfHost?.SetItems(_pipelineDxfFiles);
+                    _pipelineDxfHost?.SelectIndex(_pipelineDxfFiles.Count - 1);
+                }
 
                 AppendPipelineLog(mode == PipelineRunMode.All
                     ? $"\n步骤 2/3 完成：共生成 {layerFiles.Length} 个 DXF。"
@@ -2134,35 +2134,35 @@ public sealed class MainWindow : Window
                 }
 
                 var pathComparer = StringComparer.OrdinalIgnoreCase;
-            var expectedDxfFiles = new HashSet<string>(currentRunDxfFiles, pathComparer);
-            var missingDxfFiles = expectedDxfFiles
-                .Where(path => !IsRegularNonEmptyFile(path))
-                .OrderBy(path => path, pathComparer)
-                .ToArray();
-            if (missingDxfFiles.Length > 0)
-            {
-                var manifestError = new StringBuilder();
-                manifestError.AppendLine(
-                    $"本次 DXF 清单中有 {missingDxfFiles.Length} 个文件缺失或无效：");
-                foreach (var path in missingDxfFiles)
-                    manifestError.AppendLine($"- {path}");
-                manifestError.Append("请重新运行流程生成完整的本次 DXF 清单。");
-                throw new InvalidOperationException(manifestError.ToString());
-            }
-            AppendPipelineLog($"已验证本次 DXF 清单：{expectedDxfFiles.Count} 个文件。");
+                var expectedDxfFiles = new HashSet<string>(currentRunDxfFiles, pathComparer);
+                var missingDxfFiles = expectedDxfFiles
+                    .Where(path => !IsRegularNonEmptyFile(path))
+                    .OrderBy(path => path, pathComparer)
+                    .ToArray();
+                if (missingDxfFiles.Length > 0)
+                {
+                    var manifestError = new StringBuilder();
+                    manifestError.AppendLine(
+                        $"本次 DXF 清单中有 {missingDxfFiles.Length} 个文件缺失或无效：");
+                    foreach (var path in missingDxfFiles)
+                        manifestError.AppendLine($"- {path}");
+                    manifestError.Append("请重新运行流程生成完整的本次 DXF 清单。");
+                    throw new InvalidOperationException(manifestError.ToString());
+                }
+                AppendPipelineLog($"已验证本次 DXF 清单：{expectedDxfFiles.Count} 个文件。");
 
-            AppendPipelineLog(mode == PipelineRunMode.All
-                ? "\n步骤 3/3：开始生成机器加工文件…"
-                : "\n第 3 步：开始生成机器加工文件…");
-            var useBlockCenterMotion =
-                (_pipelineBlocksBox.Value ?? 0) > 0 &&
-                _pipelineBlockCenterMotionBox.IsChecked == true;
-            AppendPipelineLog(
-                $"加工块中心 XY 定位：{(useBlockCenterMotion ? "已启用" : "未启用")}。");
-            var ownerToken = Guid.NewGuid().ToString("N");
-            var machineInfo = CreatePythonProcess(python);
-            foreach (var argument in new[]
-            {
+                AppendPipelineLog(mode == PipelineRunMode.All
+                    ? "\n步骤 3/3：开始生成机器加工文件…"
+                    : "\n第 3 步：开始生成机器加工文件…");
+                var useBlockCenterMotion =
+                    (_pipelineBlocksBox.Value ?? 0) > 0 &&
+                    _pipelineBlockCenterMotionBox.IsChecked == true;
+                AppendPipelineLog(
+                    $"加工块中心 XY 定位：{(useBlockCenterMotion ? "已启用" : "未启用")}。");
+                var ownerToken = Guid.NewGuid().ToString("N");
+                var machineInfo = CreatePythonProcess(python);
+                foreach (var argument in new[]
+                {
                 machineScript, dxfOutputAbsolute, machineName!,
                 "--owner-token", ownerToken,
                 "--layer-step-um", Invariant(layerStep!.Value),
@@ -2180,39 +2180,39 @@ public sealed class MainWindow : Window
                 "--delaseroff", delayLaserOff.ToString(CultureInfo.InvariantCulture),
                 "--delaseron", delayLaserOn.ToString(CultureInfo.InvariantCulture)
             })
-                machineInfo.ArgumentList.Add(argument);
-            machineInfo.ArgumentList.Add(
-                _pipelineScanAheadBox.IsChecked == true ? "--scan-ahead" : "--no-scan-ahead");
-            machineInfo.ArgumentList.Add(
-                _pipelineSkyWritingBox.IsChecked == true ? "--sky-writing" : "--no-sky-writing");
-            machineInfo.ArgumentList.Add(
-                useBlockCenterMotion
-                    ? "--block-center-positioning"
-                    : "--no-block-center-positioning");
-            foreach (var layerDxfPath in currentRunDxfFiles)
-            {
-                machineInfo.ArgumentList.Add("--layer-dxf");
-                machineInfo.ArgumentList.Add(layerDxfPath);
-            }
+                    machineInfo.ArgumentList.Add(argument);
+                machineInfo.ArgumentList.Add(
+                    _pipelineScanAheadBox.IsChecked == true ? "--scan-ahead" : "--no-scan-ahead");
+                machineInfo.ArgumentList.Add(
+                    _pipelineSkyWritingBox.IsChecked == true ? "--sky-writing" : "--no-sky-writing");
+                machineInfo.ArgumentList.Add(
+                    useBlockCenterMotion
+                        ? "--block-center-positioning"
+                        : "--no-block-center-positioning");
+                foreach (var layerDxfPath in currentRunDxfFiles)
+                {
+                    machineInfo.ArgumentList.Add("--layer-dxf");
+                    machineInfo.ArgumentList.Add(layerDxfPath);
+                }
 
-            var machineExitCode = await RunProcessAsync(
-                machineInfo,
-                AppendPipelineLog,
-                _cancellation.Token);
-            if (machineExitCode != 0)
-                throw new InvalidOperationException($"加工文件生成失败，退出代码：{machineExitCode}");
-            if (!Directory.Exists(machineOutputPath))
-                throw new InvalidOperationException($"加工文件生成结束，但未找到输出目录：{machineOutputPath}");
+                var machineExitCode = await RunProcessAsync(
+                    machineInfo,
+                    AppendPipelineLog,
+                    _cancellation.Token);
+                if (machineExitCode != 0)
+                    throw new InvalidOperationException($"加工文件生成失败，退出代码：{machineExitCode}");
+                if (!Directory.Exists(machineOutputPath))
+                    throw new InvalidOperationException($"加工文件生成结束，但未找到输出目录：{machineOutputPath}");
 
-            _lastMachineOutputPath = machineOutputPath;
-            AppendPipelineLog(mode == PipelineRunMode.All
-                ? "\n步骤 3/3 完成：加工文件生成成功。"
-                : "\n第 3 步完成：加工文件生成成功。");
-            AppendPipelineLog($"加工文件目录：{machineOutputPath}");
-            if (mode == PipelineRunMode.All)
-                AppendPipelineLog(
-                    $"三步流程完成：已生成 {layerFiles.Length} 个 TIFF、{layerFiles.Length} 个 DXF 和 1 个加工文件。");
-            _pipelineOpenButton.IsEnabled = true;
+                _lastMachineOutputPath = machineOutputPath;
+                AppendPipelineLog(mode == PipelineRunMode.All
+                    ? "\n步骤 3/3 完成：加工文件生成成功。"
+                    : "\n第 3 步完成：加工文件生成成功。");
+                AppendPipelineLog($"加工文件目录：{machineOutputPath}");
+                if (mode == PipelineRunMode.All)
+                    AppendPipelineLog(
+                        $"三步流程完成：已生成 {layerFiles.Length} 个 TIFF、{layerFiles.Length} 个 DXF 和 1 个加工文件。");
+                _pipelineOpenButton.IsEnabled = true;
             }
         }
         catch (OperationCanceledException)

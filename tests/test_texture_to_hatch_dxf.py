@@ -2526,7 +2526,7 @@ class AvaloniaTextureOverlaySourceContractTests(unittest.TestCase):
 
         # The model bounds have no public getter; this source contract protects the
         # public LoadTexture/LoadFile ordering invariant at its only assignment.
-        self.assertIn("_modelBounds = HasTexture ? _textureFrameBounds : bounds;", load_file)
+        self.assertIn("_modelBounds = HasTexture ? _textureFrameBounds : prepared.Bounds;", load_file)
 
 
 class AvaloniaLayerOverlayWiringTests(unittest.TestCase):
