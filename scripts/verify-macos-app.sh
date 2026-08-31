@@ -17,7 +17,7 @@ executable_path="$macos_path/GrayscaleLayersMac"
 [[ -x "$executable_path" ]] || { echo "主程序缺失或不可执行：$executable_path" >&2; exit 1; }
 [[ -s "$resources_path/AppIcon.icns" ]] || { echo "应用图标缺失" >&2; exit 1; }
 
-for script_name in grayscale_layers.py texture_to_hatch_dxf.py dxf_to_machine_file.py; do
+for script_name in grayscale_layers.py texture_to_hatch_dxf.py dxf_to_machine_file.py laser_pmt.py; do
   [[ -s "$resources_path/scripts/$script_name" ]] || {
     echo "Python 脚本缺失：$script_name" >&2
     exit 1

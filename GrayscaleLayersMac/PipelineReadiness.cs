@@ -20,7 +20,7 @@ internal static class PipelineReadiness
             missing.Add("DXF 目录");
 
         return missing.Count == 0
-            ? "已准备：可以执行全部三步流程。"
+            ? "已准备：可以执行全部四步流程。"
             : $"尚需设置：{string.Join("、", missing)}。";
     }
 }

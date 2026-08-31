@@ -68,6 +68,10 @@ def test_explicit_values_and_cartesian_order() -> None:
     )
 
 
+def test_empty_parameter_list_creates_one_inherited_job() -> None:
+    assert pmt.expand_combinations(()) == ({},)
+
+
 @pytest.mark.parametrize(
     ("name", "values"),
     (("power", [1, 1]), ("scan_ahead", [1]), ("layerFeedUm", [0]), ("unknown", [1])),
@@ -171,3 +175,60 @@ def test_load_request_rejects_duplicate_json_keys() -> None:
         path.write_text('{"a": 1, "a": 2}', encoding="utf-8")
         with pytest.raises(ValueError, match="duplicate"):
             pmt.load_request(path)
+
+
+def test_cli_request_file_generates_package(capsys: pytest.CaptureFixture[str]) -> None:
+    with tempfile.TemporaryDirectory() as folder:
+        root = Path(folder)
+        base = write_base_machine(root)
+        request_path = root / "request.json"
+        request_path.write_text(json.dumps({
+            "base_machine_dir": str(base),
+            "output_dir": str(root),
+            "output_name": "LaserPMT_cli",
+            "workpiece_width": 30,
+            "workpiece_height": 20,
+            "columns": 2,
+            "numbering": {"prefix": "cli_", "start": 1, "increment": 1, "padding": 3},
+            "parameters": [{"name": "power", "values": [10, 20]}],
+            "owner_token": "cli-test-owner",
+        }), encoding="utf-8")
+
+        assert pmt.main([str(request_path)]) == 0
+        output = root / "LaserPMT_cli"
+        assert (output / "allmachine.json").is_file()
+        assert (output / "cli_001machine.json").is_file()
+        assert (output / "cli_002machine.json").is_file()
+        assert "LaserPMT 生成完成" in capsys.readouterr().out
+
+
+def test_base_loader_rejects_nonfirst_laser_index_and_layer_regression() -> None:
+    with tempfile.TemporaryDirectory() as folder:
+        root = Path(folder)
+        base = write_base_machine(root)
+        document = json.loads((base / "machine.json").read_text(encoding="utf-8"))
+        document["machine_cycle"][0]["galvo_0"][0] = 1
+        (base / "machine.json").write_text(json.dumps(document), encoding="utf-8")
+        with pytest.raises(ValueError, match="first laser group"):
+            pmt.load_base_machine(base)
+
+    with tempfile.TemporaryDirectory() as folder:
+        root = Path(folder)
+        base = write_base_machine(root)
+        document = json.loads((base / "machine.json").read_text(encoding="utf-8"))
+        # Add a third cycle returning from layer 1 to layer 0, with a matching patch.
+        document["machine_cycle"][-1]["galvo_0"][1] = (
+            document["machine_cycle"][-1]["galvo_0"][1]
+            .removeprefix("G91")
+            .removesuffix("G90")
+        )
+        document["machine_cycle"].append({
+            "galvo_0": [0, "G91G00X-2.000Y-2.000Z0.003F40G90", [2, 0]]
+        })
+        (base / "machine.json").write_text(json.dumps(document), encoding="utf-8")
+        np.save(
+            base / "patches" / "2_0.npy",
+            np.array([[0, 0, 0, 2, 0, 0]], dtype="<f4"),
+        )
+        with pytest.raises(ValueError, match="earlier layer"):
+            pmt.load_base_machine(base)

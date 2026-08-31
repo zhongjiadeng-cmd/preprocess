@@ -49,7 +49,7 @@ mkdir -p "$macos_path" "$resources_path/scripts" "$iconset_path"
 cp -R "$publish_path/." "$macos_path/"
 cp "$plist_source" "$staged_app/Contents/Info.plist"
 
-for script_name in grayscale_layers.py texture_to_hatch_dxf.py dxf_to_machine_file.py; do
+for script_name in grayscale_layers.py texture_to_hatch_dxf.py dxf_to_machine_file.py laser_pmt.py; do
   [[ -s "$macos_path/$script_name" ]] || {
     echo "发布输出缺少 Python 脚本：$script_name" >&2
     exit 1

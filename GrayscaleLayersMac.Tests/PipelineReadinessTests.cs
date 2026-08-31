@@ -26,7 +26,7 @@ public sealed class PipelineReadinessTests
     public void Describe_CompleteInputIsReady()
     {
         Assert.AreEqual(
-            "已准备：可以执行全部三步流程。",
+            "已准备：可以执行全部四步流程。",
             PipelineReadiness.Describe(false, "input.png", "layers", "dxf"));
     }
 

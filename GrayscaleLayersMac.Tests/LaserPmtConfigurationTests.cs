@@ -9,6 +9,15 @@ namespace GrayscaleLayersMac.Tests;
 public sealed class LaserPmtConfigurationTests
 {
     [TestMethod]
+    public void EmptyParameterListCreatesOneInheritedJob()
+    {
+        Assert.IsTrue(LaserPmtConfiguration.TryParseRows(
+            [], out var parsed, out var count, out var error), error);
+        Assert.AreEqual(0, parsed.Count);
+        Assert.AreEqual(1, count);
+    }
+
+    [TestMethod]
     public void ParsesExplicitValuesAndCalculatesCartesianProduct()
     {
         var rows = new[]

@@ -161,8 +161,8 @@ def parse_explicit_values(name: str, raw_values: object) -> ParameterValues:
             value: object = raw
         else:
             value = _require_plain_int(raw, f"{name} value")
-            if value < 0 and name != LAYER_FEED_KEY:
-                raise ValueError(f"{name} values must be non-negative")
+            if name != LAYER_FEED_KEY and not 0 <= value <= 2_147_483_647:
+                raise ValueError(f"{name} values must be between 0 and 2147483647")
             if name == LAYER_FEED_KEY and not 1 <= value <= machine.MAX_LAYER_STEP_UM:
                 raise ValueError(
                     f"{name} values must be between 1 and {machine.MAX_LAYER_STEP_UM}"
@@ -260,6 +260,8 @@ def load_base_machine(directory: Path) -> BaseMachine:
     references = [cycle["galvo_0"][2][0] for cycle in document["machine_cycle"]]
     if references != list(range(len(references))):
         raise ValueError("base patch references must be sequential")
+    if any(cycle["galvo_0"][0] != 0 for cycle in document["machine_cycle"]):
+        raise ValueError("base machine cycles must select the editable first laser group")
     patch_dir = directory / "patches"
     try:
         actual_names = {entry.name for entry in patch_dir.iterdir()}
@@ -274,7 +276,11 @@ def load_base_machine(directory: Path) -> BaseMachine:
     min_x = min_y = math.inf
     max_x = max_y = -math.inf
     for index, state in enumerate(states):
+        if unique_z and state[2] in unique_z and state[2] != unique_z[-1]:
+            raise ValueError("base machine patch order cannot return to an earlier layer")
         if state[2] not in unique_z:
+            if unique_z and state[2] >= unique_z[-1]:
+                raise ValueError("base machine layers must descend in patch order")
             unique_z.append(state[2])
         layer_index = unique_z.index(state[2])
         try:
@@ -578,6 +584,21 @@ def _validate_generated_package(
     reloaded_layout = _load_json(path / "pmt-layout.json")
     if reloaded_layout != layout_document:
         raise ValueError("pmt-layout.json does not match the generation plan")
+    try:
+        with (path / "parameter-map.csv").open("r", encoding="utf-8", newline="") as stream:
+            csv_rows = list(csv.DictReader(stream))
+    except (OSError, UnicodeError, csv.Error) as exc:
+        raise ValueError("parameter-map.csv is invalid") from exc
+    if len(csv_rows) != len(jobs):
+        raise ValueError("parameter-map.csv job count does not match the layout")
+    for csv_row, job in zip(csv_rows, jobs):
+        if (
+            csv_row.get("identifier") != job["identifier"]
+            or csv_row.get("json_file") != job["json_file"]
+            or csv_row.get("patch_indices")
+            != ";".join(str(index) for index in job["patch_indices"])
+        ):
+            raise ValueError("parameter-map.csv does not match the layout")
     all_document = _load_json(path / "allmachine.json")
     if type(all_document) is not dict or set(all_document) != {
         "laser_params", "galvo_offset", "machine_cycle"

@@ -2474,7 +2474,7 @@ class AvaloniaArtifactValidationSourceContractTests(unittest.TestCase):
             Path(__file__).resolve().parents[1] / "GrayscaleLayersMac" / "MainWindow.cs"
         ).read_text(encoding="utf-8")
         start = source.index("var pathComparer = StringComparer.OrdinalIgnoreCase")
-        end = source.index("步骤 3/3：开始生成机器加工文件", start)
+        end = source.index("步骤 3/4：开始生成机器加工文件", start)
         manifest = source[start:end]
         self.assertIn("expectedDxfFiles", manifest)
         self.assertIn("!IsRegularNonEmptyFile(path)", manifest)
@@ -2565,7 +2565,7 @@ class AvaloniaLayerOverlayWiringTests(unittest.TestCase):
 
     def test_pipeline_requests_and_registers_matching_preview_png(self) -> None:
         source = (ROOT / "GrayscaleLayersMac" / "MainWindow.cs").read_text()
-        loop = source[source.index("for (var index = 0;"):source.index("步骤 2/3 完成")]
+        loop = source[source.index("for (var index = 0;"):source.index("步骤 2/4 完成")]
         self.assertIn('Path.ChangeExtension(outputFile, ".preview.png")', loop)
         self.assertIn('hatchInfo.ArgumentList.Add("--preview-output")', loop)
         self.assertIn("ValidateGeneratedLayerArtifacts(", loop)

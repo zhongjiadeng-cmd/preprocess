@@ -6,6 +6,7 @@ internal enum PipelineProgressStage
     Grayscale,
     Dxf,
     Machine,
+    LaserPmt,
     Succeeded,
     Cancelled,
     Failed

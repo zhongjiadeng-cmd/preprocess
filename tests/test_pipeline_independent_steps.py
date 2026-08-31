@@ -23,6 +23,7 @@ class PipelineIndependentStepsTests(unittest.TestCase):
         self.assertIn('"第 1 步：灰度分层"', SOURCE)
         self.assertIn('"第 2 步：生成 DXF"', SOURCE)
         self.assertIn('"第 3 步：生成加工文件"', SOURCE)
+        self.assertIn('"第 4 步：生成 LaserPMT"', SOURCE)
         self.assertIn("RunPipelineAsync(PipelineRunMode.All)", SOURCE)
         self.assertIn('button.Resources["SplitButtonSecondaryButtonSize"] = 40d', THEME_SOURCE)
         self.assertIn("arrow.RenderTransform = new RotateTransform(180)", THEME_SOURCE)
@@ -47,6 +48,8 @@ class PipelineIndependentStepsTests(unittest.TestCase):
         self.assertIn("var pipelinePreviewPanel = MakeSharedPreviewPanel", SOURCE)
         self.assertIn('var textureTab = new ToggleButton { Content = "纹理" }', SOURCE)
         self.assertIn('var dxfTab = new ToggleButton { Content = "DXF" }', SOURCE)
+        self.assertIn('var pmtTab = new ToggleButton { Content = "PMT" }', SOURCE)
+        self.assertIn('MakeInspectorSection(\n                    "LaserPMT 参数矩阵"', SOURCE)
         self.assertNotIn("PipelineStepNavigator", SOURCE)
         self.assertNotIn("InspectorCategoryTabs", SOURCE)
         self.assertNotIn('Content = "选择纹理图"', SOURCE)
@@ -69,19 +72,23 @@ class PipelineIndependentStepsTests(unittest.TestCase):
         self.assertIn("PipelineRunMode.GrayscaleOnly", SOURCE)
         self.assertIn("PipelineRunMode.DxfOnly", SOURCE)
         self.assertIn("PipelineRunMode.MachineOnly", SOURCE)
+        self.assertIn("PipelineRunMode.LaserPmtOnly", SOURCE)
         self.assertIn("第 2 步需要先在分层 TIFF 输出目录中生成", SOURCE)
         self.assertIn("第 3 步需要先在 DXF 输出目录中生成", SOURCE)
+        self.assertIn("第 4 步需要先生成或导入有效的基础加工目录", SOURCE)
 
     def test_single_step_modes_return_before_following_steps(self):
-        self.assertIn("if (mode == PipelineRunMode.GrayscaleOnly)\n                    return;", SOURCE)
-        self.assertIn("if (mode == PipelineRunMode.DxfOnly)\n                return;", SOURCE)
+        self.assertIn("if (mode == PipelineRunMode.GrayscaleOnly)", SOURCE)
+        self.assertIn("if (mode == PipelineRunMode.DxfOnly)", SOURCE)
+        self.assertIn("if (mode == PipelineRunMode.MachineOnly)", SOURCE)
 
-    def test_all_pipeline_modes_use_the_progress_window_cancel_button(self):
-        self.assertIn("var progressWindow = new ProcessingProgressWindow", SOURCE)
-        self.assertIn("progressWindow.CancelRequested +=", SOURCE)
-        self.assertIn("progressWindow.UpdateMessage(\"正在执行第 1 步：灰度分层…\")", SOURCE)
-        self.assertIn("progressWindow.UpdateMessage(\"正在执行第 2 步：生成 DXF…\")", SOURCE)
-        self.assertIn("progressWindow.UpdateMessage(\"正在执行第 3 步：生成加工文件…\")", SOURCE)
+    def test_all_pipeline_modes_use_the_progress_overlay_cancel_button(self):
+        self.assertIn("private readonly ImportProgressOverlay _pipelineRunProgress", SOURCE)
+        self.assertIn("cancelRequested: () => _cancellation?.Cancel()", SOURCE)
+        self.assertIn('"正在执行第 1 步：灰度分层…"', SOURCE)
+        self.assertIn('"正在执行第 2 步：生成 DXF…"', SOURCE)
+        self.assertIn('"正在执行第 3 步：生成加工文件…"', SOURCE)
+        self.assertIn('"正在执行第 4 步：生成 LaserPMT…"', SOURCE)
 
 
 if __name__ == "__main__":
