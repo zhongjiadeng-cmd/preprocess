@@ -33,4 +33,20 @@ public sealed class SharedPreviewSelectionTests
         Assert.IsFalse(state.HasTexture);
         Assert.IsTrue(state.HasDxf);
     }
+
+    [TestMethod]
+    public void PmtIsAnIndependentThirdSelection()
+    {
+        var state = new SharedPreviewSelection();
+        state.CompleteTextureImport();
+        state.CompleteDxfLoad();
+        state.CompletePmtLoad();
+
+        Assert.AreEqual(SharedPreviewKind.Pmt, state.Current);
+        Assert.IsTrue(state.HasTexture && state.HasDxf && state.HasPmt);
+
+        state.Select(SharedPreviewKind.Texture);
+        Assert.AreEqual(SharedPreviewKind.Texture, state.Current);
+        Assert.IsTrue(state.HasPmt);
+    }
 }

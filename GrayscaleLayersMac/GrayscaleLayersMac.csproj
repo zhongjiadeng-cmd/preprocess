@@ -28,5 +28,9 @@
              Link="dxf_to_machine_file.py"
              CopyToOutputDirectory="PreserveNewest"
              CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="../laser_pmt.py"
+             Link="laser_pmt.py"
+             CopyToOutputDirectory="PreserveNewest"
+             CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>
