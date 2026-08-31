@@ -164,12 +164,8 @@ public sealed class MainWindow : Window
     private readonly NumericUpDown _pipelineDelayLaserOnBox = MakeNumberBox(0, 1, int.MaxValue, 0);
     private readonly LaserPmtPanel _pipelinePmtPanel = new();
     private readonly PmtPreviewControl _pipelinePmtPreview = new();
-    private readonly TextBlock _pipelinePmtDetails = new()
-    {
-        Foreground = UiTheme.TextSecondaryBrush,
-        FontSize = 12,
-        TextWrapping = TextWrapping.Wrap
-    };
+    private readonly PmtDetailsEditor _pipelinePmtDetails = new() { MinHeight = 260 };
+    private string? _pipelinePmtLayoutPath;
     private readonly DxfPreviewControl _pipelineDxfPreview = new(startInTopView: true);
     private readonly TextBlock _pipelineDxfPreviewStatus = new() { Foreground = UiTheme.TextSecondaryBrush };
     private readonly ObservableCollection<DxfLayerPreviewItem> _pipelineDxfFiles = [];
@@ -339,6 +335,7 @@ public sealed class MainWindow : Window
             await ImportMachineDirectoryAsync();
         _pipelinePmtPanel.ConfigurationChanged += (_, _) => UpdatePipelineReadiness();
         _pipelinePmtPreview.SelectionChanged += (_, _) => UpdatePmtSelectionDetails();
+        _pipelinePmtDetails.SaveRequested += OnPmtDetailsSaveRequested;
         _pipelineImportFlyout = new Flyout
         {
             Placement = PlacementMode.BottomEdgeAlignedLeft,
@@ -952,7 +949,7 @@ public sealed class MainWindow : Window
         DxfPreviewControl dxfPreview,
         TextBlock dxfStatus,
         PmtPreviewControl pmtPreview,
-        TextBlock pmtDetails,
+        PmtDetailsEditor pmtDetails,
         out SharedPreviewView view)
     {
         var textureContent = MakeTexturePreviewContent(texture);
@@ -1028,7 +1025,7 @@ public sealed class MainWindow : Window
 
     private static Control MakeTexturePreviewContent(GrayscaleLayerPreviewControl view) => view;
 
-    private static Control MakePmtPreviewContent(PmtPreviewControl preview, TextBlock details)
+    private static Control MakePmtPreviewContent(PmtPreviewControl preview, PmtDetailsEditor details)
     {
         var fit = new Button { Content = "适应窗口" };
         var zoomOut = new Button { Content = "−" };
@@ -1835,7 +1832,8 @@ public sealed class MainWindow : Window
         RenderTexturePreview(_pipelineTextureSurface, _pipelinePreviewController.State);
         _pipelinePmtPreview.Clear();
         _pipelineSharedPreview.Selection.ClearPmt();
-        _pipelinePmtDetails.Text = "尚未生成或加载 PMT 布局";
+        _pipelinePmtDetails.LoadJob(null);
+        _pipelinePmtLayoutPath = null;
         SelectSharedPreview(_pipelineSharedPreview, SharedPreviewKind.Texture);
 
         _lastMachineOutputPath = null;
@@ -1849,18 +1847,50 @@ public sealed class MainWindow : Window
     private void UpdatePmtSelectionDetails()
     {
         var job = _pipelinePmtPreview.SelectedJob;
-        if (job is null)
+        _pipelinePmtDetails.LoadJob(job);
+    }
+
+    private void OnPmtDetailsSaveRequested(object? sender, PmtDetailsSaveEventArgs args)
+    {
+        if (_pipelinePmtLayoutPath is null)
         {
-            _pipelinePmtDetails.Text = "点击线框可查看编号、位置与参数。";
+            AppendPipelineLog("[警告] 未生成 PMT 布局，无法保存覆盖参数。\n");
             return;
         }
-        var parameters = job.Parameters.Count == 0
-            ? "沿用基础加工参数"
-            : string.Join(" · ", job.Parameters.Select(pair => $"{pair.Key}={pair.Value}"));
-        _pipelinePmtDetails.Text =
-            $"{job.Identifier} · 第 {job.Row + 1} 行 / 第 {job.Column + 1} 列 · " +
-            $"左上 ({job.Left:0.###}, {job.Top:0.###}) mm · 层间进给 {job.LayerFeedUm} μm\n" +
-            $"{job.JsonFile} · {parameters}";
+        try
+        {
+            LaserPmtLayoutWriter.UpdateJob(
+                _pipelinePmtLayoutPath,
+                args.JobIdentifier,
+                args.Parameters);
+            var layout = LaserPmtLayout.Load(_pipelinePmtLayoutPath);
+            _pipelinePmtPreview.Load(layout);
+            var refreshed = layout.Jobs
+                .FirstOrDefault(job => string.Equals(
+                    job.Identifier, args.JobIdentifier, StringComparison.Ordinal));
+            if (refreshed is not null)
+                _pipelinePmtDetails.LoadJob(refreshed);
+            AppendPipelineLog(
+                $"已保存 {args.JobIdentifier} 的覆盖参数到 PMT 布局；" +
+                "再次执行第 4 步即可同步到对应单元机器文件。\n");
+        }
+        catch (Exception error) when (
+            error is IOException or InvalidDataException or UnauthorizedAccessException)
+        {
+            AppendPipelineLog($"[错误] 保存 {args.JobIdentifier} 覆盖参数失败：{error.Message}\n");
+            try
+            {
+                var layout = LaserPmtLayout.Load(_pipelinePmtLayoutPath);
+                var reverted = layout.Jobs
+                    .FirstOrDefault(job => string.Equals(
+                        job.Identifier, args.JobIdentifier, StringComparison.Ordinal));
+                _pipelinePmtDetails.LoadJob(reverted);
+            }
+            catch (Exception rollbackError)
+            {
+                AppendPipelineLog($"[错误] 回滚覆盖参数预览失败：{rollbackError.Message}\n");
+            }
+        }
     }
 
     private async Task PickPipelineFolderAsync(TextBox target, string title)
@@ -2620,6 +2650,7 @@ public sealed class MainWindow : Window
                     }
                 }
                 var layoutPath = Path.Combine(pmtOutputPath, "pmt-layout.json");
+                _pipelinePmtLayoutPath = layoutPath;
                 var layout = LaserPmtLayout.Load(layoutPath);
                 if (layout.Jobs.Count != pmtJobCount)
                     throw new InvalidDataException("PMT 布局任务数量与请求不一致。");
