@@ -454,11 +454,11 @@ public sealed class MainWindow : Window
                     "机器加工文件",
                     new Grid
                     {
-                        ColumnDefinitions = new ColumnDefinitions("*,*"),
+                        ColumnDefinitions = new ColumnDefinitions("Auto,*"),
                         ColumnSpacing = 16,
                         Children =
                         {
-                            MakeLabeledControl("每层下降深度（μm）", _pipelineLayerStepBox, 0),
+                            MakeLabeledControl("层间进给（μm）", _pipelineLayerStepBox, 0),
                             MakeLabeledControl("加工文件名", _pipelineMachineNameBox, 1)
                         }
                     },
@@ -1771,7 +1771,7 @@ public sealed class MainWindow : Window
              layerStep.Value != decimal.Truncate(layerStep.Value)))
         {
             await ShowMessageAsync(
-                "每层下降深度必须是 1–100000 μm 的整数，才能与 0.001 mm 的机器坐标精度一致。");
+                "层间进给必须是 1–100000 μm 的整数，才能与 0.001 mm 的机器坐标精度一致。");
             return;
         }
 
