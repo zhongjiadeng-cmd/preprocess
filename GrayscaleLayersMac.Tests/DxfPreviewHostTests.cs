@@ -209,7 +209,10 @@ public sealed class DxfPreviewHostTests
     {
         using var preview = new DxfPreviewControl();
         var host = new DxfPreviewHost(preview, new TextBlock());
-        var buttons = host.GetLogicalDescendants().OfType<Button>().ToArray();
+        var buttons = host.ViewportTools.GetLogicalDescendants()
+            .Concat(host.ContextTools.GetLogicalDescendants())
+            .OfType<Button>()
+            .ToArray();
         var names = buttons.Select(AutomationProperties.GetName).Where(name => name is not null).ToArray();
 
         CollectionAssert.IsSubsetOf(
@@ -218,6 +221,33 @@ public sealed class DxfPreviewHostTests
         Assert.IsTrue(buttons
             .Where(button => names.Contains(AutomationProperties.GetName(button)))
             .All(button => UiIcons.IsFluentIconControl(button.Content)));
+    }
+
+    [TestMethod]
+    public void ViewportAndContextToolsAreSeparatedByPurpose()
+    {
+        using var preview = new DxfPreviewControl();
+        var host = new DxfPreviewHost(preview, new TextBlock());
+
+        var viewportNames = host.ViewportTools.GetLogicalDescendants()
+            .OfType<Button>()
+            .Select(AutomationProperties.GetName)
+            .Where(name => name is not null)
+            .ToArray();
+        var contextNames = host.ContextTools.GetLogicalDescendants()
+            .OfType<Button>()
+            .Select(AutomationProperties.GetName)
+            .Where(name => name is not null)
+            .ToArray();
+
+        CollectionAssert.IsSubsetOf(
+            new[] { "缩小", "放大", "适应窗口", "实际尺寸" },
+            viewportNames!);
+        CollectionAssert.IsSubsetOf(
+            new[] { "上一层", "下一层" },
+            contextNames!);
+        Assert.DoesNotContain("上一层", viewportNames!);
+        Assert.DoesNotContain("缩小", contextNames!);
     }
 
     private static DxfLayerPreviewItem[] MakeItems(int count, string tag = "layer") =>

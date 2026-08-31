@@ -69,7 +69,8 @@ public sealed class DxfPreviewHost : Grid
         DxfPreviewControl preview,
         TextBlock status,
         IEnumerable<Control>? extraTools = null,
-        Control? extraRow = null)
+        Control? extraRow = null,
+        Control? footerHint = null)
     {
         _preview = preview;
         Status = status;
@@ -138,24 +139,39 @@ public sealed class DxfPreviewHost : Grid
             _keepViewBox,
             "开启后切换 DXF 层保留当前缩放、平移与视角，便于逐层对照；关闭则回到适应窗口。");
 
-        var toolbar = new WrapPanel
+        var viewportTools = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 6,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        viewportTools.Children.Add(minus);
+        viewportTools.Children.Add(_zoomLabel);
+        viewportTools.Children.Add(plus);
+        viewportTools.Children.Add(fit);
+        viewportTools.Children.Add(actual);
+        ViewportTools = viewportTools;
+
+        var navigationTools = new WrapPanel
         {
             Orientation = Orientation.Horizontal,
             ItemSpacing = 8,
-            LineSpacing = 8
+            LineSpacing = 8,
+            VerticalAlignment = VerticalAlignment.Center
         };
-        toolbar.Children.Add(_prevButton);
-        toolbar.Children.Add(_nextButton);
-        toolbar.Children.Add(minus);
-        toolbar.Children.Add(_zoomLabel);
-        toolbar.Children.Add(plus);
-        toolbar.Children.Add(fit);
-        toolbar.Children.Add(actual);
+        navigationTools.Children.Add(_prevButton);
+        navigationTools.Children.Add(_nextButton);
         if (extraTools is not null)
             foreach (var tool in extraTools)
-                toolbar.Children.Add(tool);
-        toolbar.Children.Add(_wheelModeBox);
-        toolbar.Children.Add(_keepViewBox);
+                navigationTools.Children.Add(tool);
+        navigationTools.Children.Add(_wheelModeBox);
+        navigationTools.Children.Add(_keepViewBox);
+
+        var contextTools = new StackPanel { Spacing = 6 };
+        contextTools.Children.Add(navigationTools);
+        if (extraRow is not null)
+            contextTools.Children.Add(extraRow);
+        ContextTools = contextTools;
 
         status.FontFamily = UiTheme.UiFont;
         status.FontSize = 11;
@@ -165,15 +181,14 @@ public sealed class DxfPreviewHost : Grid
 
         var main = new Grid
         {
-            RowDefinitions = new RowDefinitions("Auto,Auto,*,Auto"),
+            RowDefinitions = new RowDefinitions("*,Auto,Auto"),
             RowSpacing = 8,
             Children =
             {
-                AtRow(toolbar, 0),
-                AtRow(extraRow ?? new Grid(), 1),
                 // 与纹理预览同一档最小高度，两个标签页切来切去时画布不会跳高。
-                AtRow(CanvasCard(_preview), 2),
-                AtRow(status, 3)
+                AtRow(CanvasCard(_preview), 0),
+                AtRow(status, 1),
+                AtRow(footerHint ?? new Grid(), 2)
             }
         };
 
@@ -194,6 +209,12 @@ public sealed class DxfPreviewHost : Grid
 
     /// <summary>画布下方的状态行。</summary>
     public TextBlock Status { get; }
+
+    /// <summary>由共享预览头部承载的高频缩放工具。</summary>
+    public Control ViewportTools { get; }
+
+    /// <summary>由共享预览上下文行承载的选层、视角与叠加工具。</summary>
+    public Control ContextTools { get; }
 
     /// <summary>「切层保持视图」勾选框的当前值；调用方据此决定换层时是否重置视图。</summary>
     public bool KeepView => _keepViewBox.IsChecked == true;

@@ -44,6 +44,24 @@ public sealed class UiStructureContractTests
     }
 
     [TestMethod]
+    public void SharedPreviewOwnsUnifiedPrimaryAndContextToolRows()
+    {
+        var previewStart = MainWindowSource.IndexOf(
+            "private Control MakeSharedPreviewPanel(",
+            StringComparison.Ordinal);
+        var previewEnd = MainWindowSource.IndexOf(
+            "private static PreviewPane MakeTexturePreviewContent",
+            previewStart,
+            StringComparison.Ordinal);
+        var preview = MainWindowSource[previewStart..previewEnd];
+
+        StringAssert.Contains(preview, "ViewportTools");
+        StringAssert.Contains(preview, "ContextTools");
+        StringAssert.Contains(preview, "contextToolsRow");
+        StringAssert.Contains(preview, "ColumnDefinitions = new ColumnDefinitions(\"Auto,*,Auto\")");
+    }
+
+    [TestMethod]
     public void HeaderOwnsTheCompactToolGroupWithoutChangingItsActions()
     {
         var inspectorStart = MainWindowSource.IndexOf("var pipelineInspector = new StackPanel", StringComparison.Ordinal);

@@ -45,13 +45,12 @@ public sealed class PmtDetailsEditorTests
             details.LoadJob(BuildJob());
             Assert.IsTrue(GetButton(details, "保存覆盖").IsEnabled);
             var blocks = GetTextBlocks(details);
-            var header = blocks[0].Text ?? string.Empty;
-            var file = blocks[1].Text ?? string.Empty;
-            StringAssert.Contains(header, "pmt_0001");
-            StringAssert.Contains(header, "第 1 行 / 第 1 列");
-            StringAssert.Contains(header, "左上 (2.5, 27.5) mm");
-            StringAssert.Contains(header, "层间进给 3 μm");
-            Assert.AreEqual("pmt_0001machine.json", file);
+            Assert.IsTrue(blocks.Any(block => block.Text == "pmt_0001"));
+            Assert.IsTrue(blocks.Any(block =>
+                (block.Text ?? string.Empty).Contains("第 1 行 / 第 1 列") &&
+                (block.Text ?? string.Empty).Contains("左上 (2.5, 27.5) mm") &&
+                (block.Text ?? string.Empty).Contains("层间进给 3 μm")));
+            Assert.IsTrue(blocks.Any(block => block.Text == "pmt_0001machine.json"));
         }, CancellationToken.None);
     }
 
@@ -64,8 +63,8 @@ public sealed class PmtDetailsEditorTests
             details.LoadJob(BuildJob());
             details.LoadJob(null);
             var blocks = GetTextBlocks(details);
-            var header = blocks[0].Text ?? string.Empty;
-            StringAssert.Contains(header, "点击线框");
+            Assert.IsTrue(blocks.Any(block =>
+                (block.Text ?? string.Empty).Contains("点击线框")));
         }, CancellationToken.None);
     }
 
@@ -81,6 +80,43 @@ public sealed class PmtDetailsEditorTests
             var expected = LaserPmtConfiguration.Parameters.Count;
             Assert.AreEqual(expected, numbers + checkBoxes,
                 "PmtDetailsEditor 应列出 LaserPmtConfiguration.Parameters 中的每一项参数编辑器。");
+        }, CancellationToken.None);
+    }
+
+    [TestMethod]
+    public void UsesCompactThreeSectionInspectorWithIconActions()
+    {
+        _session!.Dispatch(() =>
+        {
+            var details = new PmtDetailsEditor();
+
+            Assert.AreEqual(240d, details.Width);
+            var root = Assert.IsInstanceOfType<Grid>(details.Content);
+            Assert.AreEqual(3, root.RowDefinitions.Count);
+            Assert.IsInstanceOfType<ScrollViewer>(root.Children.Single(control => Grid.GetRow(control) == 1));
+
+            var save = GetButton(details, "保存覆盖");
+            var reset = GetButton(details, "还原基础");
+            Assert.IsTrue(UiIcons.IsFluentIconControl(save.Content));
+            Assert.IsTrue(UiIcons.IsFluentIconControl(reset.Content));
+        }, CancellationToken.None);
+    }
+
+    [TestMethod]
+    public void ParameterLabelsHideMachineFieldAliasesButKeepUnits()
+    {
+        _session!.Dispatch(() =>
+        {
+            var details = new PmtDetailsEditor();
+            var labels = GetTextBlocks(details)
+                .Select(block => block.Text ?? string.Empty)
+                .ToArray();
+
+            CollectionAssert.Contains(labels, "功率");
+            CollectionAssert.Contains(labels, "扫描速度");
+            CollectionAssert.Contains(labels, "层间进给（μm）");
+            Assert.IsFalse(labels.Any(label => label.Contains("power", System.StringComparison.Ordinal)));
+            Assert.IsFalse(labels.Any(label => label.Contains("scanSpeed", System.StringComparison.Ordinal)));
         }, CancellationToken.None);
     }
 

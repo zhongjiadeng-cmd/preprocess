@@ -75,13 +75,20 @@ public sealed class MainWindow : Window
         TextureImageInspection.GetMaximumBase64CharacterCount(
             TextureImageInspection.DefaultMaximumPreviewBytes) + InspectionJsonOverheadCharacters);
 
+    private sealed record PreviewPane(
+        Control Content,
+        Control ViewportTools,
+        Control ContextTools,
+        bool HasContextTools = true);
+
     private sealed record SharedPreviewView(
         ToggleButton TextureTab,
         ToggleButton DxfTab,
         ToggleButton PmtTab,
-        Control TextureContent,
-        Control DxfContent,
-        Control PmtContent,
+        PreviewPane TexturePane,
+        PreviewPane DxfPane,
+        PreviewPane PmtPane,
+        Grid ContextToolsRow,
         SharedPreviewSelection Selection,
         Action UpdateDxfOverlayControls);
 
@@ -952,14 +959,15 @@ public sealed class MainWindow : Window
         PmtDetailsEditor pmtDetails,
         out SharedPreviewView view)
     {
-        var textureContent = MakeTexturePreviewContent(texture);
+        var texturePane = MakeTexturePreviewContent(texture);
         var dxfContent = MakePipelineDxfPreviewContent(
             dxfPreview,
             dxfStatus,
             out var dxfHost,
             out var updateDxfOverlayControls);
         _pipelineDxfHost = dxfHost;
-        var pmtContent = MakePmtPreviewContent(pmtPreview, pmtDetails);
+        var dxfPane = new PreviewPane(dxfContent, dxfHost.ViewportTools, dxfHost.ContextTools);
+        var pmtPane = MakePmtPreviewContent(pmtPreview, pmtDetails);
         var textureTab = new ToggleButton { Content = "纹理" };
         var dxfTab = new ToggleButton { Content = "DXF" };
         var pmtTab = new ToggleButton { Content = "PMT" };
@@ -969,21 +977,6 @@ public sealed class MainWindow : Window
         AutomationProperties.SetName(textureTab, "显示纹理预览");
         AutomationProperties.SetName(dxfTab, "显示 DXF 预览");
         AutomationProperties.SetName(pmtTab, "显示 PMT 工件布局");
-        var sharedView = new SharedPreviewView(
-            textureTab,
-            dxfTab,
-            pmtTab,
-            textureContent,
-            dxfContent,
-            pmtContent,
-            new SharedPreviewSelection(),
-            updateDxfOverlayControls);
-        textureTab.Click += (_, _) => SelectSharedPreview(sharedView, SharedPreviewKind.Texture);
-        dxfTab.Click += (_, _) => SelectSharedPreview(sharedView, SharedPreviewKind.Dxf);
-        pmtTab.Click += (_, _) => SelectSharedPreview(sharedView, SharedPreviewKind.Pmt);
-        SelectSharedPreview(sharedView, SharedPreviewKind.Texture);
-        view = sharedView;
-
         var previewSegments = new Border
         {
             Padding = new Thickness(3),
@@ -999,49 +992,108 @@ public sealed class MainWindow : Window
             }
         };
 
+        var viewportTools = new Grid
+        {
+            HorizontalAlignment = HorizontalAlignment.Right,
+            VerticalAlignment = VerticalAlignment.Center,
+            Children =
+            {
+                texturePane.ViewportTools,
+                dxfPane.ViewportTools,
+                pmtPane.ViewportTools
+            }
+        };
+        var contextToolsRow = new Grid
+        {
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            Children =
+            {
+                texturePane.ContextTools,
+                dxfPane.ContextTools,
+                pmtPane.ContextTools
+            }
+        };
+        var sharedView = new SharedPreviewView(
+            textureTab,
+            dxfTab,
+            pmtTab,
+            texturePane,
+            dxfPane,
+            pmtPane,
+            contextToolsRow,
+            new SharedPreviewSelection(),
+            updateDxfOverlayControls);
+        textureTab.Click += (_, _) => SelectSharedPreview(sharedView, SharedPreviewKind.Texture);
+        dxfTab.Click += (_, _) => SelectSharedPreview(sharedView, SharedPreviewKind.Dxf);
+        pmtTab.Click += (_, _) => SelectSharedPreview(sharedView, SharedPreviewKind.Pmt);
+        SelectSharedPreview(sharedView, SharedPreviewKind.Texture);
+        view = sharedView;
+
         return new Grid
         {
             Margin = new Thickness(0, 12, 12, 12),
-            RowDefinitions = new RowDefinitions("Auto,*"),
+            RowDefinitions = new RowDefinitions("Auto,Auto,*"),
             RowSpacing = 10,
             Children =
             {
                 AtRow(new Grid
                 {
-                    ColumnDefinitions = new ColumnDefinitions("*,Auto"),
-                    ColumnSpacing = 8,
+                    ColumnDefinitions = new ColumnDefinitions("Auto,*,Auto"),
+                    ColumnSpacing = 12,
                     Children =
                     {
-                        Place(previewSegments, 1)
+                        Place(previewSegments, 0),
+                        Place(viewportTools, 2)
                     }
                 }, 0),
+                AtRow(contextToolsRow, 1),
                 AtRow(new Grid
                 {
-                    Children = { textureContent, dxfContent, pmtContent }
-                }, 1)
+                    Children = { texturePane.Content, dxfPane.Content, pmtPane.Content }
+                }, 2)
             }
         };
     }
 
-    private static Control MakeTexturePreviewContent(GrayscaleLayerPreviewControl view) => view;
+    private static PreviewPane MakeTexturePreviewContent(GrayscaleLayerPreviewControl view) =>
+        new(view, view.ViewportTools, view.ContextTools);
 
-    private static Control MakePmtPreviewContent(PmtPreviewControl preview, PmtDetailsEditor details)
+    private static PreviewPane MakePmtPreviewContent(PmtPreviewControl preview, PmtDetailsEditor details)
     {
-        var fit = new Button { Content = "适应窗口" };
-        var zoomOut = new Button { Content = "−" };
-        var zoomIn = new Button { Content = "+" };
-        UiTheme.ApplySecondaryStyle(fit);
-        UiTheme.ApplySecondaryStyle(zoomOut);
-        UiTheme.ApplySecondaryStyle(zoomIn);
+        var fit = new Button { Content = UiIcons.Create(UiIcon.Fit) };
+        var zoomOut = new Button { Content = UiIcons.Create(UiIcon.ZoomOut) };
+        var zoomIn = new Button { Content = UiIcons.Create(UiIcon.ZoomIn) };
+        UiTheme.ApplyIconStyle(fit, "适应窗口");
+        UiTheme.ApplyIconStyle(zoomOut, "缩小");
+        UiTheme.ApplyIconStyle(zoomIn, "放大");
+        ToolTip.SetTip(fit, "适应窗口");
+        ToolTip.SetTip(zoomOut, "缩小");
+        ToolTip.SetTip(zoomIn, "放大");
         fit.Click += (_, _) => preview.FitToView();
         zoomOut.Click += (_, _) => preview.ZoomOut();
         zoomIn.Click += (_, _) => preview.ZoomIn();
 
+        var zoomLabel = new TextBlock
+        {
+            FontFamily = UiTheme.MonoFont,
+            FontSize = 11,
+            MinWidth = 52,
+            VerticalAlignment = VerticalAlignment.Center,
+            TextAlignment = TextAlignment.Center,
+            Foreground = UiTheme.TextPrimaryBrush
+        };
+        void UpdateZoomLabel() => zoomLabel.Text = preview.Layout is null
+            ? "—"
+            : $"{preview.Zoom * 100:0.#}%";
+        preview.ViewChanged += (_, _) => UpdateZoomLabel();
+        UpdateZoomLabel();
+
         var toolbar = new StackPanel
         {
             Orientation = Orientation.Horizontal,
-            Spacing = 8,
-            Children = { fit, zoomOut, zoomIn }
+            Spacing = 6,
+            VerticalAlignment = VerticalAlignment.Center,
+            Children = { zoomOut, zoomLabel, zoomIn, fit }
         };
 
         var detailsPanel = new Border
@@ -1054,24 +1106,17 @@ public sealed class MainWindow : Window
             Child = details
         };
 
+        var previewCard = UiTheme.CanvasCard(preview);
+        previewCard.MinHeight = 320;
         var body = new Grid
         {
             ColumnDefinitions = new ColumnDefinitions("*,Auto"),
-            ColumnSpacing = 8,
-            Children = { preview, detailsPanel }
+            ColumnSpacing = 12,
+            Children = { previewCard, detailsPanel }
         };
         Grid.SetColumn(detailsPanel, 1);
 
-        return new Grid
-        {
-            RowDefinitions = new RowDefinitions("Auto,*"),
-            RowSpacing = 8,
-            Children =
-            {
-                AtRow(toolbar, 0),
-                AtRow(body, 1)
-            }
-        };
+        return new PreviewPane(body, toolbar, new Grid(), HasContextTools: false);
     }
 
     /// <summary>
@@ -1232,39 +1277,47 @@ public sealed class MainWindow : Window
             }
         };
 
-        // 操作提示压在叠加控制行下面，省下单独一行：工具栏已经够宽了。
-        var extraRow = new StackPanel
+        var interactionHint = new TextBlock
         {
-            Spacing = 6,
-            Children =
-            {
-                overlayRow,
-                new TextBlock
-                {
-                    Text = "左键拖拽环视 · 滚轮缩放 · 中键平移 · Shift + 中键环视 · 双击中键适应窗口",
-                    Foreground = UiTheme.TextFaintBrush,
-                    FontSize = 11
-                }
-            }
+            Text = "左键拖拽环视 · 滚轮缩放 · 中键平移 · Shift + 中键环视 · 双击中键适应窗口",
+            Foreground = UiTheme.TextFaintBrush,
+            FontSize = 11,
+            TextWrapping = TextWrapping.Wrap
         };
 
         host = new DxfPreviewHost(
             preview,
             status,
             extraTools: [topButton, isometricButton],
-            extraRow: extraRow);
+            extraRow: overlayRow,
+            footerHint: interactionHint);
         return host;
     }
 
     private static void SelectSharedPreview(SharedPreviewView view, SharedPreviewKind kind)
     {
         view.Selection.Select(kind);
-        view.TextureContent.IsVisible = kind == SharedPreviewKind.Texture;
-        view.DxfContent.IsVisible = kind == SharedPreviewKind.Dxf;
-        view.PmtContent.IsVisible = kind == SharedPreviewKind.Pmt;
+        SetPaneVisibility(view.TexturePane, kind == SharedPreviewKind.Texture);
+        SetPaneVisibility(view.DxfPane, kind == SharedPreviewKind.Dxf);
+        SetPaneVisibility(view.PmtPane, kind == SharedPreviewKind.Pmt);
+        var activePane = kind switch
+        {
+            SharedPreviewKind.Texture => view.TexturePane,
+            SharedPreviewKind.Dxf => view.DxfPane,
+            SharedPreviewKind.Pmt => view.PmtPane,
+            _ => view.TexturePane
+        };
+        view.ContextToolsRow.IsVisible = activePane.HasContextTools;
         view.TextureTab.IsChecked = kind == SharedPreviewKind.Texture;
         view.DxfTab.IsChecked = kind == SharedPreviewKind.Dxf;
         view.PmtTab.IsChecked = kind == SharedPreviewKind.Pmt;
+    }
+
+    private static void SetPaneVisibility(PreviewPane pane, bool isVisible)
+    {
+        pane.Content.IsVisible = isVisible;
+        pane.ViewportTools.IsVisible = isVisible;
+        pane.ContextTools.IsVisible = isVisible && pane.HasContextTools;
     }
 
     /// <summary>

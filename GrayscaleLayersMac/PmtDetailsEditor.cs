@@ -10,10 +10,8 @@ namespace GrayscaleLayersMac;
 
 /// <summary>
 /// 选中 PMT 单元时右侧竖栏里的可编辑参数列表。
-/// 整体置于预览区右侧的紧凑竖栏中：上方是单元标识+文件名，
-/// 中间是 <see cref="LaserPmtConfiguration.Parameters"/> 全部 16 项（一行一项，
-/// 整数用无加减按钮的 <see cref="TextBox"/>、布尔用三态 <see cref="CheckBox"/>），
-/// 最底下是"保存"与"还原"图标按钮 + 状态行。
+/// 整体置于预览区右侧检查器中：上方是单元摘要，中间是独立滚动的参数区，
+/// 最底下是固定可见的状态与保存 / 还原操作。
 /// </summary>
 public sealed class PmtDetailsEditor : UserControl
 {
@@ -25,9 +23,15 @@ public sealed class PmtDetailsEditor : UserControl
 
     private readonly TextBlock _identifierText = new()
     {
-        FontSize = 11.5,
+        FontSize = 14,
         FontWeight = FontWeight.SemiBold,
         Foreground = UiTheme.TextPrimaryBrush,
+        TextWrapping = TextWrapping.Wrap
+    };
+    private readonly TextBlock _summaryText = new()
+    {
+        FontSize = 10.5,
+        Foreground = UiTheme.TextSecondaryBrush,
         TextWrapping = TextWrapping.Wrap
     };
     private readonly TextBlock _jsonFileText = new()
@@ -37,7 +41,8 @@ public sealed class PmtDetailsEditor : UserControl
         FontFamily = UiTheme.MonoFont,
         TextWrapping = TextWrapping.Wrap
     };
-    private readonly StackPanel _parameterRows = new() { Spacing = 2 };
+    private readonly StackPanel _numericRows = new() { Spacing = 4 };
+    private readonly StackPanel _booleanRows = new() { Spacing = 3 };
     private readonly TextBlock _statusText = new()
     {
         FontSize = 10.5,
@@ -55,9 +60,11 @@ public sealed class PmtDetailsEditor : UserControl
 
     public PmtDetailsEditor()
     {
-        Width = 220;
+        Width = 240;
         UiTheme.ApplyIconStyle(_saveButton, "保存覆盖");
         UiTheme.ApplyIconStyle(_resetButton, "还原基础");
+        ToolTip.SetTip(_saveButton, "保存覆盖");
+        ToolTip.SetTip(_resetButton, "还原基础");
         _saveButton.Click += (_, _) => RaiseSave();
         _resetButton.Click += (_, _) =>
         {
@@ -72,26 +79,43 @@ public sealed class PmtDetailsEditor : UserControl
         };
 
         foreach (var definition in LaserPmtConfiguration.Parameters)
-            _rows.Add(new ParameterRow(definition, _parameterRows));
+            _rows.Add(new ParameterRow(definition, _numericRows, _booleanRows));
 
         var header = new StackPanel
         {
-            Spacing = 2,
-            Margin = new Thickness(0, 0, 0, 4),
-            Children = { _identifierText, _jsonFileText }
+            Spacing = 3,
+            Margin = new Thickness(0, 0, 0, 8),
+            Children = { _identifierText, _summaryText, _jsonFileText }
+        };
+        var parameterContent = new StackPanel
+        {
+            Spacing = 8,
+            Children =
+            {
+                MakeSectionLabel("参数覆盖"),
+                _numericRows,
+                MakeSectionLabel("布尔选项"),
+                _booleanRows
+            }
         };
         var scroll = new ScrollViewer
         {
-            Content = _parameterRows,
+            Content = parameterContent,
             HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
             VerticalScrollBarVisibility = ScrollBarVisibility.Auto
         };
-        var actions = new StackPanel
+        var actionButtons = new StackPanel
         {
             Orientation = Orientation.Horizontal,
             Spacing = 6,
-            Margin = new Thickness(0, 4, 0, 0),
-            Children = { _saveButton, _resetButton, _statusText }
+            HorizontalAlignment = HorizontalAlignment.Right,
+            Children = { _saveButton, _resetButton }
+        };
+        var actions = new StackPanel
+        {
+            Spacing = 6,
+            Margin = new Thickness(0, 8, 0, 0),
+            Children = { _statusText, actionButtons }
         };
 
         var root = new Grid
@@ -110,6 +134,14 @@ public sealed class PmtDetailsEditor : UserControl
         ShowEmptyState();
     }
 
+    private static TextBlock MakeSectionLabel(string text) => new()
+    {
+        Text = text,
+        FontSize = 10.5,
+        FontWeight = FontWeight.SemiBold,
+        Foreground = UiTheme.TextFaintBrush
+    };
+
     /// <summary>
     /// 切换到指定 job 的编辑态；传入 <c>null</c> 表示回到提示态。
     /// 切换时编辑器值同步为新 job 的覆盖参数，原 job 的修改会被丢弃。
@@ -124,9 +156,11 @@ public sealed class PmtDetailsEditor : UserControl
         }
         _jobIdentifier = job.Identifier;
         _baselineParameters = new Dictionary<string, string>(job.Parameters, StringComparer.Ordinal);
-        _identifierText.Text =
-            $"{job.Identifier} · 第 {job.Row + 1} 行 / 第 {job.Column + 1} 列 · " +
-            $"左上 ({job.Left:0.###}, {job.Top:0.###}) mm · 层间进给 {job.LayerFeedUm} μm";
+        _identifierText.Text = job.Identifier;
+        _summaryText.Text =
+            $"第 {job.Row + 1} 行 / 第 {job.Column + 1} 列 · " +
+            $"左上 ({job.Left:0.###}, {job.Top:0.###}) mm\n" +
+            $"层间进给 {job.LayerFeedUm} μm";
         _jsonFileText.Text = job.JsonFile;
         foreach (var row in _rows)
             row.LoadFrom(job.Parameters);
@@ -188,7 +222,8 @@ public sealed class PmtDetailsEditor : UserControl
         _jobIdentifier = null;
         _job = null;
         _baselineParameters = new Dictionary<string, string>(StringComparer.Ordinal);
-        _identifierText.Text = "点击线框可查看编号、位置与参数。";
+        _identifierText.Text = "点击线框选择单元";
+        _summaryText.Text = "选择后可查看位置并覆盖该单元的加工参数。";
         _jsonFileText.Text = string.Empty;
         foreach (var row in _rows)
             row.LoadFrom(new Dictionary<string, string>(StringComparer.Ordinal));
@@ -216,30 +251,34 @@ public sealed class PmtDetailsEditor : UserControl
 
         public LaserPmtParameterDefinition Definition => _definition;
 
-        public ParameterRow(LaserPmtParameterDefinition definition, StackPanel container)
+        public ParameterRow(
+            LaserPmtParameterDefinition definition,
+            StackPanel numericContainer,
+            StackPanel booleanContainer)
         {
             _definition = definition;
             if (definition.IsBoolean)
             {
                 _checkBox = new CheckBox
                 {
-                    Content = definition.DisplayName,
+                    Content = CompactDisplayName(definition),
                     IsThreeState = true,
                     FontSize = 11,
                     Foreground = UiTheme.TextPrimaryBrush
                 };
                 _checkBox.IsCheckedChanged += (_, _) => UpdateErrorIndicator();
                 _editor = _checkBox;
-                container.Children.Add(_checkBox);
+                booleanContainer.Children.Add(_checkBox);
                 return;
             }
 
             var label = new TextBlock
             {
-                Text = definition.DisplayName,
-                FontSize = 10,
+                Text = CompactDisplayName(definition),
+                FontSize = 10.5,
                 Foreground = UiTheme.TextSecondaryBrush,
-                Margin = new Thickness(0, 0, 0, 1)
+                TextWrapping = TextWrapping.Wrap,
+                VerticalAlignment = VerticalAlignment.Center
             };
             _textBox = new TextBox
             {
@@ -250,16 +289,32 @@ public sealed class PmtDetailsEditor : UserControl
             UiTheme.ApplyInputStyle(_textBox);
             // ApplyInputStyle 会设定默认内边距/最小高度，这里收紧以匹配紧凑竖栏。
             _textBox.MinHeight = 0;
-            _textBox.Height = 24;
-            _textBox.Padding = new Thickness(5, 2);
+            _textBox.Height = 28;
+            _textBox.Padding = new Thickness(6, 3);
             _textBox.TextChanged += (_, _) => UpdateErrorIndicator();
             _editor = _textBox;
-            container.Children.Add(new StackPanel
+            var row = new Grid
             {
-                Spacing = 1,
-                Margin = new Thickness(0, 0, 0, 3),
-                Children = { label, _textBox }
-            });
+                ColumnDefinitions = new ColumnDefinitions("*,96"),
+                ColumnSpacing = 8,
+                MinHeight = 28,
+                Children = { label, Place(_textBox, 1) }
+            };
+            numericContainer.Children.Add(row);
+        }
+
+        private static T Place<T>(T control, int column) where T : Control
+        {
+            Grid.SetColumn(control, column);
+            return control;
+        }
+
+        private static string CompactDisplayName(LaserPmtParameterDefinition definition)
+        {
+            var alias = $"（{definition.Name}）";
+            return definition.DisplayName.EndsWith(alias, StringComparison.Ordinal)
+                ? definition.DisplayName[..^alias.Length]
+                : definition.DisplayName;
         }
 
         public void LoadFrom(IReadOnlyDictionary<string, string> parameters)

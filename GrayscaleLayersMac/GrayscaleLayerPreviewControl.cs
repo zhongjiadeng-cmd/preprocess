@@ -208,14 +208,34 @@ public sealed class GrayscaleLayerPreviewControl : Grid, IDisposable
         var fit = MakeButton(UiIcon.Fit, "适应窗口", () => _canvas.Fit());
         var actual = MakeButton(UiIcon.ActualSize, "实际尺寸", () => _canvas.ActualSize());
 
-        var toolbar = new WrapPanel
+        var viewportTools = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 6,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        viewportTools.Children.Add(minus);
+        viewportTools.Children.Add(_zoomLabel);
+        viewportTools.Children.Add(plus);
+        viewportTools.Children.Add(fit);
+        viewportTools.Children.Add(actual);
+        ViewportTools = viewportTools;
+
+        var contextTools = new WrapPanel
         {
             Orientation = Orientation.Horizontal,
             ItemSpacing = 8,
-            LineSpacing = 8
+            LineSpacing = 8,
+            VerticalAlignment = VerticalAlignment.Center
         };
-        toolbar.Children.AddRange(
-            BuildToolbarChildren(_prevButton, _nextButton, minus, plus, fit, actual));
+        if (_prevButton is not null)
+            contextTools.Children.Add(_prevButton);
+        if (_nextButton is not null)
+            contextTools.Children.Add(_nextButton);
+        contextTools.Children.Add(_wheelModeBox);
+        if (_keepViewBox is not null)
+            contextTools.Children.Add(_keepViewBox);
+        ContextTools = contextTools;
 
         var canvasCard = UiTheme.CanvasCard(_canvas);
         canvasCard.MinHeight = 320;
@@ -228,13 +248,12 @@ public sealed class GrayscaleLayerPreviewControl : Grid, IDisposable
 
         var mainColumn = new Grid
         {
-            RowDefinitions = new RowDefinitions("Auto,*,Auto"),
+            RowDefinitions = new RowDefinitions("*,Auto"),
             RowSpacing = 8,
             Children =
             {
-                AtRow(toolbar, 0),
-                AtRow(canvasCard, 1),
-                AtRow(statusStack, 2)
+                AtRow(canvasCard, 0),
+                AtRow(statusStack, 1)
             }
         };
 
@@ -466,6 +485,12 @@ public sealed class GrayscaleLayerPreviewControl : Grid, IDisposable
     /// <summary>用户点击把手切换缩略图侧栏的展开 / 收起后触发，供宿主持久化。</summary>
     public event EventHandler? ThumbnailsCollapsedChanged;
 
+    /// <summary>由共享预览头部承载的高频缩放工具。</summary>
+    public Control ViewportTools { get; }
+
+    /// <summary>由共享预览上下文行承载的图层与滚轮工具。</summary>
+    public Control ContextTools { get; }
+
     /// <summary>
     /// 程序化设置缩略图侧栏的折叠态：把手的 <see cref="CollapseHandle.SetCollapsed"/>
     /// 会同步箭头角度，状态未变时早返回，所以从持久化恢复时不会多余触发回调。
@@ -475,21 +500,6 @@ public sealed class GrayscaleLayerPreviewControl : Grid, IDisposable
         if (_collapseHandle is null)
             return;
         _collapseHandle.SetCollapsed(collapsed);
-    }
-
-    private IEnumerable<Control> BuildToolbarChildren(
-        Button? prev, Button? next,
-        Button minus, Button plus, Button fit, Button actual)
-    {
-        if (prev is not null) yield return prev;
-        if (next is not null) yield return next;
-        yield return minus;
-        yield return _zoomLabel;
-        yield return plus;
-        yield return fit;
-        yield return actual;
-        yield return _wheelModeBox;
-        if (_keepViewBox is not null) yield return _keepViewBox;
     }
 
     private Control MakeThumbnailColumn()
