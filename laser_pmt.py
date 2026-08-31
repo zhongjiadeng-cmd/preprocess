@@ -129,7 +129,7 @@ def _reject_duplicate_json_keys(pairs: list[tuple[str, object]]) -> dict[str, ob
 def _load_json(path: Path) -> object:
     try:
         return json.loads(
-            path.read_text(encoding="utf-8"),
+            path.read_text(encoding="utf-8-sig"),
             object_pairs_hook=_reject_duplicate_json_keys,
         )
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:

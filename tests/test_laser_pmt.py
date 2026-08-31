@@ -177,6 +177,39 @@ def test_load_request_rejects_duplicate_json_keys() -> None:
             pmt.load_request(path)
 
 
+def test_load_request_accepts_utf8_bom() -> None:
+    with tempfile.TemporaryDirectory() as folder:
+        root = Path(folder)
+        base = write_base_machine(root)
+        path = root / "request.json"
+        path.write_text(json.dumps({
+            "base_machine_dir": str(base),
+            "output_dir": str(root),
+            "output_name": "LaserPMT_bom",
+            "workpiece_width": 30,
+            "workpiece_height": 20,
+            "columns": 1,
+            "numbering": {"prefix": "bom_", "start": 1, "increment": 1, "padding": 3},
+            "parameters": [],
+            "owner_token": "bom-request-test",
+        }), encoding="utf-8-sig")
+
+        request = pmt.load_request(path)
+        assert request.output_name == "LaserPMT_bom"
+        assert request.parameters == ()
+
+
+def test_base_loader_accepts_utf8_bom_machine_json() -> None:
+    with tempfile.TemporaryDirectory() as folder:
+        base = write_base_machine(Path(folder))
+        machine_path = base / "machine.json"
+        document = json.loads(machine_path.read_text(encoding="utf-8"))
+        machine_path.write_text(json.dumps(document), encoding="utf-8-sig")
+
+        loaded = pmt.load_base_machine(base)
+        assert len(loaded.patches) == 2
+
+
 def test_cli_request_file_generates_package(capsys: pytest.CaptureFixture[str]) -> None:
     with tempfile.TemporaryDirectory() as folder:
         root = Path(folder)

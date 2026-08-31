@@ -2593,7 +2593,10 @@ public sealed class MainWindow : Window
                     $"laserpmt-request-{pmtOwnerToken}.json");
                 try
                 {
-                    File.WriteAllText(requestPath, requestJson, Encoding.UTF8);
+                    File.WriteAllText(
+                        requestPath,
+                        requestJson,
+                        new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
                     var pmtInfo = CreatePythonProcess(python);
                     pmtInfo.ArgumentList.Add(pmtScript);
                     pmtInfo.ArgumentList.Add(requestPath);

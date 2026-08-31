@@ -90,6 +90,12 @@ class PipelineIndependentStepsTests(unittest.TestCase):
         self.assertIn('"正在执行第 3 步：生成加工文件…"', SOURCE)
         self.assertIn('"正在执行第 4 步：生成 LaserPMT…"', SOURCE)
 
+    def test_laser_pmt_request_is_written_as_utf8_without_bom(self):
+        self.assertIn(
+            "new UTF8Encoding(encoderShouldEmitUTF8Identifier: false)",
+            SOURCE,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
