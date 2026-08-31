@@ -9,20 +9,21 @@ internal static class PipelineImportPreparation
         string[] tiffs,
         string[] dxfs,
         Func<string, CancellationToken, Task<TextureImageInspection>> inspectTiff,
-        Action<string> validateDxf,
+        Func<string, DxfPreviewControl.PreparedDxfPreview> prepareDxf,
         IProgress<ImportProgressState> progress,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(tiffs);
         ArgumentNullException.ThrowIfNull(dxfs);
         ArgumentNullException.ThrowIfNull(inspectTiff);
-        ArgumentNullException.ThrowIfNull(validateDxf);
+        ArgumentNullException.ThrowIfNull(prepareDxf);
         ArgumentNullException.ThrowIfNull(progress);
 
         var tiffPaths = tiffs.ToArray();
         var dxfPaths = dxfs.ToArray();
         var total = checked(tiffPaths.Length + dxfPaths.Length);
         var inspections = new List<KeyValuePair<string, TextureImageInspection>>(tiffPaths.Length);
+        var dxfPreviews = new List<DxfPreviewControl.PreparedDxfPreview>(dxfPaths.Length);
 
         for (var index = 0; index < tiffPaths.Length; index++)
         {
@@ -50,7 +51,7 @@ internal static class PipelineImportPreparation
 
             try
             {
-                validateDxf(file);
+                dxfPreviews.Add(prepareDxf(file));
             }
             catch (Exception error) when (error is not OperationCanceledException)
             {
@@ -59,13 +60,16 @@ internal static class PipelineImportPreparation
             }
         }
 
-        return new PreparedPipelineImport(inspections, dxfPaths);
+        return new PreparedPipelineImport(inspections, dxfPreviews);
     }
 }
 
 internal sealed record PreparedPipelineImport(
     IReadOnlyList<KeyValuePair<string, TextureImageInspection>> TiffInspections,
-    IReadOnlyList<string> DxfPaths)
+    IReadOnlyList<DxfPreviewControl.PreparedDxfPreview> DxfPreviews)
 {
-    public int TotalCount => TiffInspections.Count + DxfPaths.Count;
+    public IReadOnlyList<string> DxfPaths =>
+        DxfPreviews.Select(preview => preview.Path).ToArray();
+
+    public int TotalCount => TiffInspections.Count + DxfPreviews.Count;
 }

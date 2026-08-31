@@ -1,8 +1,10 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using Avalonia;
 using GrayscaleLayersMac;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 
@@ -105,6 +107,84 @@ public sealed class PipelineImportFlowContractTests
             calls.Logs.ToArray());
     }
 
+    [TestMethod]
+    public async Task QueuedSynchronizationContextCannotOverwriteFailureWithOldProgress()
+    {
+        var calls = new FlowCalls
+        {
+            Prepare = (_, _, progress, _) =>
+            {
+                progress.Report(ImportProgressState.ValidatingDxf(2, 2, "/tmp/bad.dxf"));
+                throw new InvalidDataException("DXF 无效。");
+            }
+        };
+        var queued = new QueuedSynchronizationContext();
+        var previous = SynchronizationContext.Current;
+        bool imported;
+        try
+        {
+            SynchronizationContext.SetSynchronizationContext(queued);
+            imported = await MainWindow.RunPreparedImportAsync(
+                _ => Task.FromResult<PipelineImportSelection?>(MixedSelection()),
+                "无法导入文件",
+                CreateActions(calls));
+        }
+        finally
+        {
+            SynchronizationContext.SetSynchronizationContext(previous);
+        }
+
+        queued.Drain();
+
+        Assert.IsFalse(imported);
+        Assert.AreEqual(ImportProgressStage.Failed, calls.VisibleStages.Last());
+    }
+
+    [TestMethod]
+    public async Task QueuedSynchronizationContextCannotOverwriteSuccessWithLoadingProgress()
+    {
+        var calls = new FlowCalls();
+        var queued = new QueuedSynchronizationContext();
+        var previous = SynchronizationContext.Current;
+        bool imported;
+        try
+        {
+            SynchronizationContext.SetSynchronizationContext(queued);
+            imported = await MainWindow.RunPreparedImportAsync(
+                _ => Task.FromResult<PipelineImportSelection?>(MixedSelection()),
+                "无法导入文件",
+                CreateActions(calls));
+        }
+        finally
+        {
+            SynchronizationContext.SetSynchronizationContext(previous);
+        }
+
+        queued.Drain();
+
+        Assert.IsTrue(imported);
+        Assert.AreEqual(ImportProgressStage.Succeeded, calls.VisibleStages.Last());
+    }
+
+    [TestMethod]
+    public async Task DxfInstallationFailurePreventsSuccessAndShowsFailure()
+    {
+        var calls = new FlowCalls
+        {
+            DxfCommitError = new InvalidDataException("无法安装 DXF 预览。")
+        };
+
+        var imported = await MainWindow.RunPreparedImportAsync(
+            _ => Task.FromResult<PipelineImportSelection?>(MixedSelection()),
+            "无法导入文件",
+            CreateActions(calls));
+
+        Assert.IsFalse(imported);
+        Assert.AreEqual(0, calls.SuccessCount);
+        Assert.AreEqual(1, calls.FailureCount);
+        Assert.AreEqual(ImportProgressStage.Failed, calls.VisibleStages.Last());
+    }
+
     private static PipelineImportSelection MixedSelection() => new(
         () => (["/tmp/a.tiff"], ["/tmp/a.dxf"]),
         "已导入 2 个文件",
@@ -128,16 +208,27 @@ public sealed class PipelineImportFlowContractTests
         {
             calls.DxfCommitCount++;
             calls.CommitAndSuccessOrder.Add("dxf");
+            if (calls.DxfCommitError is not null)
+                throw calls.DxfCommitError;
         },
-        _ => calls.ShowCount++,
-        _ => { },
-        (_, _) =>
+        state =>
+        {
+            calls.ShowCount++;
+            calls.VisibleStages.Add(state.Stage);
+        },
+        state => calls.VisibleStages.Add(state.Stage),
+        (state, _) =>
         {
             calls.SuccessCount++;
             calls.CommitAndSuccessOrder.Add("success");
+            calls.VisibleStages.Add(state.Stage);
             return Task.CompletedTask;
         },
-        _ => calls.FailureCount++,
+        state =>
+        {
+            calls.FailureCount++;
+            calls.VisibleStages.Add(state.Stage);
+        },
         calls.Logs.Add,
         _ =>
         {
@@ -161,7 +252,7 @@ public sealed class PipelineImportFlowContractTests
                         new TextureImageInspection(
                             new TextureImageInfo(1, 1, null, null),
                             [137, 80, 78, 71]))],
-                dxfs));
+                dxfs.Select(FakeDxfPreview).ToArray()));
 
         public int ShowCount { get; set; }
         public int PrepareCount { get; set; }
@@ -170,7 +261,32 @@ public sealed class PipelineImportFlowContractTests
         public int SuccessCount { get; set; }
         public int FailureCount { get; set; }
         public int MessageCount { get; set; }
+        public Exception? DxfCommitError { get; init; }
         public List<string> CommitAndSuccessOrder { get; } = [];
         public List<string> Logs { get; } = [];
+        public List<ImportProgressStage> VisibleStages { get; } = [];
+    }
+
+    private static DxfPreviewControl.PreparedDxfPreview FakeDxfPreview(string path) => new(
+        path,
+        1,
+        new Rect(0, 0, 1, 1),
+        [new DxfPreviewControl.Segment(0, 0, 0, 1, 1, 0, 0, false)],
+        0,
+        0,
+        $"{Path.GetFileName(path)} · 1 条 LINE");
+
+    private sealed class QueuedSynchronizationContext : SynchronizationContext
+    {
+        private readonly Queue<(SendOrPostCallback Callback, object? State)> _callbacks = [];
+
+        public override void Post(SendOrPostCallback d, object? state) =>
+            _callbacks.Enqueue((d, state));
+
+        public void Drain()
+        {
+            while (_callbacks.TryDequeue(out var callback))
+                callback.Callback(callback.State);
+        }
     }
 }

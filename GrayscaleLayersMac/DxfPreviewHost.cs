@@ -235,6 +235,13 @@ public sealed class DxfPreviewHost : Grid
     /// <summary>选中指定索引的层；索引越界或与当前选中项相同时不做任何事。</summary>
     public bool SelectIndex(int index) => TrySelectCore(index);
 
+    /// <summary>导入提交时要求首层必须成功安装；失败必须阻止导入报告成功。</summary>
+    internal void SelectIndexOrThrow(int index)
+    {
+        if (!TrySelectCore(index))
+            throw new InvalidDataException("无法安装已验证的 DXF 预览。");
+    }
+
     /// <summary>选中指定层；不在列表中或加载失败返回 false。</summary>
     public bool SelectItem(DxfLayerPreviewItem item)
     {

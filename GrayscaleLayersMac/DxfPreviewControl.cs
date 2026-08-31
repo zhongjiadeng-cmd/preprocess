@@ -18,6 +18,14 @@ public sealed class DxfPreviewControl : Control, IDisposable
         double Z2,
         int BlockIndex,
         bool IsBorder);
+    internal sealed record PreparedDxfPreview(
+        string Path,
+        int LineCount,
+        Rect Bounds,
+        List<Segment> Segments,
+        double MinZ,
+        double MaxZ,
+        string Summary);
     private sealed record RowGroup(
         int StartIndex,
         int Count,
@@ -352,20 +360,46 @@ public sealed class DxfPreviewControl : Control, IDisposable
     /// </param>
     public void LoadFile(string path, bool keepView)
     {
+        InstallPreparedFile(PrepareFile(path), keepView);
+    }
+
+    /// <summary>完整解析并验证 DXF，但不改变任何可见画布状态。</summary>
+    internal static PreparedDxfPreview PrepareFile(string path)
+    {
         var metadata = DxfBlockMetadata.LoadForDxf(path);
         var firstPass = ScanFile(path, 0, metadata: null);
         var count = firstPass.Count;
-        LineCount = count;
         var bounds = firstPass.Bounds;
         metadata?.ValidateLineCount(count);
         var stride = Math.Max(1, (int)Math.Ceiling(count / (double)MaximumDisplayedSegments));
         var secondPass = ScanFile(path, stride, metadata);
-        var segments = secondPass.Segments;
-        _segments = segments;
-        _rowGroups = BuildRowGroups(segments);
-        _modelBounds = HasTexture ? _textureFrameBounds : bounds;
-        _minZ = secondPass.MinZ;
-        _maxZ = secondPass.MaxZ;
+        var blockSummary = metadata is null
+            ? string.Empty
+            : $" · 加工块 {metadata.Blocks.Count} 个";
+        var summary = stride == 1
+            ? $"{Path.GetFileName(path)} · {count:N0} 条 LINE{blockSummary}"
+            : $"{Path.GetFileName(path)} · {count:N0} 条 LINE{blockSummary} · 抽样显示 {secondPass.Segments.Count:N0} 条";
+        return new PreparedDxfPreview(
+            path,
+            count,
+            bounds,
+            secondPass.Segments,
+            secondPass.MinZ,
+            secondPass.MaxZ,
+            summary);
+    }
+
+    /// <summary>安装已完整解析的 DXF 预览；不访问 DXF 或 companion 文件。</summary>
+    internal void InstallPreparedFile(PreparedDxfPreview prepared, bool keepView)
+    {
+        ArgumentNullException.ThrowIfNull(prepared);
+        LineCount = prepared.LineCount;
+        _segments = prepared.Segments;
+        _rowGroups = BuildRowGroups(prepared.Segments);
+        _modelBounds = HasTexture ? _textureFrameBounds : prepared.Bounds;
+        _minZ = prepared.MinZ;
+        _maxZ = prepared.MaxZ;
+        Summary = prepared.Summary;
         if (keepView)
         {
             ClampPan();
@@ -376,12 +410,6 @@ public sealed class DxfPreviewControl : Control, IDisposable
         {
             FitToView();
         }
-        var blockSummary = metadata is null
-            ? string.Empty
-            : $" · 加工块 {metadata.Blocks.Count} 个";
-        Summary = stride == 1
-            ? $"{Path.GetFileName(path)} · {count:N0} 条 LINE{blockSummary}"
-            : $"{Path.GetFileName(path)} · {count:N0} 条 LINE{blockSummary} · 抽样显示 {segments.Count:N0} 条";
     }
 
     public override void Render(DrawingContext context)

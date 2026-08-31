@@ -37,13 +37,18 @@ internal sealed record PreparedImportFlowActions(
         CancellationToken,
         Task<PreparedGrayscaleLayerSet>> PrepareLayersAsync,
     Action<PreparedGrayscaleLayerSet, string?> CommitTiffs,
-    Action<IReadOnlyList<string>, string?> CommitDxfs,
+    Action<IReadOnlyList<DxfPreviewControl.PreparedDxfPreview>, string?> CommitDxfs,
     Action<ImportProgressState> Show,
     Action<ImportProgressState> Update,
     Func<ImportProgressState, CancellationToken, Task> ShowSucceededAndCollapseAsync,
     Action<ImportProgressState> ShowFailure,
     Action<string> AppendLog,
     Func<string, Task> ShowMessageAsync);
+
+internal sealed class InlineProgress<T>(Action<T> report) : IProgress<T>
+{
+    public void Report(T value) => report(value);
+}
 
 public sealed class MainWindow : Window
 {
@@ -208,11 +213,28 @@ public sealed class MainWindow : Window
     {
         _pipelineDxfPreview.ClearTexture();
         _pipelineSharedPreview.UpdateDxfOverlayControls();
-        if (!LoadDxfPreview(
-                _pipelineDxfPreview,
-                _pipelineDxfPreviewStatus,
-                item.DxfPath,
-                keepView))
+        if (item.PreparedPreview is not null)
+        {
+            try
+            {
+                _pipelineDxfPreview.InstallPreparedFile(item.PreparedPreview, keepView);
+                _pipelineDxfPreviewStatus.Text = _pipelineDxfPreview.Summary;
+                _pipelineDxfPreviewStatus.ClearValue(TextBlock.ForegroundProperty);
+            }
+            catch (Exception error)
+            {
+                _pipelineDxfPreviewStatus.Text =
+                    $"无法预览 {Path.GetFileName(item.DxfPath)}：{error.Message}";
+                _pipelineDxfPreviewStatus.Foreground = UiTheme.DangerTextBrush;
+                _pipelineSharedPreview.UpdateDxfOverlayControls();
+                return false;
+            }
+        }
+        else if (!LoadDxfPreview(
+                     _pipelineDxfPreview,
+                     _pipelineDxfPreviewStatus,
+                     item.DxfPath,
+                     keepView))
         {
             _pipelineSharedPreview.UpdateDxfOverlayControls();
             return false;
@@ -1522,7 +1544,7 @@ public sealed class MainWindow : Window
             return false;
 
         var latestProgress = ImportProgressState.Scanning("正在扫描文件…");
-        IProgress<ImportProgressState> progress = new Progress<ImportProgressState>(state =>
+        IProgress<ImportProgressState> progress = new InlineProgress<ImportProgressState>(state =>
         {
             latestProgress = state;
             actions.Update(state);
@@ -1546,14 +1568,14 @@ public sealed class MainWindow : Window
 
             if (prepared.TiffInspections.Count > 0)
                 actions.CommitTiffs(preparedLayers, selection.TiffDirectory);
-            if (prepared.DxfPaths.Count > 0)
-                actions.CommitDxfs(prepared.DxfPaths, selection.DxfDirectory);
+            if (prepared.DxfPreviews.Count > 0)
+                actions.CommitDxfs(prepared.DxfPreviews, selection.DxfDirectory);
 
             var report = new StringBuilder();
             if (prepared.TiffInspections.Count > 0)
                 report.AppendLine($"分层 TIFF：已导入 {prepared.TiffInspections.Count} 层。");
-            if (prepared.DxfPaths.Count > 0)
-                report.AppendLine($"DXF：已导入 {prepared.DxfPaths.Count} 层。");
+            if (prepared.DxfPreviews.Count > 0)
+                report.AppendLine($"DXF：已导入 {prepared.DxfPreviews.Count} 层。");
             actions.AppendLog(selection.SuccessHeading);
             actions.AppendLog(report.ToString().TrimEnd());
             actions.AppendLog("");
@@ -1603,25 +1625,18 @@ public sealed class MainWindow : Window
         _pipelineTextureSurface.PrepareLayerFilesAsync(inspections, cancellationToken);
 
     /// <summary>验证单个 DXF；批次准备阶段会为错误补充文件名上下文。</summary>
-    private void ValidateImportedDxf(string path)
-    {
-        using var validator = new DxfPreviewControl();
-        validator.LoadFile(path);
-        if (validator.LineCount == 0)
-            throw new InvalidDataException("DXF 中没有 LINE 实体。");
-    }
+    private static DxfPreviewControl.PreparedDxfPreview ValidateImportedDxf(string path) =>
+        DxfPreviewControl.PrepareFile(path);
 
     /// <summary>安装已验证的 DXF，不在提交阶段重新解析文件。</summary>
     private void CommitPipelineDxfImports(
-        IReadOnlyList<string> files,
+        IReadOnlyList<DxfPreviewControl.PreparedDxfPreview> previews,
         string? directory)
     {
-        var items = files
-            .Select((file, index) => new DxfLayerPreviewItem(
-                $"导入第 {index + 1:D2} 层 · {Path.GetFileName(file)}",
-                file,
-                null,
-                null))
+        var items = previews
+            .Select((preview, index) => new DxfLayerPreviewItem(
+                $"导入第 {index + 1:D2} 层 · {Path.GetFileName(preview.Path)}",
+                preview))
             .ToArray();
         _pipelineDxfPreview.ClearTexture();
         _pipelineSharedPreview.UpdateDxfOverlayControls();
@@ -1629,8 +1644,10 @@ public sealed class MainWindow : Window
         _pipelineDxfFiles.Clear();
         foreach (var item in items)
             _pipelineDxfFiles.Add(item);
-        _pipelineDxfHost?.SetItems(_pipelineDxfFiles);
-        _pipelineDxfHost?.SelectIndex(0);
+        var host = _pipelineDxfHost ??
+            throw new InvalidOperationException("DXF 预览宿主尚未初始化。");
+        host.SetItems(_pipelineDxfFiles);
+        host.SelectIndexOrThrow(0);
         if (directory is not null)
             _pipelineDxfOutputBox.Text = directory;
     }

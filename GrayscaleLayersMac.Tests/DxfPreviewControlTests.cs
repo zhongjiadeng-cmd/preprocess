@@ -81,6 +81,21 @@ public sealed class DxfPreviewControlTests
     }
 
     [TestMethod]
+    public void PreparedPreviewInstallsAfterSourceFileIsRemoved()
+    {
+        var dxf = Path.Combine(_root, "staged.dxf");
+        WriteDxf(dxf, (0d, 0d, 10d, 0d), (0d, 5d, 10d, 5d));
+        var prepared = DxfPreviewControl.PrepareFile(dxf);
+        File.Delete(dxf);
+        using var preview = new DxfPreviewControl();
+
+        preview.InstallPreparedFile(prepared, keepView: false);
+
+        Assert.AreEqual(2, preview.LineCount);
+        Assert.AreEqual("staged.dxf · 2 条 LINE", preview.Summary);
+    }
+
+    [TestMethod]
     public void SamplingAcrossBlockBoundaryKeepsSourceOrdinalClassifications()
     {
         var dxf = Path.Combine(_root, "sampled.dxf");

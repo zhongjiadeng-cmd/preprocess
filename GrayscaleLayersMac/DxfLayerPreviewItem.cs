@@ -6,6 +6,7 @@ public sealed record DxfLayerPreviewItem
     public string DxfPath { get; }
     public string? TexturePath { get; }
     public DxfTextureRegistration? TextureRegistration { get; }
+    internal DxfPreviewControl.PreparedDxfPreview? PreparedPreview { get; }
     public double WidthMm => TextureRegistration?.FrameWidthMm ?? 0;
     public double HeightMm => TextureRegistration?.FrameHeightMm ?? 0;
     public bool HasTexture => TexturePath is not null;
@@ -35,6 +36,14 @@ public sealed record DxfLayerPreviewItem
                 "Texture path and physical registration must be supplied together.");
         (Name, DxfPath, TexturePath, TextureRegistration) =
             (name, dxfPath, texturePath, textureRegistration);
+    }
+
+    internal DxfLayerPreviewItem(
+        string name,
+        DxfPreviewControl.PreparedDxfPreview preparedPreview)
+        : this(name, preparedPreview.Path, null, null)
+    {
+        PreparedPreview = preparedPreview;
     }
 
     public static DxfLayerPreviewItem Imported(string path) =>

@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using Avalonia.Automation;
 using Avalonia.Controls;
@@ -70,6 +71,20 @@ public sealed class DxfPreviewHostTests
         Assert.IsFalse(host.SelectIndex(2), "加载失败的层不应被选中");
         Assert.AreEqual(0, host.SelectedIndex,
             "侧栏高亮要留在还能看的那一层上");
+    }
+
+    [TestMethod]
+    public void RequiredSelectionPropagatesInstallationFailure()
+    {
+        using var preview = new DxfPreviewControl();
+        var host = new DxfPreviewHost(preview, new TextBlock())
+        {
+            LoadLayer = _ => false
+        };
+        host.SetItems(MakeItems(1));
+
+        Assert.ThrowsExactly<InvalidDataException>(() => host.SelectIndexOrThrow(0));
+        Assert.AreEqual(-1, host.SelectedIndex);
     }
 
     [TestMethod]

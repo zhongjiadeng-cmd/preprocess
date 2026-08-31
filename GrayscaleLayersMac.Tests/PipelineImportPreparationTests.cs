@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using Avalonia;
 using GrayscaleLayersMac;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 
@@ -16,10 +17,11 @@ public sealed class PipelineImportPreparationTests
     public async Task MixedImportReportsOneMonotonicTotal()
     {
         var states = new List<ImportProgressState>();
+        var stagedDxf = FakeDxfPreview("/tmp/c.dxf");
 
         var result = await PipelineImportPreparation.PrepareAsync(
             ["/tmp/a.tiff", "/tmp/b.tiff"], ["/tmp/c.dxf"],
-            FakeInspectionAsync, _ => { },
+            FakeInspectionAsync, _ => stagedDxf,
             new InlineProgress<ImportProgressState>(states.Add), CancellationToken.None);
 
         CollectionAssert.AreEqual(
@@ -32,6 +34,7 @@ public sealed class PipelineImportPreparationTests
             new[] { "/tmp/a.tiff", "/tmp/b.tiff" },
             result.TiffInspections.Select(pair => pair.Key).ToArray());
         CollectionAssert.AreEqual(new[] { "/tmp/c.dxf" }, result.DxfPaths.ToArray());
+        Assert.AreSame(stagedDxf, result.DxfPreviews[0]);
     }
 
     [TestMethod]
@@ -62,7 +65,11 @@ public sealed class PipelineImportPreparationTests
             PipelineImportPreparation.PrepareAsync(
                 ["/tmp/bad.tiff"], ["/tmp/a.dxf"],
                 (_, _) => throw new InvalidDataException("预览无效。"),
-                _ => Assert.Fail("DXF should not be validated after a TIFF failure."),
+                path =>
+                {
+                    Assert.Fail("DXF should not be validated after a TIFF failure.");
+                    return FakeDxfPreview(path);
+                },
                 new InlineProgress<ImportProgressState>(states.Add), CancellationToken.None));
 
         StringAssert.Contains(error.Message, "bad.tiff");
@@ -75,6 +82,15 @@ public sealed class PipelineImportPreparationTests
         string _, CancellationToken __) => Task.FromResult(new TextureImageInspection(
             new TextureImageInfo(1, 1, null, null),
             [137, 80, 78, 71, 13, 10, 26, 10]));
+
+    private static DxfPreviewControl.PreparedDxfPreview FakeDxfPreview(string path) => new(
+        path,
+        1,
+        new Rect(0, 0, 1, 1),
+        [new DxfPreviewControl.Segment(0, 0, 0, 1, 1, 0, 0, false)],
+        0,
+        0,
+        $"{Path.GetFileName(path)} · 1 条 LINE");
 
     private sealed class InlineProgress<T>(Action<T> report) : IProgress<T>
     {
