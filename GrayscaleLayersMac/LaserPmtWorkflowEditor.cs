@@ -29,7 +29,10 @@ public static class LaserPmtWorkflowEditor
             targetId,
             workflow.NextCreationOrder,
             text,
-            bounds);
+            bounds)
+        {
+            SourceId = workflow.Sources[0].Id
+        };
         return Rebuild(
             workflow,
             targets: workflow.Targets.Append<LaserPmtWorkflowTarget>(target).ToArray(),
@@ -217,11 +220,11 @@ public static class LaserPmtWorkflowEditor
     public static LaserPmtWorkflow SetViewport(
         LaserPmtWorkflow workflow,
         LaserPmtCanvasViewport viewport) => new(
-            workflow.BaseMachineIdentity,
+            workflow.Sources,
             workflow.Workpiece,
             workflow.HatchSpacing,
             viewport,
-            workflow.BaseNode,
+            workflow.BaseNodes,
             workflow.ParameterNodes,
             workflow.Targets,
             workflow.Connections,
@@ -229,6 +232,109 @@ public static class LaserPmtWorkflowEditor
             workflow.NextPmtNumber,
             workflow.NextCreationOrder,
             workflow.Numbering);
+
+    public static LaserPmtWorkflow AssignPmtSource(
+        LaserPmtWorkflow workflow,
+        IEnumerable<string> targetIds,
+        string sourceId)
+    {
+        ArgumentNullException.ThrowIfNull(workflow);
+        ArgumentNullException.ThrowIfNull(targetIds);
+        ArgumentException.ThrowIfNullOrWhiteSpace(sourceId);
+        var source = workflow.Sources.FirstOrDefault(item => item.Id == sourceId)
+            ?? throw new ArgumentException($"找不到 PMT 原始来源：{sourceId}", nameof(sourceId));
+        var selected = targetIds.ToHashSet(StringComparer.Ordinal);
+        if (selected.Count == 0)
+            return workflow;
+        var found = new HashSet<string>(StringComparer.Ordinal);
+        var targets = workflow.Targets.Select(target =>
+        {
+            if (!selected.Contains(target.Id))
+                return target;
+            if (target is not LaserPmtTarget pmt)
+                throw new ArgumentException($"目标不是 PMT：{target.Id}", nameof(targetIds));
+            found.Add(target.Id);
+            var centerX = pmt.Bounds.Left + pmt.Bounds.Width / 2;
+            var centerY = pmt.Bounds.Top + pmt.Bounds.Height / 2;
+            var width = pmt.IsSizeLocked ? source.NativeWidth : pmt.Bounds.Width;
+            var height = pmt.IsSizeLocked ? source.NativeHeight : pmt.Bounds.Height;
+            return (LaserPmtWorkflowTarget)(pmt with
+            {
+                SourceId = source.Id,
+                NativeWidth = source.NativeWidth,
+                NativeHeight = source.NativeHeight,
+                Bounds = new LaserPmtWorkflowBounds(
+                    centerX - width / 2,
+                    centerY - height / 2,
+                    width,
+                    height)
+            });
+        }).ToArray();
+        if (!selected.SetEquals(found))
+            throw new ArgumentException("部分 PMT 目标不存在。", nameof(targetIds));
+        return Rebuild(workflow, targets: targets);
+    }
+
+    public static LaserPmtWorkflow ResizePmt(
+        LaserPmtWorkflow workflow,
+        string targetId,
+        double width,
+        double height)
+    {
+        if (!double.IsFinite(width) || width <= 0 || !double.IsFinite(height) || height <= 0)
+            throw new ArgumentException("PMT 尺寸必须是正的有限数值。");
+        return UpdatePmt(workflow, targetId, pmt =>
+        {
+            if (pmt.IsSizeLocked)
+                throw new InvalidOperationException("PMT 尺寸已锁定。");
+            return pmt with { Bounds = pmt.Bounds with { Width = width, Height = height } };
+        });
+    }
+
+    public static LaserPmtWorkflow SetPmtSizeLock(
+        LaserPmtWorkflow workflow,
+        string targetId,
+        bool locked,
+        bool restoreNativeSize = false) => UpdatePmt(workflow, targetId, pmt =>
+    {
+        var bounds = pmt.Bounds;
+        if (locked && restoreNativeSize)
+        {
+            var centerX = bounds.Left + bounds.Width / 2;
+            var centerY = bounds.Top + bounds.Height / 2;
+            bounds = new LaserPmtWorkflowBounds(
+                centerX - pmt.NativeWidth / 2,
+                centerY - pmt.NativeHeight / 2,
+                pmt.NativeWidth,
+                pmt.NativeHeight);
+        }
+        return pmt with { IsSizeLocked = locked, Bounds = bounds };
+    });
+
+    public static LaserPmtWorkflow SetDirectParameterOverride(
+        LaserPmtWorkflow workflow,
+        string targetId,
+        string parameterName,
+        string value) => UpdateTargetOverrides(
+            workflow,
+            targetId,
+            values =>
+            {
+                values[parameterName] = value;
+                return values;
+            });
+
+    public static LaserPmtWorkflow RemoveDirectParameterOverride(
+        LaserPmtWorkflow workflow,
+        string targetId,
+        string parameterName) => UpdateTargetOverrides(
+            workflow,
+            targetId,
+            values =>
+            {
+                values.Remove(parameterName);
+                return values;
+            });
 
     public static LaserPmtWorkflow DeletePmt(LaserPmtWorkflow workflow, string targetId)
     {
@@ -270,12 +376,18 @@ public static class LaserPmtWorkflowEditor
             if (string.IsNullOrWhiteSpace(id))
                 throw new InvalidOperationException("PMT ID 生成器返回了空值。");
             var bounds = FindFirstAvailableBounds(result, count, unitWidth, unitHeight);
+            var source = result.Sources[0];
             var targets = result.Targets
                 .Append<LaserPmtWorkflowTarget>(new LaserPmtTarget(
                     id,
                     result.NextPmtNumber,
                     bounds,
-                    false))
+                    false)
+                {
+                    SourceId = source.Id,
+                    NativeWidth = unitWidth,
+                    NativeHeight = unitHeight
+                })
                 .ToArray();
             result = Rebuild(
                 result,
@@ -465,12 +577,17 @@ public static class LaserPmtWorkflowEditor
         IReadOnlyList<LaserPmtConnection>? connections = null,
         int? pmtColumns = null,
         int? nextPmtNumber = null,
-        long? nextCreationOrder = null) => new(
-            workflow.BaseMachineIdentity,
+        long? nextCreationOrder = null)
+    {
+        var baseNodes = workflow.BaseNodes.ToArray();
+        if (baseNode is not null)
+            baseNodes[0] = baseNode;
+        return new LaserPmtWorkflow(
+            workflow.Sources,
             workflow.Workpiece,
             workflow.HatchSpacing,
             workflow.Viewport,
-            baseNode ?? workflow.BaseNode,
+            baseNodes,
             parameterNodes ?? workflow.ParameterNodes,
             targets ?? workflow.Targets,
             connections ?? workflow.Connections,
@@ -478,6 +595,46 @@ public static class LaserPmtWorkflowEditor
             nextPmtNumber ?? workflow.NextPmtNumber,
             nextCreationOrder ?? workflow.NextCreationOrder,
             workflow.Numbering);
+    }
+
+    private static LaserPmtWorkflow UpdatePmt(
+        LaserPmtWorkflow workflow,
+        string targetId,
+        Func<LaserPmtTarget, LaserPmtTarget> update)
+    {
+        ArgumentNullException.ThrowIfNull(workflow);
+        ArgumentException.ThrowIfNullOrWhiteSpace(targetId);
+        ArgumentNullException.ThrowIfNull(update);
+        var found = false;
+        var targets = workflow.Targets.Select(target =>
+        {
+            if (target.Id != targetId)
+                return target;
+            if (target is not LaserPmtTarget pmt)
+                throw new ArgumentException($"目标不是 PMT：{targetId}", nameof(targetId));
+            found = true;
+            return (LaserPmtWorkflowTarget)update(pmt);
+        }).ToArray();
+        if (!found)
+            throw new ArgumentException($"找不到 PMT：{targetId}", nameof(targetId));
+        return Rebuild(workflow, targets: targets);
+    }
+
+    private static LaserPmtWorkflow UpdateTargetOverrides(
+        LaserPmtWorkflow workflow,
+        string targetId,
+        Func<Dictionary<string, string>, Dictionary<string, string>> update)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(targetId);
+        ArgumentNullException.ThrowIfNull(update);
+        return UpdatePmt(workflow, targetId, pmt => pmt with
+        {
+            DirectParameterOverrides = new System.Collections.ObjectModel.ReadOnlyDictionary<string, string>(
+                update(new Dictionary<string, string>(
+                    pmt.DirectParameterOverrides,
+                    StringComparer.Ordinal)))
+        });
+    }
 
     private static LaserPmtWorkflow UpdateTimestampBounds(
         LaserPmtWorkflow workflow,

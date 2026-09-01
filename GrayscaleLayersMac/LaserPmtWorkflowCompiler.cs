@@ -24,7 +24,14 @@ public sealed record LaserPmtCompiledTarget(
     long? CreationOrder,
     string? TimestampText,
     LaserPmtWorkflowBounds Bounds,
-    IReadOnlyDictionary<string, object> Parameters);
+    IReadOnlyDictionary<string, object> Parameters)
+{
+    public string SourceId { get; init; } = string.Empty;
+    public double NativeWidth { get; init; }
+    public double NativeHeight { get; init; }
+    public double ScaleX => NativeWidth > 0 ? Bounds.Width / NativeWidth : 1;
+    public double ScaleY => NativeHeight > 0 ? Bounds.Height / NativeHeight : 1;
+}
 
 public sealed record LaserPmtCompilationError(
     string? TargetId,
@@ -90,6 +97,7 @@ public static class LaserPmtWorkflowCompiler
         ArgumentNullException.ThrowIfNull(workflow);
         var errors = new List<LaserPmtCompilationError>();
         var definitions = LaserPmtConfiguration.Parameters;
+        var baseNodes = workflow.BaseNodes.ToDictionary(node => node.SourceId, StringComparer.Ordinal);
         var nodes = workflow.ParameterNodes.ToDictionary(node => node.Id, StringComparer.Ordinal);
         var ports = workflow.ParameterNodes
             .SelectMany(node => node.Ports.Select(port => (port.Id, Node: node, Port: port)))
@@ -135,15 +143,24 @@ public static class LaserPmtWorkflowCompiler
                      .ThenBy(target => target is LaserPmtTarget pmt ? pmt.Number : ((LaserPmtTimestampTarget)target).CreationOrder))
         {
             var parameters = new Dictionary<string, object>(StringComparer.Ordinal);
+            var baseNode = baseNodes[target.SourceId];
             foreach (var definition in definitions)
             {
+                if (target.DirectParameterOverrides.TryGetValue(definition.Name, out var directValue))
+                {
+                    if (TryParseSingle(definition.Name, directValue, out var parsedDirect, out var directError))
+                        parameters.Add(definition.Name, parsedDirect!);
+                    else
+                        errors.Add(new LaserPmtCompilationError(target.Id, definition.Name, directError));
+                    continue;
+                }
                 if (overrides.TryGetValue((target.Id, definition.Name), out var overrideValue))
                 {
                     parameters.Add(definition.Name, overrideValue);
                     continue;
                 }
-                if (workflow.BaseNode.RemovedParameters.Contains(definition.Name) ||
-                    !workflow.BaseNode.Parameters.TryGetValue(definition.Name, out var baseValue))
+                if (baseNode.RemovedParameters.Contains(definition.Name) ||
+                    !baseNode.Parameters.TryGetValue(definition.Name, out var baseValue))
                 {
                     errors.Add(new LaserPmtCompilationError(
                         target.Id,
@@ -181,7 +198,12 @@ public static class LaserPmtWorkflowCompiler
             null,
             null,
             pmt.Bounds,
-            parameters),
+            parameters)
+        {
+            SourceId = pmt.SourceId,
+            NativeWidth = pmt.NativeWidth,
+            NativeHeight = pmt.NativeHeight
+        },
         LaserPmtTimestampTarget timestamp => new LaserPmtCompiledTarget(
             timestamp.Id,
             LaserPmtCompiledTargetKind.Timestamp,
@@ -190,9 +212,32 @@ public static class LaserPmtWorkflowCompiler
             timestamp.CreationOrder,
             timestamp.Text,
             timestamp.Bounds,
-            parameters),
+            parameters)
+        {
+            SourceId = timestamp.SourceId,
+            NativeWidth = timestamp.Bounds.Width,
+            NativeHeight = timestamp.Bounds.Height
+        },
         _ => throw new ArgumentException($"不支持的目标类型：{target.GetType().Name}", nameof(target))
     };
+
+    private static bool TryParseSingle(
+        string parameterName,
+        string text,
+        out object? value,
+        out string error)
+    {
+        if (LaserPmtConfiguration.TryParseExplicitValues(
+                parameterName, text, out var values, out error) && values.Count == 1)
+        {
+            value = values[0];
+            return true;
+        }
+        value = null;
+        if (error.Length == 0)
+            error = $"参数 {parameterName} 必须包含一个值。";
+        return false;
+    }
 
     private static string CreateNonEmptyId(Func<string> createPortId)
     {
