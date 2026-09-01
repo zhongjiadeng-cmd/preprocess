@@ -1,7 +1,7 @@
 namespace GrayscaleLayersMac;
 
 /// <summary>
-/// 发现可作为四步流程中间输入的产物文件，并统一执行最小文件系统校验。
+/// 发现可作为三步流程中间输入的产物文件，并统一执行最小文件系统校验。
 /// 解码与格式校验仍由对应的 TIFF/DXF 读取器负责。
 /// </summary>
 internal static class PipelineArtifactDiscovery

@@ -44,6 +44,23 @@ public sealed class UiStructureContractTests
     }
 
     [TestMethod]
+    public void PipelineRunActionsContainOnlyTheThreePipelineSteps()
+    {
+        Assert.DoesNotContain("LaserPmtOnly", MainWindowSource);
+        Assert.DoesNotContain("第 4 步：生成 LaserPMT", MainWindowSource);
+
+        var run = MethodSource(
+            "private async Task RunPipelineAsync(PipelineRunMode mode)",
+            "private static void ValidateGeneratedLayerArtifacts(");
+        Assert.DoesNotContain("needsPmt", run);
+        Assert.DoesNotContain("laser_pmt.py", run);
+        StringAssert.Contains(run, "步骤 1/3");
+        StringAssert.Contains(run, "步骤 2/3");
+        StringAssert.Contains(run, "步骤 3/3");
+        StringAssert.Contains(run, "全部三步文件生成流程已完成");
+    }
+
+    [TestMethod]
     public void SharedPreviewOwnsUnifiedPrimaryAndContextToolRows()
     {
         var previewStart = MainWindowSource.IndexOf(

@@ -65,8 +65,7 @@ public sealed class MainWindow : Window
         All,
         GrayscaleOnly,
         DxfOnly,
-        MachineOnly,
-        LaserPmtOnly
+        MachineOnly
     }
 
     private const int InspectionJsonOverheadCharacters = 4 * 1024;
@@ -120,7 +119,7 @@ public sealed class MainWindow : Window
     private readonly NumericUpDown _pipelineSpacingBox = MakeNumberBox(0.02m, 0.001m, 1000);
     private readonly NumericUpDown _pipelineHatchAngleStepBox = MakeNumberBox(0, 0.1m, 180, 2, showButtons: false);
     private readonly TextBox _pipelineDpiBox = new() { Watermark = "可选；图片无 DPI 时填写" };
-    // 四步流程页的纹理界面：第 0 层是导入的源纹理，之后是各灰度分层。
+    // 三步流程页的纹理界面：第 0 层是导入的源纹理，之后是各灰度分层。
     private readonly GrayscaleLayerPreviewControl _pipelineTextureSurface =
         new(InspectTextureImageAsync);
     private readonly ComboBox _pipelineAnchorBox = new()
@@ -418,10 +417,7 @@ public sealed class MainWindow : Window
                         PipelineRunMode.DxfOnly),
                     CreatePipelineStepMenuButton(
                         "第 3 步：生成加工文件",
-                        PipelineRunMode.MachineOnly),
-                    CreatePipelineStepMenuButton(
-                        "第 4 步：生成 LaserPMT",
-                        PipelineRunMode.LaserPmtOnly)
+                        PipelineRunMode.MachineOnly)
                 }
             })
         };
@@ -2129,7 +2125,7 @@ public sealed class MainWindow : Window
                 _pipelinePmtDetails.LoadJob(refreshed);
             AppendPipelineLog(
                 $"已保存 {args.JobIdentifier} 的覆盖参数到 PMT 布局；" +
-                "再次执行第 4 步即可同步到对应单元机器文件。\n");
+                "后续使用 PMT 模式的保存操作即可同步到对应单元机器文件。\n");
         }
         catch (Exception error) when (
             error is IOException or InvalidDataException or UnauthorizedAccessException)
@@ -2331,7 +2327,6 @@ public sealed class MainWindow : Window
         var needsLayers = mode is PipelineRunMode.All or PipelineRunMode.GrayscaleOnly;
         var needsDxf = mode is PipelineRunMode.All or PipelineRunMode.DxfOnly;
         var needsMachine = mode is PipelineRunMode.All or PipelineRunMode.MachineOnly;
-        var needsPmt = mode is PipelineRunMode.All or PipelineRunMode.LaserPmtOnly;
         if (needsMachine && string.IsNullOrWhiteSpace(machineName))
         {
             machineName = $"machine_file_{DateTime.Now:yyyyMMdd_HHmmss}";
@@ -2380,15 +2375,13 @@ public sealed class MainWindow : Window
         var layerScript = Path.Combine(scriptsDirectory, "grayscale_layers.py");
         var hatchScript = Path.Combine(scriptsDirectory, "texture_to_hatch_dxf.py");
         var machineScript = Path.Combine(scriptsDirectory, "dxf_to_machine_file.py");
-        var pmtScript = Path.Combine(scriptsDirectory, "laser_pmt.py");
         if ((needsLayers && !File.Exists(layerScript)) ||
             (needsDxf && !File.Exists(hatchScript)) ||
-            (needsMachine && !File.Exists(machineScript)) ||
-            (needsPmt && !File.Exists(pmtScript)))
+            (needsMachine && !File.Exists(machineScript)))
         {
             await ShowMessageAsync(
                 "找不到流程所需的 Python 脚本（grayscale_layers.py、texture_to_hatch_dxf.py、" +
-                $"dxf_to_machine_file.py、laser_pmt.py）。请重新编译或发布应用。\n脚本目录：{scriptsDirectory}");
+                $"dxf_to_machine_file.py）。请重新编译或发布应用。\n脚本目录：{scriptsDirectory}");
             return;
         }
 
@@ -2482,8 +2475,6 @@ public sealed class MainWindow : Window
         string machineOutputPath = "";
         string machineTempPath = "";
         string machineLockPath = "";
-        string pmtTempPath = "";
-        string pmtLockPath = "";
         string? machineOutputParentAbsolute = null;
         try
         {
@@ -2540,11 +2531,6 @@ public sealed class MainWindow : Window
             _pipelineDxfFiles.Clear();
             _pipelineDxfHost?.SetItems(_pipelineDxfFiles);
         }
-        if (needsPmt)
-        {
-            _pipelinePmtPreview.Clear();
-            _pipelineSharedPreview.Selection.ClearPmt();
-        }
         string[] layerFiles = [];
         var currentRunDxfFiles = new List<string>();
         string? latestPipelineFile = null;
@@ -2556,10 +2542,10 @@ public sealed class MainWindow : Window
                 _pipelineRunProgress.Update(PipelineProgressState.Step(
                     PipelineProgressStage.Grayscale,
                     "正在执行第 1 步：灰度分层…",
-                    mode == PipelineRunMode.All ? "步骤 1/4" : "第 1 步"));
+                    mode == PipelineRunMode.All ? "步骤 1/3" : "第 1 步"));
                 Directory.CreateDirectory(layerOutputActual);
                 AppendPipelineLog(mode == PipelineRunMode.All
-                    ? "步骤 1/4：开始生成灰度分层 TIFF…"
+                    ? "步骤 1/3：开始生成灰度分层 TIFF…"
                     : "第 1 步：开始生成灰度分层 TIFF…");
                 AppendPipelineLog($"输入：{input}");
                 AppendPipelineLog($"分层目录：{layerOutputActual}");
@@ -2594,7 +2580,7 @@ public sealed class MainWindow : Window
                         $"预期生成 {layers} 个分层 TIFF，实际找到 {layerFiles.Length} 个。");
 
                 AppendPipelineLog(mode == PipelineRunMode.All
-                    ? $"\n步骤 1/4 完成：共生成 {layerFiles.Length} 个 TIFF。"
+                    ? $"\n步骤 1/3 完成：共生成 {layerFiles.Length} 个 TIFF。"
                     : $"\n第 1 步完成：共生成 {layerFiles.Length} 个 TIFF。");
                 await RefreshPipelineLayersAsync(
                     layerOutputActual,
@@ -2614,7 +2600,7 @@ public sealed class MainWindow : Window
                 _pipelineRunProgress.Update(PipelineProgressState.Step(
                     PipelineProgressStage.Dxf,
                     "正在执行第 2 步：生成 DXF…",
-                    mode == PipelineRunMode.All ? "步骤 2/4" : "第 2 步"));
+                    mode == PipelineRunMode.All ? "步骤 2/3" : "第 2 步"));
                 if (layerFiles.Length == 0)
                 {
                     try
@@ -2633,7 +2619,7 @@ public sealed class MainWindow : Window
 
                 Directory.CreateDirectory(dxfOutputActual);
                 AppendPipelineLog(mode == PipelineRunMode.All
-                    ? "步骤 2/4：开始逐层生成 Hatch DXF…\n"
+                    ? "步骤 2/3：开始逐层生成 Hatch DXF…\n"
                     : "第 2 步：开始逐层生成 Hatch DXF…\n");
                 var baseVoronoiSeed = (int)(_pipelineVoronoiSeedBox.Value ?? 12345);
                 currentRunDxfFiles = new List<string>(layerFiles.Length);
@@ -2647,7 +2633,7 @@ public sealed class MainWindow : Window
                         index + 1,
                         layerFiles.Length,
                         layerFile,
-                        mode == PipelineRunMode.All ? "步骤 2/4" : "第 2 步"));
+                        mode == PipelineRunMode.All ? "步骤 2/3" : "第 2 步"));
                     var outputFile = Path.Combine(
                         dxfOutputAbsolute,
                         $"{Path.GetFileNameWithoutExtension(layerFile)}.dxf");
@@ -2730,7 +2716,7 @@ public sealed class MainWindow : Window
                 }
 
                 AppendPipelineLog(mode == PipelineRunMode.All
-                    ? $"\n步骤 2/4 完成：共生成 {layerFiles.Length} 个 DXF。"
+                    ? $"\n步骤 2/3 完成：共生成 {layerFiles.Length} 个 DXF。"
                     : $"\n第 2 步完成：共生成 {layerFiles.Length} 个 DXF。");
                 AppendPipelineLog($"DXF 目录：{dxfOutputActual}");
 
@@ -2780,7 +2766,7 @@ public sealed class MainWindow : Window
                 _pipelineRunProgress.Update(PipelineProgressState.Step(
                     PipelineProgressStage.Machine,
                     "正在执行第 3 步：生成加工文件…",
-                    mode == PipelineRunMode.All ? "步骤 3/4" : "第 3 步"));
+                    mode == PipelineRunMode.All ? "步骤 3/3" : "第 3 步"));
                 if (currentRunDxfFiles.Count == 0)
                 {
                     try
@@ -2818,7 +2804,7 @@ public sealed class MainWindow : Window
                 AppendPipelineLog($"已验证本次 DXF 清单：{expectedDxfFiles.Count} 个文件。");
 
                 AppendPipelineLog(mode == PipelineRunMode.All
-                    ? "\n步骤 3/4：开始生成机器加工文件…"
+                    ? "\n步骤 3/3：开始生成机器加工文件…"
                     : "\n第 3 步：开始生成机器加工文件…");
                 var useBlockCenterMotion =
                     (_pipelineBlocksBox.Value ?? 0) > 0 &&
@@ -2873,124 +2859,22 @@ public sealed class MainWindow : Window
 
                 _lastMachineOutputPath = machineOutputPath;
                 AppendPipelineLog(mode == PipelineRunMode.All
-                    ? "\n步骤 3/4 完成：加工文件生成成功。"
+                    ? "\n步骤 3/3 完成：加工文件生成成功。"
                     : "\n第 3 步完成：加工文件生成成功。");
                 AppendPipelineLog($"加工文件目录：{machineOutputPath}");
                 _pipelineOpenButton.IsEnabled = true;
                 _pipelinePmtPanel.BaseDirectory = machineOutputPath;
-                await InitializePmtWorkflowAsync(machineOutputPath, python, pmtScript, _cancellation.Token);
-                if (mode == PipelineRunMode.MachineOnly)
-                {
-                    await _pipelineRunProgress.ShowAndCollapseAsync(
-                        PipelineProgressState.Succeeded("加工文件生成成功"),
-                        CancellationToken.None);
-                    return;
-                }
-            }
-
-            if (needsPmt)
-            {
-                latestPipelineFile = null;
-                _pipelineRunProgress.Update(PipelineProgressState.Step(
-                    PipelineProgressStage.LaserPmt,
-                    "正在执行第 4 步：生成 LaserPMT…",
-                    mode == PipelineRunMode.All ? "步骤 4/4" : "第 4 步"));
-                var baseMachineDirectory = mode == PipelineRunMode.All
-                    ? machineOutputPath
-                    : _pipelinePmtPanel.BaseDirectory;
-                if (string.IsNullOrWhiteSpace(baseMachineDirectory) ||
-                    !Directory.Exists(baseMachineDirectory))
-                    throw new InvalidOperationException("第 4 步需要先生成或导入有效的基础加工目录。");
-                _pipelinePmtPanel.BaseDirectory = baseMachineDirectory;
-                if (_pipelinePmtWorkflowCanvas.Workflow is null ||
-                    !string.Equals(
-                        _pipelinePmtBaseMetadata?.Identity,
-                        Path.GetFullPath(baseMachineDirectory),
-                        StringComparison.Ordinal))
-                {
-                    await InitializePmtWorkflowAsync(
-                        baseMachineDirectory, python, pmtScript, _cancellation.Token);
-                }
-                var pmtOutputParent = Path.GetDirectoryName(Path.GetFullPath(baseMachineDirectory))
-                    ?? throw new InvalidOperationException("无法确定 LaserPMT 输出目录。");
-                var pmtOwnerToken = Guid.NewGuid().ToString("N");
-                if (_pipelinePmtWorkflowCanvas.Workflow is not { } pmtWorkflow)
-                    throw new InvalidOperationException("PMT 节点工作流尚未初始化。");
-                if (!_pipelinePmtPanel.TryBuildWorkflowRequest(
-                        pmtWorkflow,
-                        pmtOutputParent,
-                        pmtOwnerToken,
-                        out var requestJson,
-                        out var pmtOutputName,
-                        out var pmtJobCount,
-                        out var pmtError))
-                    throw new InvalidOperationException(pmtError);
-                var pmtOutputPath = Path.Combine(pmtOutputParent, pmtOutputName);
-                pmtTempPath = Path.Combine(pmtOutputParent, $".{pmtOutputName}.building");
-                pmtLockPath = Path.Combine(pmtOutputParent, $".{pmtOutputName}.lock");
-                foreach (var collision in new[] { pmtOutputPath, pmtTempPath, pmtLockPath })
-                    if (File.Exists(collision) || Directory.Exists(collision))
-                        throw new IOException($"LaserPMT 输出路径已存在：{collision}");
-
                 AppendPipelineLog(mode == PipelineRunMode.All
-                    ? "\n步骤 4/4：开始生成 LaserPMT 参数矩阵…"
-                    : "\n第 4 步：开始生成 LaserPMT 参数矩阵…");
-                AppendPipelineLog($"基础加工目录：{baseMachineDirectory}");
-                AppendPipelineLog($"参数组合数量：{pmtJobCount}");
-                var requestPath = Path.Combine(
-                    Path.GetTempPath(),
-                    $"laserpmt-request-{pmtOwnerToken}.json");
-                try
-                {
-                    File.WriteAllText(
-                        requestPath,
-                        requestJson,
-                        new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
-                    var pmtInfo = CreatePythonProcess(python);
-                    pmtInfo.ArgumentList.Add(pmtScript);
-                    pmtInfo.ArgumentList.Add(requestPath);
-                    var pmtExitCode = await RunProcessAsync(
-                        pmtInfo,
-                        AppendPipelineLog,
-                        _cancellation.Token);
-                    if (pmtExitCode != 0)
-                        throw new InvalidOperationException($"LaserPMT 生成失败，退出代码：{pmtExitCode}");
-                }
-                finally
-                {
-                    try
-                    {
-                        if (File.Exists(requestPath))
-                            File.Delete(requestPath);
-                    }
-                    catch (IOException)
-                    {
-                        AppendPipelineLog($"临时请求文件未能删除，请手动检查：{requestPath}");
-                    }
-                }
-                var layoutPath = Path.Combine(pmtOutputPath, "pmt-layout.json");
-                _pipelinePmtLayoutPath = layoutPath;
-                var generatedWorkflow = LaserPmtWorkflowSerializer.Load(layoutPath);
-                if (generatedWorkflow.Targets.Count != pmtJobCount)
-                    throw new InvalidDataException("PMT 布局任务数量与请求不一致。");
-                _pipelinePmtWorkflowCanvas.Load(generatedWorkflow);
-                _pipelinePmtPanel.ReflectWorkflow(generatedWorkflow);
-                _pipelineSharedPreview.Selection.CompletePmtLoad();
-                SelectSharedPreview(_pipelineSharedPreview, SharedPreviewKind.Pmt);
-                _lastLaserPmtOutputPath = pmtOutputPath;
-                _pipelinePmtPanel.OutputName = pmtOutputName;
-                _pipelineOpenButton.IsEnabled = true;
-                AppendPipelineLog(mode == PipelineRunMode.All
-                    ? $"\n四步流程完成：已生成 {layerFiles.Length} 个 TIFF、" +
-                      $"{layerFiles.Length} 个 DXF、1 个基础加工文件和 {pmtJobCount} 个 LaserPMT 加工目标。"
-                    : $"\n第 4 步完成：已生成 {pmtJobCount} 个 LaserPMT 加工目标。");
-                AppendPipelineLog($"LaserPMT 目录：{pmtOutputPath}");
+                    ? $"\n三步流程完成：已生成 {layerFiles.Length} 个 TIFF、" +
+                      $"{layerFiles.Length} 个 DXF 和 1 个基础加工文件。"
+                    : "\n第 3 步完成：基础加工文件可作为 PMT 原始来源。");
                 await _pipelineRunProgress.ShowAndCollapseAsync(
                     PipelineProgressState.Succeeded(
                         mode == PipelineRunMode.All
-                            ? "全部四步文件生成流程已完成"
-                            : "LaserPMT 生成成功"),
+                            ? "全部三步文件生成流程已完成"
+                            : "加工文件生成成功"),
                     CancellationToken.None);
+                return;
             }
         }
         catch (OperationCanceledException)
@@ -3003,11 +2887,6 @@ public sealed class MainWindow : Window
             {
                 AppendPipelineLog($"基础加工临时目录：{machineTempPath}");
                 AppendPipelineLog($"基础加工锁文件：{machineLockPath}");
-            }
-            if (!string.IsNullOrWhiteSpace(pmtTempPath))
-            {
-                AppendPipelineLog($"LaserPMT 临时目录：{pmtTempPath}");
-                AppendPipelineLog($"LaserPMT 锁文件：{pmtLockPath}");
             }
             await _pipelineRunProgress.ShowAndCollapseAsync(
                 PipelineProgressState.Cancelled(),
