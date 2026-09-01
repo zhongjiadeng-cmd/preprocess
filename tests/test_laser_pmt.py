@@ -53,7 +53,12 @@ def make_request(root: Path, base: Path, **overrides: object) -> pmt.LaserPmtReq
     return pmt.LaserPmtRequest(**values)
 
 
-def make_workflow_request_document(root: Path, base: Path) -> dict[str, object]:
+def make_workflow_request_document(
+    root: Path,
+    base: Path,
+    *,
+    include_timestamp: bool = False,
+) -> dict[str, object]:
     parameters = dict(machine.DEFAULT_LASER_PARAMS[0])
     parameters[pmt.LAYER_FEED_KEY] = 3
     string_parameters = {
@@ -72,14 +77,31 @@ def make_workflow_request_document(root: Path, base: Path) -> dict[str, object]:
             "was_manually_moved": True,
         },
     ]
+    if include_timestamp:
+        source_targets.append({
+            "type": "timestamp", "id": "timestamp-1", "creation_order": 1,
+            "text": "08310712",
+            "bounds": {"left": 1, "top": 10, "width": 20, "height": 4},
+        })
     compiled_targets = [
         {
             "target_id": source["id"],
-            "kind": "pmt",
-            "identifier": f"test_{source['number']:04d}",
-            "pmt_number": source["number"],
+            "kind": source["type"],
+            "identifier": (
+                f"test_{source['number']:04d}"
+                if source["type"] == "pmt"
+                else f"timestamp-{source['creation_order']}"
+            ),
             "bounds": source["bounds"],
             "parameters": parameters,
+            **(
+                {"pmt_number": source["number"]}
+                if source["type"] == "pmt"
+                else {
+                    "creation_order": source["creation_order"],
+                    "timestamp_text": source["text"],
+                }
+            ),
         }
         for source in source_targets
     ]
@@ -93,7 +115,7 @@ def make_workflow_request_document(root: Path, base: Path) -> dict[str, object]:
         "numbering_state": {
             "pmt_columns": 2,
             "next_pmt_number": 4,
-            "next_creation_order": 1,
+            "next_creation_order": 2 if include_timestamp else 1,
             "prefix": "test_",
             "increment": 1,
             "padding": 4,
@@ -160,6 +182,32 @@ def test_generates_version_two_explicit_pmt_targets_without_filling_number_gap()
         assert (result / "test_0003machine.json").is_file()
         all_document = json.loads((result / "allmachine.json").read_text(encoding="utf-8"))
         assert [cycle["galvo_0"][0] for cycle in all_document["machine_cycle"]] == [0, 0, 1, 1]
+
+
+def test_generates_timestamp_after_all_pmts_without_independent_json() -> None:
+    with tempfile.TemporaryDirectory() as folder:
+        root = Path(folder)
+        base = write_base_machine(root)
+        document = make_workflow_request_document(root, base, include_timestamp=True)
+        request = pmt._make_request(document)
+
+        result = pmt.generate_laser_pmt(request)
+
+        layout = json.loads((result / "pmt-layout.json").read_text(encoding="utf-8"))
+        jobs = layout["generation"]["jobs"]
+        assert [job["target_type"] for job in jobs] == ["pmt", "pmt", "timestamp"]
+        assert jobs[-1]["json_file"] is None
+        assert jobs[-1]["identifier"] == "timestamp-1"
+        assert len(jobs[-1]["patch_indices"]) == 1
+        reference = jobs[-1]["patch_indices"][0]
+        patch = np.load(result / "patches" / f"{reference[0]}_{reference[1]}.npy")
+        assert patch.shape[1] == 6
+        assert np.array_equal(patch[:, 1], patch[:, 4])
+        assert not (result / "timestamp-1machine.json").exists()
+        all_document = json.loads((result / "allmachine.json").read_text(encoding="utf-8"))
+        assert [cycle["galvo_0"][0] for cycle in all_document["machine_cycle"]] == [
+            0, 0, 1, 1, 2
+        ]
 
 
 def test_explicit_values_and_cartesian_order() -> None:

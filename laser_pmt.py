@@ -20,6 +20,7 @@ import uuid
 import numpy as np
 
 import dxf_to_machine_file as machine
+import laser_timestamp
 
 
 MAX_JOBS = 1_000
@@ -747,11 +748,12 @@ def _build_workflow_layout_document(
     document = deepcopy(request.workflow_document)
     jobs: list[dict[str, object]] = []
     for cell, combination, owned in zip(layout.cells, combinations, patch_ranges):
+        target = request.targets[cell.job_index]
         _, layer_feed = _job_values(base, combination)
         jobs.append({
             "index": cell.job_index,
             "target_id": request.targets[cell.job_index].target_id,
-            "target_type": "pmt",
+            "target_type": target.kind,
             "identifier": cell.identifier,
             "row": cell.row,
             "column": cell.column,
@@ -760,7 +762,7 @@ def _build_workflow_layout_document(
                 "width": cell.width, "height": cell.height,
             },
             "machine_translation": {"x": cell.translate_x, "y": cell.translate_y},
-            "json_file": f"{cell.identifier}machine.json",
+            "json_file": f"{cell.identifier}machine.json" if target.kind == "pmt" else None,
             "laser_param_index": cell.job_index,
             "layer_feed_um": layer_feed,
             "parameters": combination,
@@ -823,10 +825,10 @@ def _validate_generated_package(
     layout_document: dict[str, object],
 ) -> None:
     jobs = _layout_jobs(layout_document)
-    patch_count = len(jobs) * len(base.patches)
+    patch_count = sum(len(job["patch_indices"]) for job in jobs)
     expected_root = {
         "patches", "allmachine.json", "parameter-map.csv", "pmt-layout.json",
-        *(job["json_file"] for job in jobs),
+        *(job["json_file"] for job in jobs if job["json_file"] is not None),
     }
     if {entry.name for entry in path.iterdir()} != expected_root:
         raise ValueError("LaserPMT package contains unexpected or missing root files")
@@ -834,7 +836,8 @@ def _validate_generated_package(
     expected_references: set[tuple[int, int]] = set()
     for job in jobs:
         references = job["patch_indices"]
-        if type(references) is not list or len(references) != len(base.patches):
+        expected_count = len(base.patches) if job.get("target_type", "pmt") == "pmt" else 1
+        if type(references) is not list or len(references) != expected_count:
             raise ValueError("LaserPMT job has invalid patch references")
         job_groups: set[int] = set()
         for local_index, reference in enumerate(references):
@@ -872,7 +875,7 @@ def _validate_generated_package(
     for csv_row, job in zip(csv_rows, jobs):
         if (
             csv_row.get("identifier") != job["identifier"]
-            or csv_row.get("json_file") != job["json_file"]
+            or csv_row.get("json_file") != (job["json_file"] or "")
             or csv_row.get("patch_indices")
             != ";".join(
                 f"{reference[0]}_{reference[1]}"
@@ -892,6 +895,37 @@ def _validate_generated_package(
         raise ValueError("allmachine.json has an invalid cycle count")
     cursor = 0
     for job in jobs:
+        if job.get("target_type", "pmt") == "timestamp":
+            reference = job["patch_indices"][0]
+            all_payload = all_document["machine_cycle"][cursor]["galvo_0"]
+            if all_payload[2] != reference or all_payload[0] != job["laser_param_index"]:
+                raise ValueError("timestamp JSON reference or laser index is invalid")
+            patch = np.load(
+                path / "patches" / f"{reference[0]}_{reference[1]}.npy",
+                allow_pickle=False,
+            )
+            expected_patch = laser_timestamp.generate_timestamp_patch(
+                job["identifier"].removeprefix("timestamp-")
+                if re.fullmatch(r"[0-9]{8}", job["identifier"].removeprefix("timestamp-"))
+                else next(
+                    target["text"] for target in layout_document["targets"]
+                    if target["id"] == job["target_id"]
+                ),
+                job["bounds"]["width"],
+                job["bounds"]["height"],
+                layout_document["hatch_spacing"],
+            )
+            if not np.array_equal(patch, expected_patch):
+                raise ValueError("timestamp patch content is invalid")
+            expected_global = (
+                Decimal(f"{job['machine_translation']['x']:.3f}"),
+                Decimal(f"{job['machine_translation']['y']:.3f}"),
+                Decimal("0.000"),
+            )
+            if all_states[cursor] != expected_global:
+                raise ValueError("timestamp motion does not reach the planned target")
+            cursor += 1
+            continue
         numbered = _load_json(path / job["json_file"])
         numbered_states = _simulate_cycles(numbered["machine_cycle"])
         if len(numbered_states) != len(base.patches):
@@ -954,12 +988,10 @@ def _patch_groups_equal(
 def generate_laser_pmt(request: LaserPmtRequest | LaserPmtWorkflowRequest) -> Path:
     base = load_base_machine(request.base_machine_dir)
     if isinstance(request, LaserPmtWorkflowRequest):
-        if any(target.kind != "pmt" for target in request.targets):
-            raise ValueError("timestamp target generation is not implemented")
         if any(
             not math.isclose(target.width, base.width, rel_tol=0, abs_tol=1e-9)
             or not math.isclose(target.height, base.height, rel_tol=0, abs_tol=1e-9)
-            for target in request.targets
+            for target in request.targets if target.kind == "pmt"
         ):
             raise ValueError("PMT target size must match the base machine footprint")
         combinations = tuple(target.parameters for target in request.targets)
@@ -973,8 +1005,8 @@ def generate_laser_pmt(request: LaserPmtRequest | LaserPmtWorkflowRequest) -> Pa
                 target.top,
                 target.width,
                 target.height,
-                target.left - base.min_x,
-                -target.top - base.max_y,
+                target.left - base.min_x if target.kind == "pmt" else target.left,
+                -target.top - base.max_y if target.kind == "pmt" else -target.top,
             )
             for index, target in enumerate(request.targets)
         )
@@ -1037,20 +1069,36 @@ def generate_laser_pmt(request: LaserPmtRequest | LaserPmtWorkflowRequest) -> Pa
             all_laser_params.append(deepcopy(laser_params))
             generated_group: list[np.ndarray] = []
             local_targets: list[tuple[float, float, float]] = []
-            for base_patch in base.patches:
-                patch = base_patch.array.copy()
-                z = np.float32(-base_patch.layer_index * layer_feed / 1000)
-                patch[:, 2] = z
-                patch[:, 5] = z
+            workflow_target = (
+                request.targets[job_index]
+                if isinstance(request, LaserPmtWorkflowRequest)
+                else None
+            )
+            if workflow_target is not None and workflow_target.kind == "timestamp":
+                patch = laser_timestamp.generate_timestamp_patch(
+                    workflow_target.timestamp_text,
+                    workflow_target.width,
+                    workflow_target.height,
+                    request.hatch_spacing,
+                )
                 generated_group.append(patch)
-                local_target = (base_patch.center_x, base_patch.center_y, float(z))
-                local_targets.append(local_target)
-                all_targets.append((
-                    base_patch.center_x + cell.translate_x,
-                    base_patch.center_y + cell.translate_y,
-                    float(z),
-                ))
+                all_targets.append((cell.translate_x, cell.translate_y, 0.0))
                 all_laser_indices.append(job_index)
+            else:
+                for base_patch in base.patches:
+                    patch = base_patch.array.copy()
+                    z = np.float32(-base_patch.layer_index * layer_feed / 1000)
+                    patch[:, 2] = z
+                    patch[:, 5] = z
+                    generated_group.append(patch)
+                    local_target = (base_patch.center_x, base_patch.center_y, float(z))
+                    local_targets.append(local_target)
+                    all_targets.append((
+                        base_patch.center_x + cell.translate_x,
+                        base_patch.center_y + cell.translate_y,
+                        float(z),
+                    ))
+                    all_laser_indices.append(job_index)
             group = tuple(generated_group)
             group_index = next(
                 (
@@ -1070,16 +1118,17 @@ def generate_laser_pmt(request: LaserPmtRequest | LaserPmtWorkflowRequest) -> Pa
             )
             all_patch_references.extend(owned)
             patch_ranges.append(owned)
-            numbered_document = {
-                "laser_params": [deepcopy(laser_params), *deepcopy(machine.DEFAULT_LASER_PARAMS[1:])],
-                "galvo_offset": deepcopy(machine.DEFAULT_GALVO_OFFSET),
-                "machine_cycle": _build_cycles(
-                    local_targets,
-                    list(owned),
-                    [0] * len(owned),
-                ),
-            }
-            _write_json(temp_path / f"{cell.identifier}machine.json", numbered_document)
+            if workflow_target is None or workflow_target.kind == "pmt":
+                numbered_document = {
+                    "laser_params": [deepcopy(laser_params), *deepcopy(machine.DEFAULT_LASER_PARAMS[1:])],
+                    "galvo_offset": deepcopy(machine.DEFAULT_GALVO_OFFSET),
+                    "machine_cycle": _build_cycles(
+                        local_targets,
+                        list(owned),
+                        [0] * len(owned),
+                    ),
+                }
+                _write_json(temp_path / f"{cell.identifier}machine.json", numbered_document)
 
         all_document = {
             "laser_params": [*all_laser_params, *deepcopy(machine.DEFAULT_LASER_PARAMS[1:])],
