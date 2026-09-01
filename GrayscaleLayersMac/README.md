@@ -63,12 +63,14 @@ python3 texture_to_hatch_dxf.py input.tiff output.dxf \
 
 用户设置工件宽高和每行数量。软件从基础 patch 自动计算单元外框，并把剩余空间平均分配给左右边界、列间空隙以及上下边界、行间空隙。工件左上角是 `allmachine.json` 的起始定位点，编号从左到右、从上到下加工，单个编号内部仍保持原加工文件的层、填充线和分块移动顺序。
 
-每个编号拥有独立的 patch 集和从本地原点开始的完整 JSON，不能从 `allmachine.json` 中截取。`allmachine.json` 会另行计算矩阵单元之间的连续相对运动，一次加工全部编号。输出还包含 `parameter-map.csv` 与 `pmt-layout.json`。预览区新增“PMT”视图，用线框显示工件、自动间隔、加工位置和编号；原“纹理”和“DXF”视图保持不变。
+每个编号拥有从本地原点开始的完整 JSON，不能从 `allmachine.json` 中截取。JSON 中的 patch 引用为 `[x, y]`，对应 `patches/x_y.npy`：`x` 是按首次出现顺序分配的 NPY 内容组编号，`y` 是组内加工序号。生成后完全相同的整组 NPY 会由多个 PMT 共享；层间进给等参数导致 NPY 内容不同时会分配新的内容组。`allmachine.json` 使用同一引用规则，并另行计算矩阵单元之间的连续相对运动，一次加工全部编号。输出还包含 `parameter-map.csv` 与 `pmt-layout.json`。预览区新增“PMT”视图，用线框显示工件、自动间隔、加工位置和编号；原“纹理”和“DXF”视图保持不变。
 
 ```text
 LaserPMT_YYYYMMDD_HHMMSS/
 ├── patches/
 │   ├── 0_0.npy
+│   ├── 0_1.npy
+│   ├── 1_0.npy
 │   └── ...
 ├── pmt_0001machine.json
 ├── pmt_0002machine.json

@@ -72,6 +72,14 @@ def test_empty_parameter_list_creates_one_inherited_job() -> None:
     assert pmt.expand_combinations(()) == ({},)
 
 
+def test_patch_group_equality_requires_matching_dtype_shape_and_values() -> None:
+    original = (np.array([[1, 2]], dtype="<f4"),)
+    assert pmt._patch_groups_equal(original, (original[0].copy(),))
+    assert not pmt._patch_groups_equal(original, (np.array([[1, 2]], dtype="<f8"),))
+    assert not pmt._patch_groups_equal(original, (np.array([1, 2], dtype="<f4"),))
+    assert not pmt._patch_groups_equal(original, (np.array([[1, 3]], dtype="<f4"),))
+
+
 @pytest.mark.parametrize(
     ("name", "values"),
     (("power", [1, 1]), ("scan_ahead", [1]), ("layerFeedUm", [0]), ("unknown", [1])),
@@ -133,23 +141,40 @@ def test_generates_independent_numbered_files_and_distinct_all_motion() -> None:
         assert [job["identifier"] for job in layout["jobs"]] == [
             "test_0001", "test_0002", "test_0003", "test_0004"
         ]
-        assert layout["jobs"][1]["patch_indices"] == [2, 3]
+        assert [job["patch_indices"] for job in layout["jobs"]] == [
+            [[0, 0], [0, 1]],
+            [[1, 0], [1, 1]],
+            [[0, 0], [0, 1]],
+            [[1, 0], [1, 1]],
+        ]
 
         first = json.loads((result / "test_0001machine.json").read_text(encoding="utf-8"))
         second = json.loads((result / "test_0002machine.json").read_text(encoding="utf-8"))
         all_document = json.loads((result / "allmachine.json").read_text(encoding="utf-8"))
         assert first["machine_cycle"][0]["galvo_0"][2] == [0, 0]
-        assert second["machine_cycle"][0]["galvo_0"][2] == [2, 0]
+        assert first["machine_cycle"][1]["galvo_0"][2] == [0, 1]
+        assert second["machine_cycle"][0]["galvo_0"][2] == [1, 0]
+        assert second["machine_cycle"][1]["galvo_0"][2] == [1, 1]
         assert first["machine_cycle"][0]["galvo_0"][1] == second["machine_cycle"][0]["galvo_0"][1]
         assert all_document["machine_cycle"][2]["galvo_0"][1] != second["machine_cycle"][0]["galvo_0"][1]
         assert [cycle["galvo_0"][0] for cycle in all_document["machine_cycle"]] == [
             0, 0, 1, 1, 2, 2, 3, 3
         ]
+        assert [cycle["galvo_0"][2] for cycle in all_document["machine_cycle"]] == [
+            [0, 0], [0, 1], [1, 0], [1, 1],
+            [0, 0], [0, 1], [1, 0], [1, 1],
+        ]
         assert len(all_document["laser_params"]) == 6
 
-        # Every job owns a separate patch set and layer feed changes the second layer Z.
-        assert np.load(result / "patches" / "1_0.npy", allow_pickle=False)[0, 2] == pytest.approx(-0.002)
-        assert np.load(result / "patches" / "3_0.npy", allow_pickle=False)[0, 2] == pytest.approx(-0.004)
+        # Laser-only differences share patch groups; layer feed differences do not.
+        assert {entry.name for entry in (result / "patches").iterdir()} == {
+            "0_0.npy", "0_1.npy", "1_0.npy", "1_1.npy",
+        }
+        assert np.load(result / "patches" / "0_1.npy", allow_pickle=False)[0, 2] == pytest.approx(-0.002)
+        assert np.load(result / "patches" / "1_1.npy", allow_pickle=False)[0, 2] == pytest.approx(-0.004)
+        csv_lines = (result / "parameter-map.csv").read_text(encoding="utf-8").splitlines()
+        assert "0_0;0_1" in csv_lines[1]
+        assert "1_0;1_1" in csv_lines[2]
         assert set(entry.name for entry in result.iterdir()) == {
             "patches", "allmachine.json", "parameter-map.csv", "pmt-layout.json",
             "test_0001machine.json", "test_0002machine.json",
@@ -232,6 +257,13 @@ def test_cli_request_file_generates_package(capsys: pytest.CaptureFixture[str]) 
         assert (output / "allmachine.json").is_file()
         assert (output / "cli_001machine.json").is_file()
         assert (output / "cli_002machine.json").is_file()
+        first = json.loads((output / "cli_001machine.json").read_text(encoding="utf-8"))
+        second = json.loads((output / "cli_002machine.json").read_text(encoding="utf-8"))
+        assert [cycle["galvo_0"][2] for cycle in first["machine_cycle"]] == [[0, 0], [0, 1]]
+        assert [cycle["galvo_0"][2] for cycle in second["machine_cycle"]] == [[0, 0], [0, 1]]
+        assert {entry.name for entry in (output / "patches").iterdir()} == {
+            "0_0.npy", "0_1.npy",
+        }
         assert "LaserPMT 生成完成" in capsys.readouterr().out
 
 

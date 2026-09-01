@@ -224,7 +224,7 @@ def _simulate_cycles(cycles: object) -> tuple[tuple[Decimal, Decimal, Decimal], 
             or type(reference[0]) is not int
             or type(reference[1]) is not int
             or reference[0] < 0
-            or reference[1] != 0
+            or reference[1] < 0
         ):
             raise ValueError("invalid patch reference")
         match = _COMMAND_RE.fullmatch(payload[1]) if type(payload[1]) is str else None
@@ -257,8 +257,8 @@ def load_base_machine(directory: Path) -> BaseMachine:
     if document["galvo_offset"] != machine.DEFAULT_GALVO_OFFSET:
         raise ValueError("base galvo_offset does not match the supported value")
     states = _simulate_cycles(document["machine_cycle"])
-    references = [cycle["galvo_0"][2][0] for cycle in document["machine_cycle"]]
-    if references != list(range(len(references))):
+    references = [cycle["galvo_0"][2] for cycle in document["machine_cycle"]]
+    if references != [[index, 0] for index in range(len(references))]:
         raise ValueError("base patch references must be sequential")
     if any(cycle["galvo_0"][0] != 0 for cycle in document["machine_cycle"]):
         raise ValueError("base machine cycles must select the editable first laser group")
@@ -391,16 +391,16 @@ def _format_coordinate(value: float) -> float:
 
 def _build_cycles(
     targets: list[tuple[float, float, float]],
-    patch_indices: list[int],
+    patch_references: list[tuple[int, int]],
     laser_indices: list[int],
 ) -> list[dict[str, object]]:
-    if not targets or not (len(targets) == len(patch_indices) == len(laser_indices)):
+    if not targets or not (len(targets) == len(patch_references) == len(laser_indices)):
         raise ValueError("cycle inputs must be non-empty and have matching lengths")
     previous_x = previous_y = previous_z = 0.0
     cycles: list[dict[str, object]] = []
     final = len(targets) - 1
-    for index, ((target_x, target_y, target_z), patch_index, laser_index) in enumerate(
-        zip(targets, patch_indices, laser_indices)
+    for index, ((target_x, target_y, target_z), patch_reference, laser_index) in enumerate(
+        zip(targets, patch_references, laser_indices)
     ):
         target_x = _format_coordinate(target_x)
         target_y = _format_coordinate(target_y)
@@ -413,7 +413,7 @@ def _build_cycles(
             command = "G91" + command
         if index == final:
             command += "G90"
-        cycles.append({"galvo_0": [laser_index, command, [patch_index, 0]]})
+        cycles.append({"galvo_0": [laser_index, command, list(patch_reference)]})
         previous_x, previous_y, previous_z = target_x, target_y, target_z
     return cycles
 
@@ -489,7 +489,7 @@ def _build_layout_document(
     base: BaseMachine,
     layout: MatrixLayout,
     combinations: tuple[dict[str, object], ...],
-    patch_ranges: tuple[tuple[int, ...], ...],
+    patch_ranges: tuple[tuple[tuple[int, int], ...], ...],
 ) -> dict[str, object]:
     jobs = []
     for cell, combination, owned in zip(layout.cells, combinations, patch_ranges):
@@ -508,7 +508,7 @@ def _build_layout_document(
             "laser_param_index": cell.job_index,
             "layer_feed_um": layer_feed,
             "parameters": combination,
-            "patch_indices": list(owned),
+            "patch_indices": [list(reference) for reference in owned],
         })
     return {
         "format_version": FORMAT_VERSION,
@@ -558,7 +558,10 @@ def _write_csv(
                 "laser_param_index": job["laser_param_index"],
                 "layer_feed_um": job["layer_feed_um"],
                 "json_file": job["json_file"],
-                "patch_indices": ";".join(str(index) for index in job["patch_indices"]),
+                "patch_indices": ";".join(
+                    f"{reference[0]}_{reference[1]}"
+                    for reference in job["patch_indices"]
+                ),
             }
             row.update(job["parameters"])
             writer.writerow(row)
@@ -577,8 +580,33 @@ def _validate_generated_package(
     }
     if {entry.name for entry in path.iterdir()} != expected_root:
         raise ValueError("LaserPMT package contains unexpected or missing root files")
+    group_indices: set[int] = set()
+    expected_references: set[tuple[int, int]] = set()
+    for job in jobs:
+        references = job["patch_indices"]
+        if type(references) is not list or len(references) != len(base.patches):
+            raise ValueError("LaserPMT job has invalid patch references")
+        job_groups: set[int] = set()
+        for local_index, reference in enumerate(references):
+            if (
+                type(reference) is not list
+                or len(reference) != 2
+                or type(reference[0]) is not int
+                or type(reference[1]) is not int
+                or reference[0] < 0
+                or reference[1] != local_index
+            ):
+                raise ValueError("LaserPMT job has invalid patch references")
+            job_groups.add(reference[0])
+            group_indices.add(reference[0])
+            expected_references.add((reference[0], reference[1]))
+        if len(job_groups) != 1:
+            raise ValueError("LaserPMT job must reference exactly one patch group")
+    if group_indices != set(range(len(group_indices))):
+        raise ValueError("LaserPMT patch groups must be sequential")
     if {entry.name for entry in (path / "patches").iterdir()} != {
-        f"{index}_0.npy" for index in range(patch_count)
+        f"{group_index}_{local_index}.npy"
+        for group_index, local_index in expected_references
     }:
         raise ValueError("LaserPMT patches directory is incomplete")
     reloaded_layout = _load_json(path / "pmt-layout.json")
@@ -596,7 +624,10 @@ def _validate_generated_package(
             csv_row.get("identifier") != job["identifier"]
             or csv_row.get("json_file") != job["json_file"]
             or csv_row.get("patch_indices")
-            != ";".join(str(index) for index in job["patch_indices"])
+            != ";".join(
+                f"{reference[0]}_{reference[1]}"
+                for reference in job["patch_indices"]
+            )
         ):
             raise ValueError("parameter-map.csv does not match the layout")
     all_document = _load_json(path / "allmachine.json")
@@ -620,14 +651,17 @@ def _validate_generated_package(
         if numbered["laser_params"][0] != all_document["laser_params"][job["laser_param_index"]]:
             raise ValueError("numbered and all-machine laser parameters differ")
         for local_index, base_patch in enumerate(base.patches):
-            global_index = job["patch_indices"][local_index]
+            reference = job["patch_indices"][local_index]
             numbered_payload = numbered["machine_cycle"][local_index]["galvo_0"]
             all_payload = all_document["machine_cycle"][cursor]["galvo_0"]
-            if numbered_payload[2] != [global_index, 0] or all_payload[2] != [global_index, 0]:
+            if numbered_payload[2] != reference or all_payload[2] != reference:
                 raise ValueError("JSON patch ownership does not match the layout")
             if numbered_payload[0] != 0 or all_payload[0] != job["laser_param_index"]:
                 raise ValueError("JSON laser parameter index does not match the layout")
-            patch = np.load(path / "patches" / f"{global_index}_0.npy", allow_pickle=False)
+            patch = np.load(
+                path / "patches" / f"{reference[0]}_{reference[1]}.npy",
+                allow_pickle=False,
+            )
             if patch.dtype.str != "<f4" or patch.shape != base_patch.array.shape:
                 raise ValueError("generated patch shape or dtype is invalid")
             expected_z = np.float32(-base_patch.layer_index * job["layer_feed_um"] / 1000)
@@ -653,6 +687,18 @@ def _validate_generated_package(
             if all_states[cursor] != expected_global:
                 raise ValueError("allmachine.json does not reach the planned global target")
             cursor += 1
+
+
+def _patch_groups_equal(
+    first: tuple[np.ndarray, ...],
+    second: tuple[np.ndarray, ...],
+) -> bool:
+    return len(first) == len(second) and all(
+        left.dtype == right.dtype
+        and left.shape == right.shape
+        and np.array_equal(left, right)
+        for left, right in zip(first, second)
+    )
 
 
 def generate_laser_pmt(request: LaserPmtRequest) -> Path:
@@ -693,24 +739,23 @@ def generate_laser_pmt(request: LaserPmtRequest) -> Path:
         patches_path = temp_path / "patches"
         patches_path.mkdir()
 
-        patch_ranges: list[tuple[int, ...]] = []
+        patch_ranges: list[tuple[tuple[int, int], ...]] = []
+        patch_groups: list[tuple[np.ndarray, ...]] = []
         all_targets: list[tuple[float, float, float]] = []
-        all_patch_indices: list[int] = []
+        all_patch_references: list[tuple[int, int]] = []
         all_laser_indices: list[int] = []
         all_laser_params: list[dict[str, object]] = []
         for job_index, (cell, combination) in enumerate(zip(layout.cells, combinations)):
             laser_params, layer_feed = _job_values(base, combination)
             all_laser_params.append(deepcopy(laser_params))
-            owned: list[int] = []
+            generated_group: list[np.ndarray] = []
             local_targets: list[tuple[float, float, float]] = []
             for base_patch in base.patches:
-                global_index = job_index * len(base.patches) + base_patch.index
-                owned.append(global_index)
                 patch = base_patch.array.copy()
                 z = np.float32(-base_patch.layer_index * layer_feed / 1000)
                 patch[:, 2] = z
                 patch[:, 5] = z
-                np.save(patches_path / f"{global_index}_0.npy", patch)
+                generated_group.append(patch)
                 local_target = (base_patch.center_x, base_patch.center_y, float(z))
                 local_targets.append(local_target)
                 all_targets.append((
@@ -718,15 +763,32 @@ def generate_laser_pmt(request: LaserPmtRequest) -> Path:
                     base_patch.center_y + cell.translate_y,
                     float(z),
                 ))
-                all_patch_indices.append(global_index)
                 all_laser_indices.append(job_index)
-            patch_ranges.append(tuple(owned))
+            group = tuple(generated_group)
+            group_index = next(
+                (
+                    index for index, existing in enumerate(patch_groups)
+                    if _patch_groups_equal(group, existing)
+                ),
+                None,
+            )
+            if group_index is None:
+                group_index = len(patch_groups)
+                patch_groups.append(group)
+                for local_index, patch in enumerate(group):
+                    np.save(patches_path / f"{group_index}_{local_index}.npy", patch)
+            owned = tuple(
+                (group_index, local_index)
+                for local_index in range(len(group))
+            )
+            all_patch_references.extend(owned)
+            patch_ranges.append(owned)
             numbered_document = {
                 "laser_params": [deepcopy(laser_params), *deepcopy(machine.DEFAULT_LASER_PARAMS[1:])],
                 "galvo_offset": deepcopy(machine.DEFAULT_GALVO_OFFSET),
                 "machine_cycle": _build_cycles(
                     local_targets,
-                    owned,
+                    list(owned),
                     [0] * len(owned),
                 ),
             }
@@ -735,7 +797,11 @@ def generate_laser_pmt(request: LaserPmtRequest) -> Path:
         all_document = {
             "laser_params": [*all_laser_params, *deepcopy(machine.DEFAULT_LASER_PARAMS[1:])],
             "galvo_offset": deepcopy(machine.DEFAULT_GALVO_OFFSET),
-            "machine_cycle": _build_cycles(all_targets, all_patch_indices, all_laser_indices),
+            "machine_cycle": _build_cycles(
+                all_targets,
+                all_patch_references,
+                all_laser_indices,
+            ),
         }
         _write_json(temp_path / "allmachine.json", all_document)
         layout_document = _build_layout_document(
