@@ -158,6 +158,60 @@ def make_workflow_request_document(
     }
 
 
+def make_version_three_request_document(root: Path, first: Path, second: Path) -> dict[str, object]:
+    legacy = make_workflow_request_document(root, first)
+    workflow = legacy["workflow"]
+    workflow["format_version"] = 3
+    workflow.pop("base_machine_identity")
+    workflow["numbering_state"] = {
+        "pmt_columns": 2,
+        "next_pmt_number": 4,
+        "next_creation_order": 1,
+    }
+    base_node = workflow.pop("base_node")
+    workflow["base_nodes"] = [
+        {**base_node, "id": "base-a", "source_id": "source-a"},
+        {**base_node, "id": "base-b", "source_id": "source-b"},
+    ]
+    for index, target in enumerate(workflow["targets"]):
+        source_id = "source-a" if index == 0 else "source-b"
+        target["source_id"] = source_id
+        target["native_width"] = 4
+        target["native_height"] = 2
+        target["is_size_locked"] = index == 0
+        target["direct_parameter_overrides"] = {}
+        if index == 1:
+            target["bounds"] = {"left": 10, "top": 1, "width": 6, "height": 3}
+    for index, target in enumerate(workflow["compiled_targets"]):
+        source_id = "source-a" if index == 0 else "source-b"
+        target["source_id"] = source_id
+        target["native_width"] = 4
+        target["native_height"] = 2
+        target["scale_x"] = 1 if index == 0 else 1.5
+        target["scale_y"] = 1 if index == 0 else 1.5
+        if index == 1:
+            target["bounds"] = {"left": 10, "top": 1, "width": 6, "height": 3}
+    return {
+        "request_version": 3,
+        "output_dir": str(root),
+        "output_name": "LaserPMT_multi_source",
+        "owner_token": "workflow-v3-owner",
+        "sources": [
+            {
+                "id": "source-a", "directory": str(first), "identity": str(first),
+                "display_name": "A", "mark": "A", "color_argb": 0xFF0EA5E9,
+                "native_width": 4, "native_height": 2, "fingerprint": "fingerprint-a",
+            },
+            {
+                "id": "source-b", "directory": str(second), "identity": str(second),
+                "display_name": "B", "mark": "B", "color_argb": 0xFFF97316,
+                "native_width": 4, "native_height": 2, "fingerprint": "fingerprint-b",
+            },
+        ],
+        "workflow": workflow,
+    }
+
+
 def test_loads_version_two_explicit_targets_with_number_gap() -> None:
     with tempfile.TemporaryDirectory() as folder:
         root = Path(folder)
@@ -174,6 +228,24 @@ def test_loads_version_two_explicit_targets_with_number_gap() -> None:
     assert [target.pmt_number for target in request.targets] == [1, 3]
     assert [target.identifier for target in request.targets] == ["test_0001", "test_0003"]
     assert [(target.left, target.top) for target in request.targets] == [(1, 1), (10, 1)]
+
+
+def test_generates_version_three_multi_source_targets_and_scales_patch_xy() -> None:
+    with tempfile.TemporaryDirectory() as folder:
+        root = Path(folder)
+        first = write_base_machine(root / "first")
+        second = write_base_machine(root / "second")
+        request = pmt._make_request(make_version_three_request_document(root, first, second))
+
+        result = pmt.generate_laser_pmt(request)
+
+        layout = json.loads((result / "pmt-layout.json").read_text(encoding="utf-8"))
+        jobs = layout["generation"]["jobs"]
+        assert [job["source_id"] for job in jobs] == ["source-a", "source-b"]
+        assert jobs[1]["scale_x"] == 1.5
+        scaled = np.load(result / "patches" / f"{jobs[1]['patch_indices'][0][0]}_0.npy")
+        original = np.load(second / "patches" / "0_0.npy")
+        np.testing.assert_array_equal(scaled[:, [0, 1, 3, 4]], original[:, [0, 1, 3, 4]] * 1.5)
 
 
 def test_rejects_compiled_parameters_that_do_not_match_workflow_connections() -> None:
