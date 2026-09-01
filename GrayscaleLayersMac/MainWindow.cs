@@ -1172,6 +1172,7 @@ public sealed class MainWindow : Window
             _pipelinePmtWorkflowCanvas.FitWorkpiece();
         };
         UiTheme.RemoveFlyoutOuterChrome(matrixFlyout);
+        matrix.Flyout = matrixFlyout;
         matrix.Click += (_, _) => matrixFlyout.ShowAt(matrix);
 
         var sources = new Button { Content = UiIcons.Create(UiIcon.Source) };
@@ -1180,6 +1181,7 @@ public sealed class MainWindow : Window
         var sourceFlyout = CreatePmtSourceFlyout();
         sourceFlyout.Opening += (_, _) =>
             sourceFlyout.Content = CreatePmtSourceFlyout().Content;
+        sources.Flyout = sourceFlyout;
         sources.Click += (_, _) => sourceFlyout.ShowAt(sources);
 
         var renumber = new Button { Content = UiIcons.Create(UiIcon.Renumber) };
