@@ -433,6 +433,63 @@ public static class LaserPmtWorkflowEditor
         return Rebuild(workflow, pmtColumns: columns);
     }
 
+    public static LaserPmtWorkflow SetWorkpiece(
+        LaserPmtWorkflow workflow,
+        LaserPmtWorkflowBounds workpiece)
+    {
+        ArgumentNullException.ThrowIfNull(workflow);
+        if (!workpiece.IsFinite || !workpiece.HasPositiveSize)
+            throw new ArgumentException("工件边界必须是正的有限数值。", nameof(workpiece));
+        return Rebuild(workflow, workpiece: workpiece);
+    }
+
+    public static LaserPmtWorkflow SetPmtNumber(
+        LaserPmtWorkflow workflow,
+        string targetId,
+        int number)
+    {
+        if (number <= 0)
+            throw new ArgumentOutOfRangeException(nameof(number));
+        var current = workflow.Targets.OfType<LaserPmtTarget>()
+            .FirstOrDefault(target => target.Id == targetId)
+            ?? throw new ArgumentException($"找不到 PMT：{targetId}", nameof(targetId));
+        if (current.Number == number)
+            return workflow;
+        var occupied = workflow.Targets.OfType<LaserPmtTarget>()
+            .FirstOrDefault(target => target.Number == number);
+        var targets = workflow.Targets.Select(target =>
+        {
+            if (target is not LaserPmtTarget pmt)
+                return target;
+            if (pmt.Id == current.Id)
+                return (LaserPmtWorkflowTarget)(pmt with { Number = number });
+            if (occupied is not null && pmt.Id == occupied.Id)
+                return (LaserPmtWorkflowTarget)(pmt with { Number = current.Number });
+            return target;
+        }).ToArray();
+        return Rebuild(
+            workflow,
+            targets: targets,
+            nextPmtNumber: Math.Max(workflow.NextPmtNumber, number + 1));
+    }
+
+    public static LaserPmtWorkflow RenumberByPosition(LaserPmtWorkflow workflow)
+    {
+        ArgumentNullException.ThrowIfNull(workflow);
+        var numbers = workflow.Targets.OfType<LaserPmtTarget>()
+            .OrderBy(target => target.Bounds.Top)
+            .ThenBy(target => target.Bounds.Left)
+            .Select((target, index) => (target.Id, Number: index + 1))
+            .ToDictionary(item => item.Id, item => item.Number, StringComparer.Ordinal);
+        var targets = workflow.Targets.Select(target => target is LaserPmtTarget pmt
+            ? (LaserPmtWorkflowTarget)(pmt with { Number = numbers[pmt.Id] })
+            : target).ToArray();
+        return Rebuild(
+            workflow,
+            targets: targets,
+            nextPmtNumber: Math.Max(workflow.NextPmtNumber, numbers.Count + 1));
+    }
+
     public static LaserPmtWorkflow AutoArrangePmts(
         LaserPmtWorkflow workflow,
         double unitWidth,
@@ -571,6 +628,7 @@ public static class LaserPmtWorkflowEditor
 
     private static LaserPmtWorkflow Rebuild(
         LaserPmtWorkflow workflow,
+        LaserPmtWorkflowBounds? workpiece = null,
         LaserPmtBaseParameterNode? baseNode = null,
         IReadOnlyList<LaserPmtSingleParameterNode>? parameterNodes = null,
         IReadOnlyList<LaserPmtWorkflowTarget>? targets = null,
@@ -584,7 +642,7 @@ public static class LaserPmtWorkflowEditor
             baseNodes[0] = baseNode;
         return new LaserPmtWorkflow(
             workflow.Sources,
-            workflow.Workpiece,
+            workpiece ?? workflow.Workpiece,
             workflow.HatchSpacing,
             workflow.Viewport,
             baseNodes,
