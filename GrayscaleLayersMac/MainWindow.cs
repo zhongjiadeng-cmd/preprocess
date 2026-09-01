@@ -109,6 +109,8 @@ public sealed class MainWindow : Window
     private readonly TextBox _pipelineInputBox = new() { Watermark = "请选择一张灰度纹理图" };
     private readonly TextBox _pipelineLayerOutputBox = new() { Watermark = "请选择分层 TIFF 保存目录" };
     private readonly TextBox _pipelineDxfOutputBox = new() { Watermark = "请选择 DXF 保存目录" };
+    // 上一次由分层目录自动同步到 DXF 目录的值；为 null 表示当前 DXF 目录是用户（或导入）显式指定的，不再自动跟随。
+    private string? _pipelineDxfAutoSyncedPath;
     private readonly NumericUpDown _pipelineLayersBox = MakeNumberBox(10, 1, 255, 0, showButtons: false);
     private readonly NumericUpDown _pipelineMinLevelBox = MakeNumberBox(0, 1, 254, 0, showButtons: false);
     private readonly NumericUpDown _pipelineMaxLevelBox = MakeNumberBox(255, 1, 255, 0, showButtons: false);
@@ -338,9 +340,21 @@ public sealed class MainWindow : Window
         var pipelineDxfOutputButton = new Button { Content = "选择目录…" };
         pipelineInputButton.Click += async (_, _) => await PickPipelineInputAsync();
         pipelineLayerOutputButton.Click += async (_, _) =>
-            await PickPipelineFolderAsync(_pipelineLayerOutputBox, "选择分层 TIFF 保存目录");
+            await PickPipelineLayerDirectoryAsync();
         pipelineDxfOutputButton.Click += async (_, _) =>
-            await PickPipelineFolderAsync(_pipelineDxfOutputBox, "选择 DXF 保存目录");
+        {
+            var path = await PickPipelineFolderPathAsync("选择 DXF 保存目录");
+            if (path is null)
+                return;
+            _pipelineDxfOutputBox.Text = path;
+            MarkDxfOutputDirectoryExplicit();
+        };
+        ToolTip.SetTip(
+            pipelineLayerOutputButton,
+            "选择后，DXF 目录会默认同步为同一个目录。");
+        ToolTip.SetTip(
+            pipelineDxfOutputButton,
+            "默认与分层 TIFF 目录相同；单独选择过之后就不再自动跟随。");
         _pipelinePmtPanel.PickBaseDirectoryRequested += async (_, _) =>
             await ImportMachineDirectoryAsync();
         _pipelinePmtPanel.ConfigurationChanged += (_, _) => UpdatePipelineReadiness();
@@ -422,8 +436,8 @@ public sealed class MainWindow : Window
         _pipelineLayerOutputBox.TextChanged += (_, _) => UpdatePipelineReadiness();
         _pipelineDxfOutputBox.TextChanged += (_, _) => UpdatePipelineReadiness();
         _pipelineInputBox.LostFocus += async (_, _) => await OnPipelineInputBoxLostFocusAsync();
-        _pipelineLayerOutputBox.LostFocus += (_, _) => NormalizeDirectoryBox(_pipelineLayerOutputBox);
-        _pipelineDxfOutputBox.LostFocus += (_, _) => NormalizeDirectoryBox(_pipelineDxfOutputBox);
+        _pipelineLayerOutputBox.LostFocus += (_, _) => OnPipelineLayerDirectoryBoxLostFocus();
+        _pipelineDxfOutputBox.LostFocus += (_, _) => OnPipelineDxfDirectoryBoxLostFocus();
         UpdatePipelineReadiness();
 
         var pipelineInspector = new StackPanel
@@ -1713,8 +1727,7 @@ public sealed class MainWindow : Window
         var parent = Path.GetDirectoryName(path)!;
         if (string.IsNullOrWhiteSpace(_pipelineLayerOutputBox.Text))
             _pipelineLayerOutputBox.Text = parent;
-        if (string.IsNullOrWhiteSpace(_pipelineDxfOutputBox.Text))
-            _pipelineDxfOutputBox.Text = parent;
+        SyncDxfOutputWithLayerOutput();
 
         await LoadTexturePreviewAsync(
             path,
@@ -2040,7 +2053,10 @@ public sealed class MainWindow : Window
         _pipelineSharedPreview.Selection.CompleteDxfLoad();
         SelectSharedPreview(_pipelineSharedPreview, SharedPreviewKind.Dxf);
         if (directory is not null)
+        {
             _pipelineDxfOutputBox.Text = directory;
+            MarkDxfOutputDirectoryExplicit();
+        }
     }
 
     private static string? DirectoryOf(IReadOnlyList<string> files) =>
@@ -2134,11 +2150,60 @@ public sealed class MainWindow : Window
         }
     }
 
-    private async Task PickPipelineFolderAsync(TextBox target, string title)
+    /// <summary>
+    /// 选择分层 TIFF 保存目录：选定后 DXF 目录默认跟随到同一目录，
+    /// 除非用户此前已经把 DXF 目录改成了别的路径。
+    /// </summary>
+    private async Task PickPipelineLayerDirectoryAsync()
     {
-        var path = await PickPipelineFolderPathAsync(title);
-        if (path is not null)
-            target.Text = path;
+        var path = await PickPipelineFolderPathAsync("选择分层 TIFF 保存目录");
+        if (path is null)
+            return;
+        _pipelineLayerOutputBox.Text = path;
+        SyncDxfOutputWithLayerOutput();
+    }
+
+    /// <summary>
+    /// 把 DXF 目录同步成分层 TIFF 目录。
+    /// 只在 DXF 目录为空、或仍是上一次自动同步过去的那个目录时才同步，
+    /// 这样用户手动改过 DXF 目录之后就不会被再次覆盖。
+    /// </summary>
+    private void SyncDxfOutputWithLayerOutput()
+    {
+        var layerPath = _pipelineLayerOutputBox.Text?.Trim();
+        if (string.IsNullOrWhiteSpace(layerPath))
+            return;
+        if (!PipelineOutputDirectorySync.ShouldFollowLayerDirectory(
+                _pipelineDxfOutputBox.Text,
+                _pipelineDxfAutoSyncedPath))
+            return;
+        _pipelineDxfOutputBox.Text = layerPath;
+        _pipelineDxfAutoSyncedPath = layerPath;
+    }
+
+    private void OnPipelineLayerDirectoryBoxLostFocus()
+    {
+        NormalizeDirectoryBox(_pipelineLayerOutputBox);
+        SyncDxfOutputWithLayerOutput();
+    }
+
+    /// <summary>
+    /// DXF 目录输入框提交：先规范化路径，再判断用户是否手动改过。
+    /// 一旦不再是自动同步过来的值，就停止跟随分层目录。
+    /// </summary>
+    private void OnPipelineDxfDirectoryBoxLostFocus()
+    {
+        NormalizeDirectoryBox(_pipelineDxfOutputBox);
+        if (_pipelineDxfAutoSyncedPath is not null &&
+            !PipelineOutputDirectorySync.PathsEqual(
+                _pipelineDxfOutputBox.Text, _pipelineDxfAutoSyncedPath))
+            _pipelineDxfAutoSyncedPath = null;
+    }
+
+    /// <summary>用户显式指定 DXF 目录（单独选择或导入）之后，不再自动跟随分层目录。</summary>
+    private void MarkDxfOutputDirectoryExplicit()
+    {
+        _pipelineDxfAutoSyncedPath = null;
     }
 
     private async Task<string?> PickPipelineFolderPathAsync(string title)
