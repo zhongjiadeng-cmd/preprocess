@@ -24,6 +24,7 @@ import dxf_to_machine_file as machine
 
 MAX_JOBS = 1_000
 FORMAT_VERSION = 1
+WORKFLOW_FORMAT_VERSION = 2
 LAYER_FEED_KEY = "layerFeedUm"
 BOOLEAN_KEYS = frozenset(("scan_ahead", "sky_writing"))
 INTEGER_KEYS = frozenset(machine.DEFAULT_LASER_PARAMS[0]) - BOOLEAN_KEYS
@@ -115,6 +116,34 @@ class LaserPmtRequest:
     numbering: Numbering
     parameters: tuple[ParameterValues, ...]
     owner_token: str
+
+
+@dataclass(frozen=True)
+class WorkflowTargetPlan:
+    target_id: str
+    kind: str
+    identifier: str
+    pmt_number: int | None
+    creation_order: int | None
+    timestamp_text: str | None
+    left: float
+    top: float
+    width: float
+    height: float
+    parameters: dict[str, object]
+
+
+@dataclass(frozen=True)
+class LaserPmtWorkflowRequest:
+    base_machine_dir: Path
+    output_dir: Path
+    output_name: str
+    owner_token: str
+    workpiece_width: float
+    workpiece_height: float
+    hatch_spacing: float
+    targets: tuple[WorkflowTargetPlan, ...]
+    workflow_document: dict[str, object]
 
 
 def _reject_duplicate_json_keys(pairs: list[tuple[str, object]]) -> dict[str, object]:
@@ -425,7 +454,180 @@ def _write_json(path: Path, document: object) -> None:
     )
 
 
-def _make_request(document: object) -> LaserPmtRequest:
+def _require_finite_number(value: object, label: str) -> float:
+    if type(value) not in (int, float) or not math.isfinite(float(value)):
+        raise ValueError(f"{label} must be a finite number")
+    return float(value)
+
+
+def _parse_workflow_bounds(value: object, label: str) -> tuple[float, float, float, float]:
+    if type(value) is not dict or set(value) != {"left", "top", "width", "height"}:
+        raise ValueError(f"{label} must contain exactly left, top, width, and height")
+    left = _require_finite_number(value["left"], f"{label} left")
+    top = _require_finite_number(value["top"], f"{label} top")
+    width = _require_finite_positive(value["width"], f"{label} width")
+    height = _require_finite_positive(value["height"], f"{label} height")
+    return left, top, width, height
+
+
+def _parse_complete_parameters(value: object, label: str) -> dict[str, object]:
+    if type(value) is not dict or set(value) != SUPPORTED_KEYS:
+        raise ValueError(f"{label} must contain every supported parameter exactly once")
+    result: dict[str, object] = {}
+    for name in (*machine.DEFAULT_LASER_PARAMS[0].keys(), LAYER_FEED_KEY):
+        parsed = parse_explicit_values(name, [value[name]])
+        result[name] = parsed.values[0]
+    return result
+
+
+def _make_workflow_request(document: dict[str, object]) -> LaserPmtWorkflowRequest:
+    if set(document) != {
+        "request_version", "base_machine_dir", "output_dir", "output_name",
+        "owner_token", "workflow"
+    } or document["request_version"] != WORKFLOW_FORMAT_VERSION:
+        raise ValueError("workflow request must contain exactly the version two fields")
+    for name in ("base_machine_dir", "output_dir", "output_name"):
+        if type(document[name]) is not str or not document[name]:
+            raise ValueError(f"{name} must be a non-empty string")
+    owner_token = document["owner_token"]
+    machine._validate_owner_token(owner_token)
+    workflow = document["workflow"]
+    if type(workflow) is not dict or set(workflow) != {
+        "format_version", "coordinate_system", "base_machine_identity", "workpiece",
+        "hatch_spacing", "viewport", "numbering_state", "base_node",
+        "parameter_nodes", "targets", "connections", "compiled_targets", "generation"
+    }:
+        raise ValueError("workflow document has an invalid version two structure")
+    if workflow["format_version"] != WORKFLOW_FORMAT_VERSION or workflow["generation"] is not None:
+        raise ValueError("workflow request must contain an ungenerated version two workflow")
+    coordinate = workflow["coordinate_system"]
+    if type(coordinate) is not dict or coordinate != {"origin": "workpiece-top-left"}:
+        raise ValueError("workflow coordinate system is unsupported")
+    if type(workflow["base_machine_identity"]) is not str or not workflow["base_machine_identity"]:
+        raise ValueError("base machine identity must be a non-empty string")
+    workpiece_left, workpiece_top, workpiece_width, workpiece_height = _parse_workflow_bounds(
+        workflow["workpiece"], "workflow workpiece"
+    )
+    if workpiece_left != 0 or workpiece_top != 0:
+        raise ValueError("workflow workpiece origin must be zero")
+    hatch_spacing = _require_finite_positive(workflow["hatch_spacing"], "hatch spacing")
+    source_targets = workflow["targets"]
+    compiled_targets = workflow["compiled_targets"]
+    if type(source_targets) is not list or type(compiled_targets) is not list:
+        raise ValueError("workflow targets must be arrays")
+    if not 1 <= len(compiled_targets) <= MAX_JOBS or len(source_targets) != len(compiled_targets):
+        raise ValueError("workflow target count is invalid")
+
+    source_by_id: dict[str, dict[str, object]] = {}
+    for source in source_targets:
+        if type(source) is not dict or type(source.get("id")) is not str:
+            raise ValueError("workflow source target is invalid")
+        target_type = source.get("type")
+        expected = (
+            {"type", "id", "number", "bounds", "was_manually_moved"}
+            if target_type == "pmt"
+            else {"type", "id", "creation_order", "text", "bounds"}
+            if target_type == "timestamp"
+            else None
+        )
+        if expected is None or set(source) != expected or source["id"] in source_by_id:
+            raise ValueError("workflow source target is invalid or duplicated")
+        _parse_workflow_bounds(source["bounds"], "source target bounds")
+        source_by_id[source["id"]] = source
+
+    plans: list[WorkflowTargetPlan] = []
+    seen_identifiers: set[str] = set()
+    seen_pmt_numbers: set[int] = set()
+    seen_creation_orders: set[int] = set()
+    for compiled in compiled_targets:
+        if type(compiled) is not dict:
+            raise ValueError("compiled target must be an object")
+        kind = compiled.get("kind")
+        expected = (
+            {"target_id", "kind", "identifier", "pmt_number", "bounds", "parameters"}
+            if kind == "pmt"
+            else {
+                "target_id", "kind", "identifier", "creation_order", "timestamp_text",
+                "bounds", "parameters"
+            }
+            if kind == "timestamp"
+            else None
+        )
+        if expected is None or set(compiled) != expected:
+            raise ValueError("compiled target has invalid fields")
+        target_id = compiled["target_id"]
+        identifier = compiled["identifier"]
+        if (
+            type(target_id) is not str or target_id not in source_by_id
+            or type(identifier) is not str
+            or re.fullmatch(r"[A-Za-z0-9_-]{1,96}", identifier) is None
+            or identifier in seen_identifiers
+        ):
+            raise ValueError("compiled target identity is invalid or duplicated")
+        seen_identifiers.add(identifier)
+        source = source_by_id[target_id]
+        if source["type"] != kind or source["bounds"] != compiled["bounds"]:
+            raise ValueError("compiled target does not match its source target")
+        left, top, width, height = _parse_workflow_bounds(compiled["bounds"], "compiled bounds")
+        if left < 0 or top < 0 or left + width > workpiece_width or top + height > workpiece_height:
+            raise ValueError("compiled target is outside the workpiece")
+        parameters = _parse_complete_parameters(compiled["parameters"], "compiled parameters")
+        if kind == "pmt":
+            number = _require_plain_int(compiled["pmt_number"], "PMT number")
+            if number <= 0 or number in seen_pmt_numbers or source["number"] != number:
+                raise ValueError("PMT number is invalid or duplicated")
+            seen_pmt_numbers.add(number)
+            creation_order = None
+            timestamp_text = None
+        else:
+            number = None
+            creation_order = _require_plain_int(compiled["creation_order"], "timestamp creation order")
+            timestamp_text = compiled["timestamp_text"]
+            if (
+                creation_order <= 0 or creation_order in seen_creation_orders
+                or source["creation_order"] != creation_order
+                or type(timestamp_text) is not str
+                or re.fullmatch(r"[0-9]{8}", timestamp_text) is None
+                or source["text"] != timestamp_text
+            ):
+                raise ValueError("timestamp metadata is invalid or duplicated")
+            seen_creation_orders.add(creation_order)
+        plans.append(WorkflowTargetPlan(
+            target_id, kind, identifier, number, creation_order, timestamp_text,
+            left, top, width, height, parameters,
+        ))
+    expected_order = sorted(
+        plans,
+        key=lambda target: (
+            0 if target.kind == "pmt" else 1,
+            target.pmt_number if target.kind == "pmt" else target.creation_order,
+        ),
+    )
+    if plans != expected_order:
+        raise ValueError("compiled targets are not in machining order")
+    for index, first in enumerate(plans):
+        for second in plans[index + 1:]:
+            if (
+                max(first.left, second.left) < min(first.left + first.width, second.left + second.width)
+                and max(first.top, second.top) < min(first.top + first.height, second.top + second.height)
+            ):
+                raise ValueError("workflow targets overlap")
+    return LaserPmtWorkflowRequest(
+        Path(document["base_machine_dir"]),
+        Path(document["output_dir"]),
+        machine.resolve_output_name(document["output_name"], datetime.now()),
+        owner_token,
+        workpiece_width,
+        workpiece_height,
+        hatch_spacing,
+        tuple(plans),
+        deepcopy(workflow),
+    )
+
+
+def _make_request(document: object) -> LaserPmtRequest | LaserPmtWorkflowRequest:
+    if type(document) is dict and document.get("request_version") == WORKFLOW_FORMAT_VERSION:
+        return _make_workflow_request(document)
     if type(document) is not dict or set(document) != {
         "base_machine_dir", "output_dir", "output_name", "workpiece_width",
         "workpiece_height", "columns", "numbering", "parameters", "owner_token"
@@ -465,7 +667,7 @@ def _make_request(document: object) -> LaserPmtRequest:
     )
 
 
-def load_request(path: Path) -> LaserPmtRequest:
+def load_request(path: Path) -> LaserPmtRequest | LaserPmtWorkflowRequest:
     return _make_request(_load_json(path))
 
 
@@ -535,6 +737,54 @@ def _build_layout_document(
     }
 
 
+def _build_workflow_layout_document(
+    request: LaserPmtWorkflowRequest,
+    base: BaseMachine,
+    layout: MatrixLayout,
+    combinations: tuple[dict[str, object], ...],
+    patch_ranges: tuple[tuple[tuple[int, int], ...], ...],
+) -> dict[str, object]:
+    document = deepcopy(request.workflow_document)
+    jobs: list[dict[str, object]] = []
+    for cell, combination, owned in zip(layout.cells, combinations, patch_ranges):
+        _, layer_feed = _job_values(base, combination)
+        jobs.append({
+            "index": cell.job_index,
+            "target_id": request.targets[cell.job_index].target_id,
+            "target_type": "pmt",
+            "identifier": cell.identifier,
+            "row": cell.row,
+            "column": cell.column,
+            "bounds": {
+                "left": cell.left, "top": cell.top,
+                "width": cell.width, "height": cell.height,
+            },
+            "machine_translation": {"x": cell.translate_x, "y": cell.translate_y},
+            "json_file": f"{cell.identifier}machine.json",
+            "laser_param_index": cell.job_index,
+            "layer_feed_um": layer_feed,
+            "parameters": combination,
+            "patch_indices": [list(reference) for reference in owned],
+        })
+    document["generation"] = {
+        "unit": {"width": base.width, "height": base.height},
+        "jobs": jobs,
+    }
+    return document
+
+
+def _layout_jobs(layout_document: dict[str, object]) -> list[dict[str, object]]:
+    if layout_document.get("format_version") == WORKFLOW_FORMAT_VERSION:
+        generation = layout_document.get("generation")
+        if type(generation) is not dict or type(generation.get("jobs")) is not list:
+            raise ValueError("version two layout is missing generated jobs")
+        return generation["jobs"]
+    jobs = layout_document.get("jobs")
+    if type(jobs) is not list:
+        raise ValueError("layout is missing jobs")
+    return jobs
+
+
 def _write_csv(
     path: Path,
     parameter_order: list[str],
@@ -548,7 +798,7 @@ def _write_csv(
     with path.open("w", encoding="utf-8", newline="") as stream:
         writer = csv.DictWriter(stream, fieldnames=fieldnames)
         writer.writeheader()
-        for job in layout_document["jobs"]:
+        for job in _layout_jobs(layout_document):
             row = {
                 "identifier": job["identifier"],
                 "row": job["row"],
@@ -572,7 +822,7 @@ def _validate_generated_package(
     base: BaseMachine,
     layout_document: dict[str, object],
 ) -> None:
-    jobs = layout_document["jobs"]
+    jobs = _layout_jobs(layout_document)
     patch_count = len(jobs) * len(base.patches)
     expected_root = {
         "patches", "allmachine.json", "parameter-map.csv", "pmt-layout.json",
@@ -701,17 +951,54 @@ def _patch_groups_equal(
     )
 
 
-def generate_laser_pmt(request: LaserPmtRequest) -> Path:
+def generate_laser_pmt(request: LaserPmtRequest | LaserPmtWorkflowRequest) -> Path:
     base = load_base_machine(request.base_machine_dir)
-    combinations = expand_combinations(request.parameters)
-    identifiers = format_identifiers(request.numbering, len(combinations))
-    layout = calculate_layout(
-        base,
-        identifiers,
-        request.workpiece_width,
-        request.workpiece_height,
-        request.columns,
-    )
+    if isinstance(request, LaserPmtWorkflowRequest):
+        if any(target.kind != "pmt" for target in request.targets):
+            raise ValueError("timestamp target generation is not implemented")
+        if any(
+            not math.isclose(target.width, base.width, rel_tol=0, abs_tol=1e-9)
+            or not math.isclose(target.height, base.height, rel_tol=0, abs_tol=1e-9)
+            for target in request.targets
+        ):
+            raise ValueError("PMT target size must match the base machine footprint")
+        combinations = tuple(target.parameters for target in request.targets)
+        cells = tuple(
+            LayoutCell(
+                index,
+                target.identifier,
+                0,
+                index,
+                target.left,
+                target.top,
+                target.width,
+                target.height,
+                target.left - base.min_x,
+                -target.top - base.max_y,
+            )
+            for index, target in enumerate(request.targets)
+        )
+        layout = MatrixLayout(
+            request.workpiece_width,
+            request.workpiece_height,
+            1,
+            len(cells),
+            0,
+            0,
+            cells,
+        )
+        parameter_order = [*machine.DEFAULT_LASER_PARAMS[0].keys(), LAYER_FEED_KEY]
+    else:
+        combinations = expand_combinations(request.parameters)
+        identifiers = format_identifiers(request.numbering, len(combinations))
+        layout = calculate_layout(
+            base,
+            identifiers,
+            request.workpiece_width,
+            request.workpiece_height,
+            request.columns,
+        )
+        parameter_order = [parameter.name for parameter in request.parameters]
     output_dir = request.output_dir.absolute()
     if not output_dir.is_dir():
         raise ValueError("LaserPMT output parent does not exist")
@@ -804,17 +1091,19 @@ def generate_laser_pmt(request: LaserPmtRequest) -> Path:
             ),
         }
         _write_json(temp_path / "allmachine.json", all_document)
-        layout_document = _build_layout_document(
-            request,
-            base,
-            layout,
-            combinations,
-            tuple(patch_ranges),
+        layout_document = (
+            _build_workflow_layout_document(
+                request, base, layout, combinations, tuple(patch_ranges)
+            )
+            if isinstance(request, LaserPmtWorkflowRequest)
+            else _build_layout_document(
+                request, base, layout, combinations, tuple(patch_ranges)
+            )
         )
         _write_json(temp_path / "pmt-layout.json", layout_document)
         _write_csv(
             temp_path / "parameter-map.csv",
-            layout_document["parameter_order"],
+            parameter_order,
             layout_document,
         )
         _validate_generated_package(temp_path, base, layout_document)

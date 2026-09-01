@@ -53,6 +53,115 @@ def make_request(root: Path, base: Path, **overrides: object) -> pmt.LaserPmtReq
     return pmt.LaserPmtRequest(**values)
 
 
+def make_workflow_request_document(root: Path, base: Path) -> dict[str, object]:
+    parameters = dict(machine.DEFAULT_LASER_PARAMS[0])
+    parameters[pmt.LAYER_FEED_KEY] = 3
+    string_parameters = {
+        name: "true" if value is True else "false" if value is False else str(value)
+        for name, value in parameters.items()
+    }
+    source_targets = [
+        {
+            "type": "pmt", "id": "pmt-1", "number": 1,
+            "bounds": {"left": 1, "top": 1, "width": 4, "height": 2},
+            "was_manually_moved": True,
+        },
+        {
+            "type": "pmt", "id": "pmt-3", "number": 3,
+            "bounds": {"left": 10, "top": 1, "width": 4, "height": 2},
+            "was_manually_moved": True,
+        },
+    ]
+    compiled_targets = [
+        {
+            "target_id": source["id"],
+            "kind": "pmt",
+            "identifier": f"test_{source['number']:04d}",
+            "pmt_number": source["number"],
+            "bounds": source["bounds"],
+            "parameters": parameters,
+        }
+        for source in source_targets
+    ]
+    workflow = {
+        "format_version": 2,
+        "coordinate_system": {"origin": "workpiece-top-left"},
+        "base_machine_identity": "sha256:test-machine",
+        "workpiece": {"left": 0, "top": 0, "width": 30, "height": 20},
+        "hatch_spacing": 0.1,
+        "viewport": {"zoom": 1, "pan_x": 0, "pan_y": 0},
+        "numbering_state": {
+            "pmt_columns": 2,
+            "next_pmt_number": 4,
+            "next_creation_order": 1,
+            "prefix": "test_",
+            "increment": 1,
+            "padding": 4,
+        },
+        "base_node": {
+            "id": "base",
+            "position": {"x": -100, "y": 0},
+            "parameters": string_parameters,
+            "removed_parameters": [],
+        },
+        "parameter_nodes": [],
+        "targets": source_targets,
+        "connections": [],
+        "compiled_targets": compiled_targets,
+        "generation": None,
+    }
+    return {
+        "request_version": 2,
+        "base_machine_dir": str(base),
+        "output_dir": str(root),
+        "output_name": "LaserPMT_workflow",
+        "owner_token": "workflow-test-owner",
+        "workflow": workflow,
+    }
+
+
+def test_loads_version_two_explicit_targets_with_number_gap() -> None:
+    with tempfile.TemporaryDirectory() as folder:
+        root = Path(folder)
+        base = write_base_machine(root)
+        request_path = root / "workflow-request.json"
+        request_path.write_text(
+            json.dumps(make_workflow_request_document(root, base)),
+            encoding="utf-8",
+        )
+
+        request = pmt.load_request(request_path)
+
+    assert isinstance(request, pmt.LaserPmtWorkflowRequest)
+    assert [target.pmt_number for target in request.targets] == [1, 3]
+    assert [target.identifier for target in request.targets] == ["test_0001", "test_0003"]
+    assert [(target.left, target.top) for target in request.targets] == [(1, 1), (10, 1)]
+
+
+def test_generates_version_two_explicit_pmt_targets_without_filling_number_gap() -> None:
+    with tempfile.TemporaryDirectory() as folder:
+        root = Path(folder)
+        base = write_base_machine(root)
+        document = make_workflow_request_document(root, base)
+        request = pmt._make_request(document)
+
+        result = pmt.generate_laser_pmt(request)
+
+        layout = json.loads((result / "pmt-layout.json").read_text(encoding="utf-8"))
+        jobs = layout["generation"]["jobs"]
+        assert layout["format_version"] == 2
+        assert layout["targets"] == document["workflow"]["targets"]
+        assert [job["identifier"] for job in jobs] == ["test_0001", "test_0003"]
+        assert [(job["bounds"]["left"], job["bounds"]["top"]) for job in jobs] == [
+            (1, 1), (10, 1)
+        ]
+        assert (result / "test_0001machine.json").is_file()
+        assert not (result / "test_0002machine.json").exists()
+        assert (result / "test_0003machine.json").is_file()
+        all_document = json.loads((result / "allmachine.json").read_text(encoding="utf-8"))
+        assert [cycle["galvo_0"][0] for cycle in all_document["machine_cycle"]] == [0, 0, 1, 1]
+
+
 def test_explicit_values_and_cartesian_order() -> None:
     parameters = (
         pmt.parse_explicit_values("power", [20, 40]),

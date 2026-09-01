@@ -43,7 +43,8 @@ public static class LaserPmtWorkflowSerializer
             ["parameter_nodes"] = new JsonArray(workflow.ParameterNodes.Select(ParameterNode).ToArray()),
             ["targets"] = new JsonArray(workflow.Targets.Select(TargetNode).ToArray()),
             ["connections"] = new JsonArray(workflow.Connections.Select(ConnectionNode).ToArray()),
-            ["compiled_targets"] = new JsonArray(compilation.Targets.Select(CompiledTargetNode).ToArray())
+            ["compiled_targets"] = new JsonArray(compilation.Targets.Select(CompiledTargetNode).ToArray()),
+            ["generation"] = null
         };
         return root.ToJsonString(new JsonSerializerOptions { WriteIndented = true });
     }
@@ -74,7 +75,7 @@ public static class LaserPmtWorkflowSerializer
             RequireProperties(root, "根节点",
                 "format_version", "coordinate_system", "base_machine_identity", "workpiece",
                 "hatch_spacing", "viewport", "numbering_state", "base_node",
-                "parameter_nodes", "targets", "connections", "compiled_targets");
+                "parameter_nodes", "targets", "connections", "compiled_targets", "generation");
             if (ReadInt(root, "format_version") != CurrentFormatVersion)
                 throw new InvalidDataException("不支持的 PMT 工作流版本。");
             var coordinate = ReadObject(root, "coordinate_system");
@@ -115,6 +116,8 @@ public static class LaserPmtWorkflowSerializer
             var saved = ReadCompiledTargets(ReadArray(root, "compiled_targets"));
             if (!CompiledTargetsEqual(expected.Targets, saved))
                 throw new InvalidDataException("保存的 PMT 编译结果与源工作流不一致。");
+            if (root.GetProperty("generation").ValueKind is not (JsonValueKind.Null or JsonValueKind.Object))
+                throw new InvalidDataException("generation 必须是对象或 null。");
             return workflow;
         }
         catch (InvalidDataException)
