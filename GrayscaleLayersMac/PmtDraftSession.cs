@@ -126,6 +126,49 @@ public sealed class PmtDraftSession
 
     public void ApplyWorkflow(LaserPmtWorkflow workflow) => Commit(workflow);
 
+    public void ReplaceSources(PmtSourceCatalog sources)
+    {
+        ArgumentNullException.ThrowIfNull(sources);
+        var existingBaseBySource = _workflow.BaseNodes.ToDictionary(node => node.SourceId, StringComparer.Ordinal);
+        var workflowSources = sources.Sources.Select(source => new LaserPmtWorkflowSource(
+            source.Id,
+            source.Directory,
+            source.DisplayName,
+            source.Mark,
+            source.ColorArgb,
+            source.NativeWidth,
+            source.NativeHeight,
+            source.Fingerprint)).ToArray();
+        var baseNodes = sources.Sources.Select((source, index) =>
+            existingBaseBySource.TryGetValue(source.Id, out var existing)
+                ? existing
+                : new LaserPmtBaseParameterNode(
+                    $"base-{source.Id}",
+                    new LaserPmtWorkflowPoint(-180, index * 100),
+                    source.BaseParameters,
+                    new HashSet<string>(StringComparer.Ordinal))
+                {
+                    SourceId = source.Id
+                }).ToArray();
+        var sourceIds = workflowSources.Select(source => source.Id).ToHashSet(StringComparer.Ordinal);
+        if (_workflow.Targets.Any(target => !sourceIds.Contains(target.SourceId)))
+            throw new InvalidOperationException("不能移除仍被 PMT 使用的原始来源。");
+        _sources = sources;
+        Commit(new LaserPmtWorkflow(
+            workflowSources,
+            _workflow.Workpiece,
+            _workflow.HatchSpacing,
+            _workflow.Viewport,
+            baseNodes,
+            _workflow.ParameterNodes,
+            _workflow.Targets,
+            _workflow.Connections,
+            _workflow.PmtColumns,
+            _workflow.NextPmtNumber,
+            _workflow.NextCreationOrder,
+            _workflow.Numbering));
+    }
+
     public void SetOutputName(string outputName)
     {
         var normalized = outputName?.Trim() ?? string.Empty;
@@ -133,6 +176,15 @@ public sealed class PmtDraftSession
             return;
         _outputName = normalized;
         IncrementRevision();
+    }
+
+    public void SelectActiveSource(string sourceId)
+    {
+        var updated = _sources.SelectActive(sourceId);
+        if (updated.ActiveSourceId == _sources.ActiveSourceId)
+            return;
+        _sources = updated;
+        RaiseChanged(isTransientPreview: true);
     }
 
     public void SelectSingle(string? targetId)

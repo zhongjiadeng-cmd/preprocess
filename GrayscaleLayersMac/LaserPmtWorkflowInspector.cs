@@ -162,12 +162,82 @@ public sealed class LaserPmtWorkflowInspector : Border
         }
         else if (target is LaserPmtTarget pmt)
         {
-            AddHint($"编号：{workflow.Numbering.Prefix}{pmt.Number.ToString($"D{workflow.Numbering.Padding}")}\n" +
-                    $"位置：{pmt.Bounds.Left:0.###}, {pmt.Bounds.Top:0.###} mm\n" +
-                    $"尺寸：{pmt.Bounds.Width:0.###} × {pmt.Bounds.Height:0.###} mm");
+            var number = NumberBox(pmt.Number);
+            var left = NumberBox((decimal)pmt.Bounds.Left);
+            var top = NumberBox((decimal)pmt.Bounds.Top);
+            var width = NumberBox((decimal)pmt.Bounds.Width);
+            var height = NumberBox((decimal)pmt.Bounds.Height);
+            var locked = new CheckBox { Content = "锁定原始尺寸", IsChecked = pmt.IsSizeLocked };
+            width.IsEnabled = height.IsEnabled = !pmt.IsSizeLocked;
+            _content.Children.Add(Field("编号", number));
+            _content.Children.Add(new Grid
+            {
+                ColumnDefinitions = new ColumnDefinitions("*,*"),
+                ColumnSpacing = 8,
+                Children = { Field("X（mm）", left), Place(Field("Y（mm）", top), 1) }
+            });
+            _content.Children.Add(new Grid
+            {
+                ColumnDefinitions = new ColumnDefinitions("*,*"),
+                ColumnSpacing = 8,
+                Children = { Field("宽（mm）", width), Place(Field("高（mm）", height), 1) }
+            });
+            _content.Children.Add(locked);
+            number.ValueChanged += (_, _) => Apply(current =>
+                LaserPmtWorkflowEditor.SetPmtNumber(current, pmt.Id, decimal.ToInt32(number.Value ?? 0)));
+            left.ValueChanged += (_, _) => Apply(current =>
+                LaserPmtWorkflowEditor.MovePmt(current, pmt.Id,
+                    decimal.ToDouble(left.Value ?? 0), current.Targets.OfType<LaserPmtTarget>().Single(item => item.Id == pmt.Id).Bounds.Top));
+            top.ValueChanged += (_, _) => Apply(current =>
+                LaserPmtWorkflowEditor.MovePmt(current, pmt.Id,
+                    current.Targets.OfType<LaserPmtTarget>().Single(item => item.Id == pmt.Id).Bounds.Left,
+                    decimal.ToDouble(top.Value ?? 0)));
+            width.ValueChanged += (_, _) => Apply(current =>
+                LaserPmtWorkflowEditor.ResizePmt(current, pmt.Id,
+                    decimal.ToDouble(width.Value ?? 0), current.Targets.OfType<LaserPmtTarget>().Single(item => item.Id == pmt.Id).Bounds.Height));
+            height.ValueChanged += (_, _) => Apply(current =>
+                LaserPmtWorkflowEditor.ResizePmt(current, pmt.Id,
+                    current.Targets.OfType<LaserPmtTarget>().Single(item => item.Id == pmt.Id).Bounds.Width,
+                    decimal.ToDouble(height.Value ?? 0)));
+            locked.Click += (_, _) => Apply(current => LaserPmtWorkflowEditor.SetPmtSizeLock(
+                current, pmt.Id, locked.IsChecked == true, restoreNativeSize: false));
         }
-        AddCompiledParameters(workflow, target.Id);
+        AddEditableCompiledParameters(workflow, target.Id);
         AddDeleteButton();
+    }
+
+    private void AddEditableCompiledParameters(LaserPmtWorkflow workflow, string targetId)
+    {
+        var compilation = LaserPmtWorkflowCompiler.Compile(workflow);
+        var compiled = compilation.Targets.FirstOrDefault(item => item.TargetId == targetId);
+        AddLabel("最终参数（实时）");
+        if (compiled is null)
+        {
+            AddHint(string.Join("\n", compilation.Errors
+                .Where(error => error.TargetId == targetId)
+                .Select(error => error.Message)));
+            return;
+        }
+        foreach (var definition in LaserPmtConfiguration.Parameters)
+        {
+            if (!compiled.Parameters.TryGetValue(definition.Name, out var value))
+                continue;
+            if (definition.IsBoolean)
+            {
+                var check = new CheckBox { Content = definition.DisplayName, IsChecked = (bool)value };
+                check.Click += (_, _) => Apply(current => LaserPmtWorkflowEditor.SetDirectParameterOverride(
+                    current, targetId, definition.Name, check.IsChecked == true ? "true" : "false"));
+                _content.Children.Add(check);
+            }
+            else
+            {
+                var number = NumberBox(Convert.ToDecimal(value));
+                number.ValueChanged += (_, _) => Apply(current => LaserPmtWorkflowEditor.SetDirectParameterOverride(
+                    current, targetId, definition.Name,
+                    decimal.ToInt32(number.Value ?? 0).ToString(System.Globalization.CultureInfo.InvariantCulture)));
+                _content.Children.Add(Field(definition.DisplayName, number));
+            }
+        }
     }
 
     private void AddCompiledParameters(LaserPmtWorkflow workflow, string targetId)
@@ -257,6 +327,12 @@ public sealed class LaserPmtWorkflowInspector : Border
         Spacing = 5,
         Children = { UiTheme.FieldLabel(label), control }
     };
+
+    private static T Place<T>(T control, int column) where T : Control
+    {
+        Grid.SetColumn(control, column);
+        return control;
+    }
 
     private static NumericUpDown NumberBox(decimal value)
     {

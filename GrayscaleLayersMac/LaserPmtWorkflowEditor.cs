@@ -217,6 +217,32 @@ public static class LaserPmtWorkflowEditor
             workflow,
             baseNode: workflow.BaseNode with { Position = position });
 
+    public static LaserPmtWorkflow MoveBaseNode(
+        LaserPmtWorkflow workflow,
+        string nodeId,
+        LaserPmtWorkflowPoint position)
+    {
+        ArgumentNullException.ThrowIfNull(workflow);
+        ArgumentException.ThrowIfNullOrWhiteSpace(nodeId);
+        if (!position.IsFinite)
+            throw new ArgumentException("基础参数节点位置无效。", nameof(position));
+        if (!workflow.BaseNodes.Any(node => node.Id == nodeId))
+            throw new ArgumentException($"找不到基础参数节点：{nodeId}", nameof(nodeId));
+        return new LaserPmtWorkflow(
+            workflow.Sources,
+            workflow.Workpiece,
+            workflow.HatchSpacing,
+            workflow.Viewport,
+            workflow.BaseNodes.Select(node => node.Id == nodeId ? node with { Position = position } : node).ToArray(),
+            workflow.ParameterNodes,
+            workflow.Targets,
+            workflow.Connections,
+            workflow.PmtColumns,
+            workflow.NextPmtNumber,
+            workflow.NextCreationOrder,
+            workflow.Numbering);
+    }
+
     public static LaserPmtWorkflow SetViewport(
         LaserPmtWorkflow workflow,
         LaserPmtCanvasViewport viewport) => new(

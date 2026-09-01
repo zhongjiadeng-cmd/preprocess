@@ -24,7 +24,13 @@ internal enum UiIcon
     Success,
     Error,
     Save,
-    Undo
+    Undo,
+    PmtMatrix,
+    Renumber,
+    Lock,
+    Unlock,
+    Nodes,
+    Source
 }
 
 /// <summary>
@@ -121,6 +127,12 @@ internal static class UiIcons
         UiIcon.Error => Icon.ErrorCircle,
         UiIcon.Save => Icon.DocumentCheckmark,
         UiIcon.Undo => Icon.ArrowUndo,
+        UiIcon.PmtMatrix => Icon.TableAdd,
+        UiIcon.Renumber => Icon.NumberSymbolSquare,
+        UiIcon.Lock => Icon.LockClosed,
+        UiIcon.Unlock => Icon.LockClosedKey,
+        UiIcon.Nodes => Icon.FlowchartCircle,
+        UiIcon.Source => Icon.DatabaseSwitch,
         _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, null)
     };
 }

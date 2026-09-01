@@ -176,6 +176,9 @@ public sealed class MainWindow : Window
     private readonly LaserPmtWorkflowCanvas _pipelinePmtWorkflowCanvas = new();
     private readonly LaserPmtWorkflowInspector _pipelinePmtWorkflowInspector = new();
     private LaserPmtBaseMetadata? _pipelinePmtBaseMetadata;
+    private PmtSourceCatalog _pmtSources = PmtSourceCatalog.Empty;
+    private PmtDraftSession? _pmtDraft;
+    private string? _pmtOutputDirectory;
     private string? _pipelinePmtLayoutPath;
     private readonly DxfPreviewControl _pipelineDxfPreview = new(startInTopView: true);
     private readonly TextBlock _pipelineDxfPreviewStatus = new() { Foreground = UiTheme.TextSecondaryBrush };
@@ -365,7 +368,11 @@ public sealed class MainWindow : Window
         _pipelinePmtWorkflowCanvas.WorkflowChanged += (_, _) =>
         {
             if (_pipelinePmtWorkflowCanvas.Workflow is { } workflow)
+            {
                 _pipelinePmtPanel.ReflectWorkflow(workflow);
+                if (_pmtDraft is not null && !ReferenceEquals(_pmtDraft.Snapshot.Workflow, workflow))
+                    _pmtDraft.ApplyWorkflow(workflow);
+            }
         };
         _pipelineImportFlyout = new Flyout
         {
@@ -1137,6 +1144,92 @@ public sealed class MainWindow : Window
                 AddPmtParameterNode(definition.Name);
         };
 
+        var matrixPicker = new PmtMatrixPicker();
+        var matrix = new DropDownButton { Content = UiIcons.Create(UiIcon.PmtMatrix) };
+        UiTheme.ApplyIconStyle(matrix, "新建 PMT 矩阵");
+        ToolTip.SetTip(matrix, "像新建表格一样选择 PMT 行列；移动时实时预览");
+        matrixPicker.PreviewChanged += (_, args) =>
+        {
+            if (_pmtDraft is not null)
+                _pmtDraft.PreviewMatrix(args.Rows, args.Columns);
+        };
+        matrixPicker.PreviewCancelled += (_, _) => _pmtDraft?.CancelMatrixPreview();
+        matrixPicker.SelectionCommitted += (_, args) =>
+        {
+            if (_pmtDraft is null)
+                return;
+            _pmtDraft.CommitMatrix(args.Rows, args.Columns);
+            matrix.Flyout?.Hide();
+            _pipelinePmtWorkflowCanvas.FitWorkpiece();
+        };
+        matrix.Flyout = new Flyout
+        {
+            Placement = PlacementMode.BottomEdgeAlignedLeft,
+            Content = matrixPicker
+        };
+        UiTheme.RemoveFlyoutOuterChrome((Flyout)matrix.Flyout);
+
+        var sources = new DropDownButton { Content = UiIcons.Create(UiIcon.Source) };
+        UiTheme.ApplyIconStyle(sources, "原始加工文件");
+        ToolTip.SetTip(sources, "选择活动来源；选中 PMT 时可直接切换其来源");
+        var sourceFlyout = CreatePmtSourceFlyout();
+        sourceFlyout.Opening += (_, _) =>
+            sourceFlyout.Content = CreatePmtSourceFlyout().Content;
+        sources.Flyout = sourceFlyout;
+
+        var renumber = new Button { Content = UiIcons.Create(UiIcon.Renumber) };
+        UiTheme.ApplyIconStyle(renumber, "按位置重新编号");
+        ToolTip.SetTip(renumber, "从左到右、从上到下重新编号");
+        renumber.Click += (_, _) => _pmtDraft?.RenumberByPosition();
+
+        var lockSize = new Button { Content = UiIcons.Create(UiIcon.Lock) };
+        UiTheme.ApplyIconStyle(lockSize, "锁定或解锁尺寸");
+        ToolTip.SetTip(lockSize, "锁定时保持原始尺寸；解锁后可独立修改 X/Y 尺寸");
+        lockSize.Click += (_, _) => ToggleSelectedPmtSizeLock();
+
+        var showNodes = new ToggleButton { Content = UiIcons.Create(UiIcon.Nodes) };
+        UiTheme.ApplyIconStyle(showNodes, "参数节点视图");
+        ToolTip.SetTip(showNodes, "显示来源基础节点和批量参数节点");
+        showNodes.Click += (_, _) =>
+            _pipelinePmtWorkflowCanvas.ShowNodes = showNodes.IsChecked == true;
+
+        var outputDirectory = new Button { Content = UiIcons.Create(UiIcon.OpenFolder) };
+        UiTheme.ApplyIconStyle(outputDirectory, "PMT 加工目录");
+        ToolTip.SetTip(outputDirectory, "设置 PMT 加工文件的保存目录");
+        outputDirectory.Click += async (_, _) =>
+        {
+            var selected = await PickPipelineFolderPathAsync("选择 PMT 加工文件保存目录");
+            if (selected is not null)
+                _pmtOutputDirectory = selected;
+        };
+
+        var outputName = new TextBox { Watermark = "PMT 加工文件名", MinWidth = 240 };
+        UiTheme.ApplyInputStyle(outputName);
+        outputName.TextChanged += (_, _) =>
+        {
+            if (_pmtDraft is not null)
+                _pmtDraft.SetOutputName(outputName.Text ?? string.Empty);
+        };
+        var save = new SplitButton { Content = UiIcons.Create(UiIcon.Save) };
+        UiTheme.ApplyPrimaryStyle(save);
+        AutomationProperties.SetName(save, "保存 PMT 文件");
+        ToolTip.SetTip(save, "生成并保存 PMT 加工文件；此前修改只保留在草稿中");
+        save.Click += async (_, _) => await SavePmtDraftAsync();
+        save.Flyout = new Flyout
+        {
+            Placement = PlacementMode.BottomEdgeAlignedRight,
+            Content = UiTheme.FlyoutSurface(new StackPanel
+            {
+                Spacing = 8,
+                Children =
+                {
+                    new TextBlock { Text = "PMT 加工文件名", FontWeight = FontWeight.SemiBold },
+                    outputName
+                }
+            })
+        };
+        UiTheme.RemoveFlyoutOuterChrome((Flyout)save.Flyout);
+
         var toolbar = new StackPanel
         {
             Orientation = Orientation.Horizontal,
@@ -1145,31 +1238,161 @@ public sealed class MainWindow : Window
             Children =
             {
                 zoomOut, zoomLabel, zoomIn, fit,
-                parameterSelector, addParameter, addTimestamp, autoArrange, rebuild
+                matrix, sources, renumber, lockSize, showNodes,
+                outputDirectory, save,
+                parameterSelector, addParameter, addTimestamp
             }
         };
 
-        var detailsPanel = new Border
+        var propertiesFlyout = new Flyout
         {
-            Padding = new Thickness(10, 8),
-            CornerRadius = UiTheme.ControlRadius,
-            Background = UiTheme.CardBrush,
-            BorderBrush = UiTheme.BorderSubtleBrush,
-            BorderThickness = new Thickness(1),
-            Child = details
+            Placement = PlacementMode.RightEdgeAlignedTop,
+            Content = details
+        };
+        UiTheme.RemoveFlyoutOuterChrome(propertiesFlyout);
+        var workpieceFlyout = new Flyout { Placement = PlacementMode.RightEdgeAlignedTop };
+        UiTheme.RemoveFlyoutOuterChrome(workpieceFlyout);
+        workpieceFlyout.Opening += (_, _) =>
+        {
+            if (_pmtDraft?.Snapshot.Workflow is not { } workflow)
+                return;
+            var width = MakeNumberBox((decimal)workflow.Workpiece.Width, 0.001m, 100000, 3);
+            var height = MakeNumberBox((decimal)workflow.Workpiece.Height, 0.001m, 100000, 3);
+            width.ValueChanged += (_, _) => UpdatePmtWorkpiece(
+                decimal.ToDouble(width.Value ?? 0), null);
+            height.ValueChanged += (_, _) => UpdatePmtWorkpiece(
+                null, decimal.ToDouble(height.Value ?? 0));
+            workpieceFlyout.Content = UiTheme.FlyoutSurface(new StackPanel
+            {
+                Spacing = 9,
+                MinWidth = 240,
+                Children =
+                {
+                    new TextBlock { Text = "工件尺寸", FontWeight = FontWeight.SemiBold },
+                    MakeLabeledControl("宽度（mm）", width, 0),
+                    MakeLabeledControl("高度（mm）", height, 0)
+                }
+            });
+        };
+        preview.WorkpieceEditRequested += (_, _) => workpieceFlyout.ShowAt(preview);
+        preview.SelectionChanged += (_, _) =>
+        {
+            if (preview.SelectedId is { } selectedId &&
+                preview.Workflow?.Targets.Any(target => target.Id == selectedId) == true)
+                propertiesFlyout.ShowAt(preview);
+            else
+                propertiesFlyout.Hide();
         };
 
         var previewCard = UiTheme.CanvasCard(preview);
         previewCard.MinHeight = 320;
-        var body = new Grid
-        {
-            ColumnDefinitions = new ColumnDefinitions("*,Auto"),
-            ColumnSpacing = 12,
-            Children = { previewCard, detailsPanel }
-        };
-        Grid.SetColumn(detailsPanel, 1);
+        return new PreviewPane(previewCard, toolbar, new Grid(), HasContextTools: false);
+    }
 
-        return new PreviewPane(body, toolbar, new Grid(), HasContextTools: false);
+    private Flyout CreatePmtSourceFlyout()
+    {
+        var stack = new StackPanel { Spacing = 4, MinWidth = 220 };
+        if (_pmtSources.Sources.Count == 0)
+            stack.Children.Add(new TextBlock { Text = "尚未导入原始加工文件" });
+        foreach (var source in _pmtSources.Sources)
+        {
+            var button = new Button
+            {
+                HorizontalContentAlignment = HorizontalAlignment.Stretch,
+                Content = $"{source.Mark}  {source.DisplayName}  ·  {source.NativeWidth:0.###} × {source.NativeHeight:0.###} mm"
+            };
+            UiTheme.ApplyGhostStyle(button, small: true);
+            button.Click += (_, _) => SelectPmtSource(source.Id);
+            stack.Children.Add(button);
+        }
+        var import = new Button { Content = UiIcons.Labeled(UiIcon.Import, "导入原始加工文件…") };
+        UiTheme.ApplyGhostStyle(import, small: true);
+        import.Click += async (_, _) => await ImportMachineDirectoryAsync();
+        stack.Children.Add(import);
+        var flyout = new Flyout
+        {
+            Placement = PlacementMode.BottomEdgeAlignedLeft,
+            Content = UiTheme.FlyoutSurface(stack)
+        };
+        UiTheme.RemoveFlyoutOuterChrome(flyout);
+        return flyout;
+    }
+
+    private void SelectPmtSource(string sourceId)
+    {
+        if (_pmtDraft is null)
+            return;
+        _pmtDraft.SelectActiveSource(sourceId);
+        var selectedId = _pipelinePmtWorkflowCanvas.SelectedId;
+        if (selectedId is not null &&
+            _pmtDraft.Snapshot.Workflow.Targets.OfType<LaserPmtTarget>().Any(target => target.Id == selectedId))
+            _pmtDraft.ApplyWorkflow(LaserPmtWorkflowEditor.AssignPmtSource(
+                _pmtDraft.Snapshot.Workflow, [selectedId], sourceId));
+    }
+
+    private void ToggleSelectedPmtSizeLock()
+    {
+        if (_pmtDraft is null || _pipelinePmtWorkflowCanvas.SelectedId is not { } selectedId)
+            return;
+        var workflow = _pmtDraft.Snapshot.Workflow;
+        var target = workflow.Targets.OfType<LaserPmtTarget>()
+            .FirstOrDefault(item => item.Id == selectedId);
+        if (target is null)
+            return;
+        _pmtDraft.ApplyWorkflow(LaserPmtWorkflowEditor.SetPmtSizeLock(
+            workflow, selectedId, !target.IsSizeLocked, restoreNativeSize: false));
+    }
+
+    private void UpdatePmtWorkpiece(double? width, double? height)
+    {
+        if (_pmtDraft is null)
+            return;
+        var workflow = _pmtDraft.Snapshot.Workflow;
+        _pmtDraft.ApplyWorkflow(LaserPmtWorkflowEditor.SetWorkpiece(
+            workflow,
+            new LaserPmtWorkflowBounds(
+                0,
+                0,
+                width ?? workflow.Workpiece.Width,
+                height ?? workflow.Workpiece.Height)));
+    }
+
+    private async Task SavePmtDraftAsync()
+    {
+        if (_pmtDraft is null)
+        {
+            await ShowMessageAsync("请先导入至少一个原始加工文件。");
+            return;
+        }
+        var output = _pmtOutputDirectory
+            ?? (_lastMachineOutputPath is null ? null : Path.GetDirectoryName(_lastMachineOutputPath));
+        if (string.IsNullOrWhiteSpace(output) || !Directory.Exists(output))
+        {
+            output = await PickPipelineFolderPathAsync("选择 PMT 加工文件保存目录");
+            if (output is null)
+                return;
+            _pmtOutputDirectory = output;
+        }
+        var python = await FindPythonAsync(CancellationToken.None);
+        if (python is null)
+        {
+            await ShowMessageAsync("找不到带有 numpy 的 Python 3，无法保存 PMT 文件。");
+            return;
+        }
+        var script = Path.Combine(
+            ApplicationLayout.GetScriptsDirectory(AppContext.BaseDirectory),
+            "laser_pmt.py");
+        var service = new PmtSaveService(new PythonPmtPackageGenerator(
+            python, script, line => AppendPipelineLog(line)));
+        var result = await service.SaveAsync(_pmtDraft, output, CancellationToken.None);
+        if (!result.Success)
+        {
+            await ShowMessageAsync($"保存 PMT 文件失败：{result.Error}");
+            return;
+        }
+        _lastLaserPmtOutputPath = result.OutputPath;
+        _pipelineOpenButton.IsEnabled = true;
+        AppendPipelineLog($"PMT 文件已保存：{result.OutputPath}");
     }
 
     private void RebuildPmtWorkflow()
@@ -1296,9 +1519,40 @@ public sealed class MainWindow : Window
             throw new InvalidDataException(
                 string.IsNullOrWhiteSpace(standardError) ? "基础加工目录检查失败。" : standardError.Trim());
         _pipelinePmtBaseMetadata = LaserPmtBaseMetadata.Parse(output);
-        _pipelinePmtWorkflowCanvas.Load(_pipelinePmtPanel.CreateWorkflow(_pipelinePmtBaseMetadata));
-        _pipelinePmtPanel.ReflectWorkflow(_pipelinePmtWorkflowCanvas.Workflow!);
-        _pipelinePmtWorkflowCanvas.FitAll();
+        var imported = _pmtSources.Import([
+            new PmtSourceCandidate(directory, _pipelinePmtBaseMetadata)
+        ]);
+        if (imported.Errors.Count > 0)
+            throw new InvalidDataException(imported.Errors[0].Message);
+        _pmtSources = imported.Catalog;
+        if (_pmtDraft is null)
+        {
+            var seed = _pipelinePmtPanel.CreateWorkflow(_pipelinePmtBaseMetadata);
+            _pmtDraft = PmtDraftSession.Create(
+                _pmtSources,
+                seed.Workpiece,
+                seed.HatchSpacing,
+                string.IsNullOrWhiteSpace(_pipelinePmtPanel.OutputName)
+                    ? $"LaserPMT_{DateTime.Now:yyyyMMdd_HHmmss}"
+                    : _pipelinePmtPanel.OutputName);
+            var pmtCount = seed.Targets.OfType<LaserPmtTarget>().Count();
+            var rows = Math.Max(1, (pmtCount + seed.PmtColumns - 1) / seed.PmtColumns);
+            _pmtDraft.CommitMatrix(rows, seed.PmtColumns);
+            _pmtDraft.Changed += (_, _) => RenderPmtDraft();
+        }
+        else
+            _pmtDraft.ReplaceSources(_pmtSources);
+        RenderPmtDraft();
+        _pipelinePmtWorkflowCanvas.FitWorkpiece();
+    }
+
+    private void RenderPmtDraft()
+    {
+        if (_pmtDraft is null)
+            return;
+        var workflow = _pmtDraft.Snapshot.DisplayWorkflow;
+        _pipelinePmtWorkflowCanvas.Load(workflow, preserveSelection: true);
+        _pipelinePmtPanel.ReflectWorkflow(workflow);
     }
 
     /// <summary>
@@ -2864,6 +3118,10 @@ public sealed class MainWindow : Window
                 AppendPipelineLog($"加工文件目录：{machineOutputPath}");
                 _pipelineOpenButton.IsEnabled = true;
                 _pipelinePmtPanel.BaseDirectory = machineOutputPath;
+                await InitializePmtWorkflowAsync(
+                    machineOutputPath,
+                    python,
+                    cancellationToken: _cancellation.Token);
                 AppendPipelineLog(mode == PipelineRunMode.All
                     ? $"\n三步流程完成：已生成 {layerFiles.Length} 个 TIFF、" +
                       $"{layerFiles.Length} 个 DXF 和 1 个基础加工文件。"

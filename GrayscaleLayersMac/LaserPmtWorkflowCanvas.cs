@@ -33,13 +33,27 @@ public sealed class LaserPmtWorkflowCanvas : Control
     private Point _connectionPointer;
     private LaserPmtWorkflow? _workflowAtDragStart;
     private string? _selectedId;
+    private bool _showNodes;
 
     public LaserPmtWorkflow? Workflow => _workflow;
     public LaserPmtCanvasViewport Viewport => _viewport;
     public string? SelectedId => _selectedId;
+    public bool ShowNodes
+    {
+        get => _showNodes;
+        set
+        {
+            if (_showNodes == value)
+                return;
+            _showNodes = value;
+            FitAll();
+            InvalidateVisual();
+        }
+    }
     public event EventHandler? ViewChanged;
     public event EventHandler? WorkflowChanged;
     public event EventHandler? SelectionChanged;
+    public event EventHandler? WorkpieceEditRequested;
     public event EventHandler<string>? EditRejected;
 
     public LaserPmtWorkflowCanvas()
@@ -49,11 +63,12 @@ public sealed class LaserPmtWorkflowCanvas : Control
         Focusable = true;
     }
 
-    public void Load(LaserPmtWorkflow workflow)
+    public void Load(LaserPmtWorkflow workflow, bool preserveSelection = false)
     {
         _workflow = workflow ?? throw new ArgumentNullException(nameof(workflow));
         _viewport = workflow.Viewport;
-        _selectedId = null;
+        if (!preserveSelection || !ContainsId(workflow, _selectedId))
+            _selectedId = null;
         InvalidateVisual();
     }
 
@@ -102,9 +117,14 @@ public sealed class LaserPmtWorkflowCanvas : Control
     {
         if (_workflow is null)
             return;
-        var bounds = ToRect(_workflow.Workpiece).Union(BaseNodeRect(_workflow.BaseNode));
-        foreach (var node in _workflow.ParameterNodes)
-            bounds = bounds.Union(ParameterNodeRect(node));
+        var bounds = ToRect(_workflow.Workpiece);
+        if (_showNodes)
+        {
+            foreach (var node in _workflow.BaseNodes)
+                bounds = bounds.Union(BaseNodeRect(node));
+            foreach (var node in _workflow.ParameterNodes)
+                bounds = bounds.Union(ParameterNodeRect(node));
+        }
         _viewport = LaserPmtWorkflowViewMath.FitBounds(bounds, Bounds.Size, 36);
         NotifyViewChanged();
     }
@@ -133,14 +153,21 @@ public sealed class LaserPmtWorkflowCanvas : Control
         }
 
         DrawWorkpiece(context);
-        DrawBaseBus(context);
-        DrawConnections(context);
+        if (_showNodes)
+        {
+            DrawBaseBus(context);
+            DrawConnections(context);
+        }
         foreach (var target in _workflow.Targets)
             DrawTarget(context, target, invalidTargets.Contains(target.Id));
-        DrawBaseNode(context, _workflow.BaseNode);
-        foreach (var node in _workflow.ParameterNodes)
-            DrawParameterNode(context, node);
-        if (_dragKind == DragKind.Connection &&
+        if (_showNodes)
+        {
+            foreach (var node in _workflow.BaseNodes)
+                DrawBaseNode(context, node);
+            foreach (var node in _workflow.ParameterNodes)
+                DrawParameterNode(context, node);
+        }
+        if (_showNodes && _dragKind == DragKind.Connection &&
             _connectionNodeId is not null && _connectionPortId is not null)
         {
             var node = _workflow.ParameterNodes.Single(item => item.Id == _connectionNodeId);
@@ -176,7 +203,7 @@ public sealed class LaserPmtWorkflowCanvas : Control
         var screen = e.GetPosition(this);
         _workflowAtDragStart = _workflow;
         _dragWorldStart = LaserPmtWorkflowViewMath.ScreenToWorld(screen, _viewport, Bounds.Size);
-        if (point.Properties.IsLeftButtonPressed && TryHitPort(screen, out var nodeId, out var portId))
+        if (_showNodes && point.Properties.IsLeftButtonPressed && TryHitPort(screen, out var nodeId, out var portId))
         {
             _dragKind = DragKind.Connection;
             _connectionNodeId = nodeId;
@@ -195,20 +222,27 @@ public sealed class LaserPmtWorkflowCanvas : Control
             _dragKind = DragKind.Target;
             _dragId = targetId;
         }
-        else if (point.Properties.IsLeftButtonPressed && TryHitParameterNode(screen, out var parameterNodeId))
+        else if (point.Properties.IsLeftButtonPressed && IsOnWorkpieceBorder(screen))
+        {
+            Select(null);
+            _dragKind = DragKind.None;
+            WorkpieceEditRequested?.Invoke(this, EventArgs.Empty);
+        }
+        else if (_showNodes && point.Properties.IsLeftButtonPressed && TryHitParameterNode(screen, out var parameterNodeId))
         {
             Select(parameterNodeId);
             _dragKind = DragKind.ParameterNode;
             _dragId = parameterNodeId;
         }
-        else if (point.Properties.IsLeftButtonPressed &&
-                 ScreenRect(BaseNodeRect(_workflow.BaseNode)).Contains(screen))
+        else if (_showNodes && point.Properties.IsLeftButtonPressed &&
+                 _workflow.BaseNodes.Any(node => ScreenRect(BaseNodeRect(node)).Contains(screen)))
         {
-            Select(_workflow.BaseNode.Id);
+            var baseNode = _workflow.BaseNodes.First(node => ScreenRect(BaseNodeRect(node)).Contains(screen));
+            Select(baseNode.Id);
             _dragKind = DragKind.BaseNode;
-            _dragId = _workflow.BaseNode.Id;
+            _dragId = baseNode.Id;
         }
-        else if (point.Properties.IsLeftButtonPressed && TryHitConnection(screen, out var connectionId))
+        else if (_showNodes && point.Properties.IsLeftButtonPressed && TryHitConnection(screen, out var connectionId))
         {
             Select(connectionId);
             _dragKind = DragKind.None;
@@ -263,9 +297,10 @@ public sealed class LaserPmtWorkflowCanvas : Control
                 DragKind.ParameterNode => MoveParameterNode(_workflowAtDragStart, _dragId!, delta),
                 DragKind.BaseNode => LaserPmtWorkflowEditor.MoveBaseNode(
                     _workflowAtDragStart,
+                    _dragId!,
                     new LaserPmtWorkflowPoint(
-                        _workflowAtDragStart.BaseNode.Position.X + delta.X,
-                        _workflowAtDragStart.BaseNode.Position.Y + delta.Y)),
+                        _workflowAtDragStart.BaseNodes.Single(node => node.Id == _dragId).Position.X + delta.X,
+                        _workflowAtDragStart.BaseNodes.Single(node => node.Id == _dragId).Position.Y + delta.Y)),
                 _ => _workflow
             };
             NotifyWorkflowChanged();
@@ -325,10 +360,74 @@ public sealed class LaserPmtWorkflowCanvas : Control
     protected override void OnKeyDown(KeyEventArgs e)
     {
         base.OnKeyDown(e);
-        if (e.Key != Key.Delete || _workflow is null || _selectedId is null)
+        if (_workflow is null || _selectedId is null)
             return;
-        DeleteSelectedCore();
+        if (e.Key is Key.Delete or Key.Back)
+        {
+            DeleteSelectedCore();
+            e.Handled = true;
+            return;
+        }
+        var direction = e.Key switch
+        {
+            Key.Left => PmtNavigationDirection.Left,
+            Key.Right => PmtNavigationDirection.Right,
+            Key.Up => PmtNavigationDirection.Up,
+            Key.Down => PmtNavigationDirection.Down,
+            _ => (PmtNavigationDirection?)null
+        };
+        if (direction is null || _workflow.Targets.OfType<LaserPmtTarget>()
+                .FirstOrDefault(target => target.Id == _selectedId) is not { } selected)
+            return;
+        if (e.KeyModifiers.HasFlag(KeyModifiers.Meta))
+        {
+            var step = e.KeyModifiers.HasFlag(KeyModifiers.Shift) ? 1d : 0.1d;
+            var dx = direction is PmtNavigationDirection.Left ? -step :
+                direction is PmtNavigationDirection.Right ? step : 0;
+            var dy = direction is PmtNavigationDirection.Up ? -step :
+                direction is PmtNavigationDirection.Down ? step : 0;
+            try
+            {
+                _workflow = LaserPmtWorkflowEditor.MovePmt(
+                    _workflow, selected.Id, selected.Bounds.Left + dx, selected.Bounds.Top + dy);
+                NotifyWorkflowChanged();
+            }
+            catch (ArgumentException error)
+            {
+                EditRejected?.Invoke(this, error.Message);
+            }
+        }
+        else
+            SelectNearestPmt(selected, direction.Value);
         e.Handled = true;
+    }
+
+    private void SelectNearestPmt(LaserPmtTarget selected, PmtNavigationDirection direction)
+    {
+        var centerX = selected.Bounds.Left + selected.Bounds.Width / 2;
+        var centerY = selected.Bounds.Top + selected.Bounds.Height / 2;
+        var next = _workflow!.Targets.OfType<LaserPmtTarget>()
+            .Where(target => target.Id != selected.Id)
+            .Select(target => new
+            {
+                Target = target,
+                Dx = target.Bounds.Left + target.Bounds.Width / 2 - centerX,
+                Dy = target.Bounds.Top + target.Bounds.Height / 2 - centerY
+            })
+            .Where(item => direction switch
+            {
+                PmtNavigationDirection.Left => item.Dx < 0,
+                PmtNavigationDirection.Right => item.Dx > 0,
+                PmtNavigationDirection.Up => item.Dy < 0,
+                _ => item.Dy > 0
+            })
+            .OrderBy(item => direction is PmtNavigationDirection.Left or PmtNavigationDirection.Right
+                ? Math.Abs(item.Dy) : Math.Abs(item.Dx))
+            .ThenBy(item => Math.Sqrt(item.Dx * item.Dx + item.Dy * item.Dy))
+            .Select(item => item.Target)
+            .FirstOrDefault();
+        if (next is not null)
+            Select(next.Id);
     }
 
     private void DeleteSelectedCore()
@@ -381,6 +480,15 @@ public sealed class LaserPmtWorkflowCanvas : Control
             invalid || selected ? 2 : 1);
         var fill = invalid ? UiTheme.GhostPressedBrush : UiTheme.GhostBrush;
         context.DrawRectangle(fill, pen, rect);
+        var source = _workflow!.Sources.FirstOrDefault(item => item.Id == target.SourceId);
+        if (source is not null)
+        {
+            var sourceBrush = new SolidColorBrush(Color.FromUInt32(source.ColorArgb));
+            context.FillRectangle(sourceBrush, new Rect(rect.Left, rect.Top, Math.Min(5, rect.Width), rect.Height));
+            if (rect.Width >= 28 && rect.Height >= 18)
+                DrawText(context, source.Mark, new Point(rect.Left + 9, rect.Top + 3), 8.5,
+                    sourceBrush);
+        }
         var label = target switch
         {
             LaserPmtTarget pmt =>
@@ -401,6 +509,24 @@ public sealed class LaserPmtWorkflowCanvas : Control
         if (rect.Width >= 18 && rect.Height >= 12)
             DrawText(context, label, rect.Center, 10.5,
                 invalid ? UiTheme.DangerTextBrush : UiTheme.TextPrimaryBrush, centered: true);
+        if (target is LaserPmtTarget { IsSizeLocked: true } && rect.Width >= 22 && rect.Height >= 16)
+            DrawSizeLock(context, new Point(rect.Right - 10, rect.Top + 8));
+    }
+
+    private static void DrawSizeLock(DrawingContext context, Point center)
+    {
+        var pen = new Pen(UiTheme.TextSecondaryBrush, 1.2);
+        context.DrawRectangle(null, pen, new Rect(center.X - 4, center.Y, 8, 6), 1, 1);
+        var shackle = new StreamGeometry();
+        using (var path = shackle.Open())
+        {
+            path.BeginFigure(new Point(center.X - 2.5, center.Y), false);
+            path.CubicBezierTo(
+                new Point(center.X - 2.5, center.Y - 4),
+                new Point(center.X + 2.5, center.Y - 4),
+                new Point(center.X + 2.5, center.Y));
+        }
+        context.DrawGeometry(null, pen, shackle);
     }
 
     private void DrawBaseNode(DrawingContext context, LaserPmtBaseParameterNode node)
@@ -438,13 +564,17 @@ public sealed class LaserPmtWorkflowCanvas : Control
 
     private void DrawBaseBus(DrawingContext context)
     {
-        var node = ScreenRect(BaseNodeRect(_workflow!.BaseNode));
-        var workpiece = ScreenRect(ToRect(_workflow.Workpiece));
-        var start = new Point(node.Right, node.Center.Y);
-        var end = new Point(workpiece.Left, workpiece.Center.Y);
-        context.DrawLine(new Pen(UiTheme.AccentBrush, 1.5), start, end);
-        DrawText(context, "基础", new Point((start.X + end.X) / 2, (start.Y + end.Y) / 2 - 12),
-            9, UiTheme.AccentBrush, centered: true);
+        var workflow = _workflow!;
+        var workpiece = ScreenRect(ToRect(workflow.Workpiece));
+        foreach (var baseNode in workflow.BaseNodes)
+        {
+            var node = ScreenRect(BaseNodeRect(baseNode));
+            var start = new Point(node.Right, node.Center.Y);
+            var end = new Point(workpiece.Left, node.Center.Y);
+            context.DrawLine(new Pen(UiTheme.AccentBrush, 1.5), start, end);
+            DrawText(context, "基础", new Point((start.X + end.X) / 2, (start.Y + end.Y) / 2 - 12),
+                9, UiTheme.AccentBrush, centered: true);
+        }
     }
 
     private void DrawConnections(DrawingContext context)
@@ -512,6 +642,14 @@ public sealed class LaserPmtWorkflowCanvas : Control
         }
         targetId = string.Empty;
         return false;
+    }
+
+    private bool IsOnWorkpieceBorder(Point screen)
+    {
+        var rect = ScreenRect(ToRect(_workflow!.Workpiece));
+        var outer = rect.Inflate(6);
+        var inner = rect.Deflate(6);
+        return outer.Contains(screen) && !inner.Contains(screen);
     }
 
     private bool TryHitTimestampHandle(Point screen, out string targetId)
