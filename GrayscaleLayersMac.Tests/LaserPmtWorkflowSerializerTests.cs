@@ -22,6 +22,7 @@ public sealed class LaserPmtWorkflowSerializerTests
         Assert.AreEqual(source.HatchSpacing, parsed.HatchSpacing);
         Assert.AreEqual(source.Viewport, parsed.Viewport);
         Assert.AreEqual(source.NextPmtNumber, parsed.NextPmtNumber);
+        Assert.AreEqual(source.Numbering, parsed.Numbering);
         Assert.AreEqual(source.Targets[0], parsed.Targets[0]);
         Assert.AreEqual(source.Connections[0], parsed.Connections[0]);
         CollectionAssert.AreEqual(

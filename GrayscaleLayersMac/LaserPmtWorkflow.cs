@@ -30,6 +30,11 @@ public readonly record struct LaserPmtCanvasViewport(double Zoom, double PanX, d
         double.IsFinite(PanX) && double.IsFinite(PanY);
 }
 
+public sealed record LaserPmtWorkflowNumbering(string Prefix, int Increment, int Padding)
+{
+    public static LaserPmtWorkflowNumbering Default { get; } = new("pmt_", 1, 4);
+}
+
 public sealed record LaserPmtBaseParameterNode(
     string Id,
     LaserPmtWorkflowPoint Position,
@@ -80,6 +85,7 @@ public sealed class LaserPmtWorkflow
     public int PmtColumns { get; }
     public int NextPmtNumber { get; }
     public long NextCreationOrder { get; }
+    public LaserPmtWorkflowNumbering Numbering { get; }
 
     public LaserPmtWorkflow(
         string baseMachineIdentity,
@@ -92,7 +98,8 @@ public sealed class LaserPmtWorkflow
         IReadOnlyList<LaserPmtConnection> connections,
         int pmtColumns,
         int nextPmtNumber,
-        long nextCreationOrder)
+        long nextCreationOrder,
+        LaserPmtWorkflowNumbering? numbering = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(baseMachineIdentity);
         ArgumentNullException.ThrowIfNull(baseNode);
@@ -107,6 +114,11 @@ public sealed class LaserPmtWorkflow
             throw new ArgumentException("画布视口无效。", nameof(viewport));
         if (pmtColumns <= 0)
             throw new ArgumentOutOfRangeException(nameof(pmtColumns));
+        numbering ??= LaserPmtWorkflowNumbering.Default;
+        if (numbering.Prefix.Length > 64 ||
+            numbering.Prefix.Any(character => !char.IsAsciiLetterOrDigit(character) && character is not ('_' or '-')) ||
+            numbering.Increment <= 0 || numbering.Padding is < 1 or > 18)
+            throw new ArgumentException("PMT 编号格式无效。", nameof(numbering));
 
         BaseMachineIdentity = baseMachineIdentity;
         Workpiece = workpiece;
@@ -119,6 +131,7 @@ public sealed class LaserPmtWorkflow
         PmtColumns = pmtColumns;
         NextPmtNumber = nextPmtNumber;
         NextCreationOrder = nextCreationOrder;
+        Numbering = numbering;
         Validate();
     }
 

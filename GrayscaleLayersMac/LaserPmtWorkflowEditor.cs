@@ -64,7 +64,7 @@ public static class LaserPmtWorkflowEditor
             result = Rebuild(
                 result,
                 targets: targets,
-                nextPmtNumber: checked(result.NextPmtNumber + 1));
+                nextPmtNumber: checked(result.NextPmtNumber + result.Numbering.Increment));
         }
         return result;
     }
@@ -257,5 +257,6 @@ public static class LaserPmtWorkflowEditor
             connections ?? workflow.Connections,
             pmtColumns ?? workflow.PmtColumns,
             nextPmtNumber ?? workflow.NextPmtNumber,
-            workflow.NextCreationOrder);
+            workflow.NextCreationOrder,
+            workflow.Numbering);
 }

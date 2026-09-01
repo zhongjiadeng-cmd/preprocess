@@ -34,7 +34,10 @@ public static class LaserPmtWorkflowSerializer
             {
                 ["pmt_columns"] = workflow.PmtColumns,
                 ["next_pmt_number"] = workflow.NextPmtNumber,
-                ["next_creation_order"] = workflow.NextCreationOrder
+                ["next_creation_order"] = workflow.NextCreationOrder,
+                ["prefix"] = workflow.Numbering.Prefix,
+                ["increment"] = workflow.Numbering.Increment,
+                ["padding"] = workflow.Numbering.Padding
             },
             ["base_node"] = BaseNode(workflow.BaseNode),
             ["parameter_nodes"] = new JsonArray(workflow.ParameterNodes.Select(ParameterNode).ToArray()),
@@ -83,7 +86,8 @@ public static class LaserPmtWorkflowSerializer
             RequireProperties(viewport, "viewport", "zoom", "pan_x", "pan_y");
             var numbering = ReadObject(root, "numbering_state");
             RequireProperties(numbering, "numbering_state",
-                "pmt_columns", "next_pmt_number", "next_creation_order");
+                "pmt_columns", "next_pmt_number", "next_creation_order",
+                "prefix", "increment", "padding");
 
             var workflow = new LaserPmtWorkflow(
                 ReadString(root, "base_machine_identity"),
@@ -99,7 +103,11 @@ public static class LaserPmtWorkflowSerializer
                 ReadConnections(ReadArray(root, "connections")),
                 ReadInt(numbering, "pmt_columns"),
                 ReadInt(numbering, "next_pmt_number"),
-                ReadLong(numbering, "next_creation_order"));
+                ReadLong(numbering, "next_creation_order"),
+                new LaserPmtWorkflowNumbering(
+                    ReadString(numbering, "prefix"),
+                    ReadInt(numbering, "increment"),
+                    ReadInt(numbering, "padding")));
 
             var expected = LaserPmtWorkflowCompiler.Compile(workflow);
             if (!expected.IsValid)
@@ -178,6 +186,7 @@ public static class LaserPmtWorkflowSerializer
         {
             ["target_id"] = target.TargetId,
             ["kind"] = target.Kind == LaserPmtCompiledTargetKind.Pmt ? "pmt" : "timestamp",
+            ["identifier"] = target.Identifier,
             ["bounds"] = BoundsNode(target.Bounds),
             ["parameters"] = TypedDictionaryNode(target.Parameters)
         };
@@ -322,15 +331,16 @@ public static class LaserPmtWorkflowSerializer
             var kind = ReadString(element, "kind");
             if (kind == "pmt")
                 RequireProperties(element, "compiled_pmt",
-                    "target_id", "kind", "pmt_number", "bounds", "parameters");
+                    "target_id", "kind", "identifier", "pmt_number", "bounds", "parameters");
             else if (kind == "timestamp")
                 RequireProperties(element, "compiled_timestamp",
-                    "target_id", "kind", "creation_order", "timestamp_text", "bounds", "parameters");
+                    "target_id", "kind", "identifier", "creation_order", "timestamp_text", "bounds", "parameters");
             else
                 throw new InvalidDataException($"不支持的编译目标类型：{kind}");
             result.Add(new LaserPmtCompiledTarget(
                 ReadString(element, "target_id"),
                 kind == "pmt" ? LaserPmtCompiledTargetKind.Pmt : LaserPmtCompiledTargetKind.Timestamp,
+                ReadString(element, "identifier"),
                 kind == "pmt" ? ReadInt(element, "pmt_number") : null,
                 kind == "timestamp" ? ReadLong(element, "creation_order") : null,
                 kind == "timestamp" ? ReadString(element, "timestamp_text") : null,
@@ -350,7 +360,7 @@ public static class LaserPmtWorkflowSerializer
         {
             var left = expected[index];
             var right = saved[index];
-            if (left.TargetId != right.TargetId || left.Kind != right.Kind ||
+            if (left.TargetId != right.TargetId || left.Kind != right.Kind || left.Identifier != right.Identifier ||
                 left.PmtNumber != right.PmtNumber || left.CreationOrder != right.CreationOrder ||
                 left.TimestampText != right.TimestampText || left.Bounds != right.Bounds ||
                 left.Parameters.Count != right.Parameters.Count)

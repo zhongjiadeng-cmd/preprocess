@@ -19,6 +19,7 @@ public enum LaserPmtCompiledTargetKind
 public sealed record LaserPmtCompiledTarget(
     string TargetId,
     LaserPmtCompiledTargetKind Kind,
+    string Identifier,
     int? PmtNumber,
     long? CreationOrder,
     string? TimestampText,
@@ -161,6 +162,7 @@ public static class LaserPmtWorkflowCompiler
             }
             compiled.Add(CreateCompiledTarget(
                 target,
+                workflow.Numbering,
                 new ReadOnlyDictionary<string, object>(parameters)));
         }
         return new LaserPmtCompilationResult(compiled, errors);
@@ -168,11 +170,13 @@ public static class LaserPmtWorkflowCompiler
 
     private static LaserPmtCompiledTarget CreateCompiledTarget(
         LaserPmtWorkflowTarget target,
+        LaserPmtWorkflowNumbering numbering,
         IReadOnlyDictionary<string, object> parameters) => target switch
     {
         LaserPmtTarget pmt => new LaserPmtCompiledTarget(
             pmt.Id,
             LaserPmtCompiledTargetKind.Pmt,
+            $"{numbering.Prefix}{pmt.Number.ToString($"D{numbering.Padding}", System.Globalization.CultureInfo.InvariantCulture)}",
             pmt.Number,
             null,
             null,
@@ -181,6 +185,7 @@ public static class LaserPmtWorkflowCompiler
         LaserPmtTimestampTarget timestamp => new LaserPmtCompiledTarget(
             timestamp.Id,
             LaserPmtCompiledTargetKind.Timestamp,
+            $"timestamp-{timestamp.CreationOrder}",
             null,
             timestamp.CreationOrder,
             timestamp.Text,
