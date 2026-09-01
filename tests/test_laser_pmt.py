@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 import json
 import tempfile
 from pathlib import Path
@@ -93,7 +94,11 @@ def make_workflow_request_document(
                 else f"timestamp-{source['creation_order']}"
             ),
             "bounds": source["bounds"],
-            "parameters": parameters,
+            "parameters": (
+                {**parameters, "power": 40}
+                if source["id"] == "pmt-1"
+                else dict(parameters)
+            ),
             **(
                 {"pmt_number": source["number"]}
                 if source["type"] == "pmt"
@@ -126,9 +131,20 @@ def make_workflow_request_document(
             "parameters": string_parameters,
             "removed_parameters": [],
         },
-        "parameter_nodes": [],
+        "parameter_nodes": [{
+            "id": "power-node",
+            "position": {"x": -100, "y": 80},
+            "parameter_name": "power",
+            "values_text": "40",
+            "ports": [{"id": "power-40", "value": "40"}],
+        }],
         "targets": source_targets,
-        "connections": [],
+        "connections": [{
+            "id": "connection-1",
+            "source_node_id": "power-node",
+            "source_port_id": "power-40",
+            "target_id": "pmt-1",
+        }],
         "compiled_targets": compiled_targets,
         "generation": None,
     }
@@ -160,6 +176,17 @@ def test_loads_version_two_explicit_targets_with_number_gap() -> None:
     assert [(target.left, target.top) for target in request.targets] == [(1, 1), (10, 1)]
 
 
+def test_rejects_compiled_parameters_that_do_not_match_workflow_connections() -> None:
+    with tempfile.TemporaryDirectory() as folder:
+        root = Path(folder)
+        base = write_base_machine(root)
+        document = make_workflow_request_document(root, base)
+        document["workflow"]["compiled_targets"][0]["parameters"]["power"] = 41
+
+        with pytest.raises(ValueError, match="do not match"):
+            pmt._make_request(document)
+
+
 def test_generates_version_two_explicit_pmt_targets_without_filling_number_gap() -> None:
     with tempfile.TemporaryDirectory() as folder:
         root = Path(folder)
@@ -182,6 +209,16 @@ def test_generates_version_two_explicit_pmt_targets_without_filling_number_gap()
         assert (result / "test_0003machine.json").is_file()
         all_document = json.loads((result / "allmachine.json").read_text(encoding="utf-8"))
         assert [cycle["galvo_0"][0] for cycle in all_document["machine_cycle"]] == [0, 0, 1, 1]
+        with (result / "parameter-map.csv").open(encoding="utf-8", newline="") as stream:
+            rows = list(csv.DictReader(stream))
+        sources = json.loads(rows[0]["parameter_sources"])
+        assert rows[0]["target_id"] == "pmt-1"
+        assert sources["power"] == {
+            "node_id": "power-node", "port_id": "power-40", "port_number": 1
+        }
+        assert sources["frequency"] == {
+            "node_id": "base", "port_id": None, "port_number": None
+        }
 
 
 def test_generates_timestamp_after_all_pmts_without_independent_json() -> None:

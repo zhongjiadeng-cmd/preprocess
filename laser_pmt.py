@@ -132,6 +132,7 @@ class WorkflowTargetPlan:
     width: float
     height: float
     parameters: dict[str, object]
+    parameter_sources: dict[str, dict[str, object | None]]
 
 
 @dataclass(frozen=True)
@@ -481,6 +482,18 @@ def _parse_complete_parameters(value: object, label: str) -> dict[str, object]:
     return result
 
 
+def _parse_string_parameter(name: str, value: object, label: str) -> object:
+    if type(value) is not str or not value:
+        raise ValueError(f"{label} must be a non-empty string")
+    if name in BOOLEAN_KEYS:
+        if value not in {"true", "false"}:
+            raise ValueError(f"{label} must be true or false")
+        return value == "true"
+    if re.fullmatch(r"0|[1-9][0-9]*", value) is None:
+        raise ValueError(f"{label} must be an unsigned integer")
+    return parse_explicit_values(name, [int(value)]).values[0]
+
+
 def _make_workflow_request(document: dict[str, object]) -> LaserPmtWorkflowRequest:
     if set(document) != {
         "request_version", "base_machine_dir", "output_dir", "output_name",
@@ -536,6 +549,87 @@ def _make_workflow_request(document: dict[str, object]) -> LaserPmtWorkflowReque
         _parse_workflow_bounds(source["bounds"], "source target bounds")
         source_by_id[source["id"]] = source
 
+    base_node = workflow["base_node"]
+    if type(base_node) is not dict or set(base_node) != {
+        "id", "position", "parameters", "removed_parameters"
+    } or type(base_node["id"]) is not str:
+        raise ValueError("base parameter node is invalid")
+    base_parameters = base_node["parameters"]
+    removed_parameters = base_node["removed_parameters"]
+    if type(base_parameters) is not dict or set(base_parameters) != SUPPORTED_KEYS:
+        raise ValueError("base node must contain every supported parameter")
+    if (
+        type(removed_parameters) is not list
+        or any(type(name) is not str or name not in SUPPORTED_KEYS for name in removed_parameters)
+        or len(removed_parameters) != len(set(removed_parameters))
+    ):
+        raise ValueError("removed base parameters are invalid")
+    removed = set(removed_parameters)
+    parsed_base = {
+        name: _parse_string_parameter(name, base_parameters[name], f"base parameter {name}")
+        for name in SUPPORTED_KEYS
+    }
+
+    parameter_nodes = workflow["parameter_nodes"]
+    connections = workflow["connections"]
+    if type(parameter_nodes) is not list or type(connections) is not list:
+        raise ValueError("parameter nodes and connections must be arrays")
+    nodes_by_id: dict[str, dict[str, object]] = {}
+    ports_by_id: dict[str, tuple[dict[str, object], object, int]] = {}
+    for node in parameter_nodes:
+        if type(node) is not dict or set(node) != {
+            "id", "position", "parameter_name", "values_text", "ports"
+        }:
+            raise ValueError("single parameter node is invalid")
+        node_id = node["id"]
+        parameter_name = node["parameter_name"]
+        if (
+            type(node_id) is not str or not node_id or node_id in nodes_by_id
+            or type(parameter_name) is not str or parameter_name not in SUPPORTED_KEYS
+            or type(node["ports"]) is not list
+        ):
+            raise ValueError("single parameter node identity is invalid")
+        nodes_by_id[node_id] = node
+        for number, port in enumerate(node["ports"], start=1):
+            if type(port) is not dict or set(port) != {"id", "value"}:
+                raise ValueError("parameter port is invalid")
+            port_id = port["id"]
+            if type(port_id) is not str or not port_id or port_id in ports_by_id:
+                raise ValueError("parameter port identity is invalid")
+            parsed_value = _parse_string_parameter(
+                parameter_name, port["value"], f"parameter port {port_id}"
+            )
+            ports_by_id[port_id] = (node, parsed_value, number)
+    override_values: dict[tuple[str, str], object] = {}
+    override_sources: dict[tuple[str, str], dict[str, object | None]] = {}
+    connection_ids: set[str] = set()
+    for connection in connections:
+        if type(connection) is not dict or set(connection) != {
+            "id", "source_node_id", "source_port_id", "target_id"
+        }:
+            raise ValueError("parameter connection is invalid")
+        connection_id = connection["id"]
+        node_id = connection["source_node_id"]
+        port_id = connection["source_port_id"]
+        target_id = connection["target_id"]
+        if (
+            type(connection_id) is not str or not connection_id or connection_id in connection_ids
+            or node_id not in nodes_by_id or port_id not in ports_by_id
+            or target_id not in source_by_id or ports_by_id[port_id][0]["id"] != node_id
+        ):
+            raise ValueError("parameter connection identity is invalid")
+        connection_ids.add(connection_id)
+        node, parsed_value, visible_number = ports_by_id[port_id]
+        key = (target_id, node["parameter_name"])
+        if key in override_values:
+            raise ValueError("target parameter has more than one input")
+        override_values[key] = parsed_value
+        override_sources[key] = {
+            "node_id": node_id,
+            "port_id": port_id,
+            "port_number": visible_number,
+        }
+
     plans: list[WorkflowTargetPlan] = []
     seen_identifiers: set[str] = set()
     seen_pmt_numbers: set[int] = set()
@@ -573,6 +667,23 @@ def _make_workflow_request(document: dict[str, object]) -> LaserPmtWorkflowReque
         if left < 0 or top < 0 or left + width > workpiece_width or top + height > workpiece_height:
             raise ValueError("compiled target is outside the workpiece")
         parameters = _parse_complete_parameters(compiled["parameters"], "compiled parameters")
+        parameter_sources: dict[str, dict[str, object | None]] = {}
+        for name in SUPPORTED_KEYS:
+            key = (target_id, name)
+            if key in override_values:
+                expected_value = override_values[key]
+                parameter_sources[name] = override_sources[key]
+            else:
+                if name in removed:
+                    raise ValueError("target is missing a removed base parameter")
+                expected_value = parsed_base[name]
+                parameter_sources[name] = {
+                    "node_id": base_node["id"],
+                    "port_id": None,
+                    "port_number": None,
+                }
+            if parameters[name] != expected_value:
+                raise ValueError("compiled target parameters do not match the workflow graph")
         if kind == "pmt":
             number = _require_plain_int(compiled["pmt_number"], "PMT number")
             if number <= 0 or number in seen_pmt_numbers or source["number"] != number:
@@ -595,7 +706,7 @@ def _make_workflow_request(document: dict[str, object]) -> LaserPmtWorkflowReque
             seen_creation_orders.add(creation_order)
         plans.append(WorkflowTargetPlan(
             target_id, kind, identifier, number, creation_order, timestamp_text,
-            left, top, width, height, parameters,
+            left, top, width, height, parameters, parameter_sources,
         ))
     expected_order = sorted(
         plans,
@@ -766,6 +877,7 @@ def _build_workflow_layout_document(
             "laser_param_index": cell.job_index,
             "layer_feed_um": layer_feed,
             "parameters": combination,
+            "parameter_sources": target.parameter_sources,
             "patch_indices": [list(reference) for reference in owned],
         })
     document["generation"] = {
@@ -793,8 +905,10 @@ def _write_csv(
     layout_document: dict[str, object],
 ) -> None:
     fieldnames = [
-        "identifier", "row", "column", "left_mm", "top_mm",
+        "target_type", "target_id", "identifier", "row", "column",
+        "left_mm", "top_mm", "width_mm", "height_mm",
         "laser_param_index", "layer_feed_um", "json_file", "patch_indices",
+        "parameter_sources",
         *parameter_order,
     ]
     with path.open("w", encoding="utf-8", newline="") as stream:
@@ -802,17 +916,27 @@ def _write_csv(
         writer.writeheader()
         for job in _layout_jobs(layout_document):
             row = {
+                "target_type": job.get("target_type", "pmt"),
+                "target_id": job.get("target_id", job["identifier"]),
                 "identifier": job["identifier"],
                 "row": job["row"],
                 "column": job["column"],
                 "left_mm": job["bounds"]["left"],
                 "top_mm": job["bounds"]["top"],
+                "width_mm": job["bounds"]["width"],
+                "height_mm": job["bounds"]["height"],
                 "laser_param_index": job["laser_param_index"],
                 "layer_feed_um": job["layer_feed_um"],
                 "json_file": job["json_file"],
                 "patch_indices": ";".join(
                     f"{reference[0]}_{reference[1]}"
                     for reference in job["patch_indices"]
+                ),
+                "parameter_sources": json.dumps(
+                    job.get("parameter_sources", {}),
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
                 ),
             }
             row.update(job["parameters"])
@@ -875,11 +999,19 @@ def _validate_generated_package(
     for csv_row, job in zip(csv_rows, jobs):
         if (
             csv_row.get("identifier") != job["identifier"]
+            or csv_row.get("target_type") != job.get("target_type", "pmt")
+            or csv_row.get("target_id") != job.get("target_id", job["identifier"])
             or csv_row.get("json_file") != (job["json_file"] or "")
             or csv_row.get("patch_indices")
             != ";".join(
                 f"{reference[0]}_{reference[1]}"
                 for reference in job["patch_indices"]
+            )
+            or csv_row.get("parameter_sources") != json.dumps(
+                job.get("parameter_sources", {}),
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
             )
         ):
             raise ValueError("parameter-map.csv does not match the layout")
