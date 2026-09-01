@@ -12,8 +12,208 @@ public sealed record LaserPmtGeometryError(
     string? OtherTargetId,
     string Message);
 
+public sealed record LaserPmtParameterNodeUpdate(
+    LaserPmtWorkflow Workflow,
+    IReadOnlyList<string> RemovedConnectionIds);
+
 public static class LaserPmtWorkflowEditor
 {
+    public static LaserPmtWorkflow AddTimestamp(
+        LaserPmtWorkflow workflow,
+        string targetId,
+        string text,
+        LaserPmtWorkflowBounds bounds)
+    {
+        ArgumentNullException.ThrowIfNull(workflow);
+        var target = new LaserPmtTimestampTarget(
+            targetId,
+            workflow.NextCreationOrder,
+            text,
+            bounds);
+        return Rebuild(
+            workflow,
+            targets: workflow.Targets.Append<LaserPmtWorkflowTarget>(target).ToArray(),
+            nextCreationOrder: checked(workflow.NextCreationOrder + 1));
+    }
+
+    public static LaserPmtWorkflow DeleteTarget(LaserPmtWorkflow workflow, string targetId)
+    {
+        ArgumentNullException.ThrowIfNull(workflow);
+        if (!workflow.Targets.Any(target => target.Id == targetId))
+            throw new ArgumentException($"找不到加工目标：{targetId}", nameof(targetId));
+        return Rebuild(
+            workflow,
+            targets: workflow.Targets.Where(target => target.Id != targetId).ToArray(),
+            connections: workflow.Connections
+                .Where(connection => connection.TargetId != targetId)
+                .ToArray());
+    }
+
+    public static LaserPmtWorkflow MoveTimestamp(
+        LaserPmtWorkflow workflow,
+        string targetId,
+        double left,
+        double top) => UpdateTimestampBounds(
+            workflow,
+            targetId,
+            bounds => bounds with { Left = left, Top = top });
+
+    public static LaserPmtWorkflow ResizeTimestamp(
+        LaserPmtWorkflow workflow,
+        string targetId,
+        double width,
+        double height) => UpdateTimestampBounds(
+            workflow,
+            targetId,
+            bounds => bounds with { Width = width, Height = height });
+
+    public static LaserPmtWorkflow UpdateTimestampText(
+        LaserPmtWorkflow workflow,
+        string targetId,
+        string text)
+    {
+        ArgumentNullException.ThrowIfNull(workflow);
+        var found = false;
+        var targets = workflow.Targets.Select(target =>
+        {
+            if (target.Id != targetId)
+                return target;
+            if (target is not LaserPmtTimestampTarget timestamp)
+                throw new ArgumentException($"目标不是时间戳：{targetId}", nameof(targetId));
+            found = true;
+            return (LaserPmtWorkflowTarget)(timestamp with { Text = text });
+        }).ToArray();
+        if (!found)
+            throw new ArgumentException($"找不到时间戳：{targetId}", nameof(targetId));
+        return Rebuild(workflow, targets: targets);
+    }
+
+    public static LaserPmtWorkflow AddConnection(
+        LaserPmtWorkflow workflow,
+        LaserPmtConnection connection)
+    {
+        ArgumentNullException.ThrowIfNull(workflow);
+        ArgumentNullException.ThrowIfNull(connection);
+        return Rebuild(
+            workflow,
+            connections: workflow.Connections.Append(connection).ToArray());
+    }
+
+    public static LaserPmtWorkflow RemoveConnection(
+        LaserPmtWorkflow workflow,
+        string connectionId)
+    {
+        ArgumentNullException.ThrowIfNull(workflow);
+        if (!workflow.Connections.Any(connection => connection.Id == connectionId))
+            throw new ArgumentException($"找不到参数连线：{connectionId}", nameof(connectionId));
+        return Rebuild(
+            workflow,
+            connections: workflow.Connections
+                .Where(connection => connection.Id != connectionId)
+                .ToArray());
+    }
+
+    public static LaserPmtParameterNodeUpdate UpdateParameterNodeValues(
+        LaserPmtWorkflow workflow,
+        string nodeId,
+        string valuesText,
+        Func<string> createPortId)
+    {
+        ArgumentNullException.ThrowIfNull(workflow);
+        var index = workflow.ParameterNodes.ToList().FindIndex(node => node.Id == nodeId);
+        if (index < 0)
+            throw new ArgumentException($"找不到单参数节点：{nodeId}", nameof(nodeId));
+        var reconciliation = LaserPmtWorkflowCompiler.ReconcilePorts(
+            workflow.ParameterNodes[index], valuesText, createPortId);
+        if (!reconciliation.Success)
+            throw new ArgumentException(reconciliation.Error, nameof(valuesText));
+        var nodes = workflow.ParameterNodes.ToArray();
+        nodes[index] = reconciliation.Node!;
+        var removedPorts = reconciliation.RemovedPortIds.ToHashSet(StringComparer.Ordinal);
+        var removedConnections = workflow.Connections
+            .Where(connection => removedPorts.Contains(connection.SourcePortId))
+            .Select(connection => connection.Id)
+            .ToArray();
+        var removedConnectionSet = removedConnections.ToHashSet(StringComparer.Ordinal);
+        return new LaserPmtParameterNodeUpdate(
+            Rebuild(
+                workflow,
+                parameterNodes: nodes,
+                connections: workflow.Connections
+                    .Where(connection => !removedConnectionSet.Contains(connection.Id))
+                    .ToArray()),
+            removedConnections);
+    }
+
+    public static LaserPmtWorkflow SetBaseParameterEnabled(
+        LaserPmtWorkflow workflow,
+        string parameterName,
+        bool enabled)
+    {
+        ArgumentNullException.ThrowIfNull(workflow);
+        if (!workflow.BaseNode.Parameters.ContainsKey(parameterName))
+            throw new ArgumentException($"基础节点不包含参数：{parameterName}", nameof(parameterName));
+        var removed = new HashSet<string>(workflow.BaseNode.RemovedParameters, StringComparer.Ordinal);
+        if (enabled)
+            removed.Remove(parameterName);
+        else
+            removed.Add(parameterName);
+        return Rebuild(
+            workflow,
+            baseNode: workflow.BaseNode with { RemovedParameters = removed });
+    }
+
+    public static LaserPmtWorkflow AddParameterNode(
+        LaserPmtWorkflow workflow,
+        LaserPmtSingleParameterNode node)
+    {
+        ArgumentNullException.ThrowIfNull(workflow);
+        ArgumentNullException.ThrowIfNull(node);
+        return Rebuild(
+            workflow,
+            parameterNodes: workflow.ParameterNodes.Append(node).ToArray());
+    }
+
+    public static LaserPmtWorkflow DeleteParameterNode(
+        LaserPmtWorkflow workflow,
+        string nodeId)
+    {
+        ArgumentNullException.ThrowIfNull(workflow);
+        if (!workflow.ParameterNodes.Any(node => node.Id == nodeId))
+            throw new ArgumentException($"找不到单参数节点：{nodeId}", nameof(nodeId));
+        return Rebuild(
+            workflow,
+            parameterNodes: workflow.ParameterNodes.Where(node => node.Id != nodeId).ToArray(),
+            connections: workflow.Connections
+                .Where(connection => connection.SourceNodeId != nodeId)
+                .ToArray());
+    }
+
+    public static LaserPmtWorkflow MoveParameterNode(
+        LaserPmtWorkflow workflow,
+        string nodeId,
+        LaserPmtWorkflowPoint position)
+    {
+        ArgumentNullException.ThrowIfNull(workflow);
+        var found = false;
+        var nodes = workflow.ParameterNodes.Select(node =>
+        {
+            if (node.Id != nodeId)
+                return node;
+            found = true;
+            return node with { Position = position };
+        }).ToArray();
+        if (!found)
+            throw new ArgumentException($"找不到单参数节点：{nodeId}", nameof(nodeId));
+        return Rebuild(workflow, parameterNodes: nodes);
+    }
+
+    public static LaserPmtWorkflow MoveBaseNode(
+        LaserPmtWorkflow workflow,
+        LaserPmtWorkflowPoint position) => Rebuild(
+            workflow,
+            baseNode: workflow.BaseNode with { Position = position });
+
     public static LaserPmtWorkflow DeletePmt(LaserPmtWorkflow workflow, string targetId)
     {
         ArgumentNullException.ThrowIfNull(workflow);
@@ -243,20 +443,45 @@ public static class LaserPmtWorkflowEditor
 
     private static LaserPmtWorkflow Rebuild(
         LaserPmtWorkflow workflow,
+        LaserPmtBaseParameterNode? baseNode = null,
+        IReadOnlyList<LaserPmtSingleParameterNode>? parameterNodes = null,
         IReadOnlyList<LaserPmtWorkflowTarget>? targets = null,
         IReadOnlyList<LaserPmtConnection>? connections = null,
         int? pmtColumns = null,
-        int? nextPmtNumber = null) => new(
+        int? nextPmtNumber = null,
+        long? nextCreationOrder = null) => new(
             workflow.BaseMachineIdentity,
             workflow.Workpiece,
             workflow.HatchSpacing,
             workflow.Viewport,
-            workflow.BaseNode,
-            workflow.ParameterNodes,
+            baseNode ?? workflow.BaseNode,
+            parameterNodes ?? workflow.ParameterNodes,
             targets ?? workflow.Targets,
             connections ?? workflow.Connections,
             pmtColumns ?? workflow.PmtColumns,
             nextPmtNumber ?? workflow.NextPmtNumber,
-            workflow.NextCreationOrder,
+            nextCreationOrder ?? workflow.NextCreationOrder,
             workflow.Numbering);
+
+    private static LaserPmtWorkflow UpdateTimestampBounds(
+        LaserPmtWorkflow workflow,
+        string targetId,
+        Func<LaserPmtWorkflowBounds, LaserPmtWorkflowBounds> update)
+    {
+        ArgumentNullException.ThrowIfNull(workflow);
+        ArgumentNullException.ThrowIfNull(update);
+        var found = false;
+        var targets = workflow.Targets.Select(target =>
+        {
+            if (target.Id != targetId)
+                return target;
+            if (target is not LaserPmtTimestampTarget timestamp)
+                throw new ArgumentException($"目标不是时间戳：{targetId}", nameof(targetId));
+            found = true;
+            return (LaserPmtWorkflowTarget)(timestamp with { Bounds = update(timestamp.Bounds) });
+        }).ToArray();
+        if (!found)
+            throw new ArgumentException($"找不到时间戳：{targetId}", nameof(targetId));
+        return Rebuild(workflow, targets: targets);
+    }
 }

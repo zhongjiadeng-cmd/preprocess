@@ -8,16 +8,39 @@ namespace GrayscaleLayersMac;
 
 public sealed class LaserPmtWorkflowCanvas : Control
 {
+    private enum DragKind
+    {
+        None,
+        Pan,
+        Target,
+        ParameterNode,
+        BaseNode,
+        TimestampResize,
+        Connection
+    }
+
     private const double BaseNodeWidth = 58;
     private const double ParameterNodeWidth = 58;
     private LaserPmtWorkflow? _workflow;
     private LaserPmtCanvasViewport _viewport = new(1, 0, 0);
     private Point? _panStart;
     private LaserPmtCanvasViewport _viewportAtPanStart;
+    private DragKind _dragKind;
+    private string? _dragId;
+    private string? _connectionNodeId;
+    private string? _connectionPortId;
+    private Point _dragWorldStart;
+    private Point _connectionPointer;
+    private LaserPmtWorkflow? _workflowAtDragStart;
+    private string? _selectedId;
 
     public LaserPmtWorkflow? Workflow => _workflow;
     public LaserPmtCanvasViewport Viewport => _viewport;
+    public string? SelectedId => _selectedId;
     public event EventHandler? ViewChanged;
+    public event EventHandler? WorkflowChanged;
+    public event EventHandler? SelectionChanged;
+    public event EventHandler<string>? EditRejected;
 
     public LaserPmtWorkflowCanvas()
     {
@@ -30,6 +53,7 @@ public sealed class LaserPmtWorkflowCanvas : Control
     {
         _workflow = workflow ?? throw new ArgumentNullException(nameof(workflow));
         _viewport = workflow.Viewport;
+        _selectedId = null;
         InvalidateVisual();
     }
 
@@ -37,6 +61,7 @@ public sealed class LaserPmtWorkflowCanvas : Control
     {
         _workflow = null;
         _viewport = new LaserPmtCanvasViewport(1, 0, 0);
+        _selectedId = null;
         InvalidateVisual();
     }
 
@@ -91,6 +116,15 @@ public sealed class LaserPmtWorkflowCanvas : Control
         DrawBaseNode(context, _workflow.BaseNode);
         foreach (var node in _workflow.ParameterNodes)
             DrawParameterNode(context, node);
+        if (_dragKind == DragKind.Connection &&
+            _connectionNodeId is not null && _connectionPortId is not null)
+        {
+            var node = _workflow.ParameterNodes.Single(item => item.Id == _connectionNodeId);
+            var index = node.Ports.ToList().FindIndex(port => port.Id == _connectionPortId);
+            if (index >= 0)
+                context.DrawLine(new Pen(UiTheme.AccentBrush, 1.4),
+                    ScreenPoint(ParameterPortPoint(node, index)), _connectionPointer);
+        }
     }
 
     protected override void OnPointerWheelChanged(PointerWheelEventArgs e)
@@ -115,33 +149,140 @@ public sealed class LaserPmtWorkflowCanvas : Control
         if (_workflow is null ||
             (!point.Properties.IsMiddleButtonPressed && !point.Properties.IsLeftButtonPressed))
             return;
-        _panStart = e.GetPosition(this);
-        _viewportAtPanStart = _viewport;
+        var screen = e.GetPosition(this);
+        _workflowAtDragStart = _workflow;
+        _dragWorldStart = LaserPmtWorkflowViewMath.ScreenToWorld(screen, _viewport, Bounds.Size);
+        if (point.Properties.IsLeftButtonPressed && TryHitPort(screen, out var nodeId, out var portId))
+        {
+            _dragKind = DragKind.Connection;
+            _connectionNodeId = nodeId;
+            _connectionPortId = portId;
+            _connectionPointer = screen;
+        }
+        else if (point.Properties.IsLeftButtonPressed && TryHitTimestampHandle(screen, out var resizeId))
+        {
+            Select(resizeId);
+            _dragKind = DragKind.TimestampResize;
+            _dragId = resizeId;
+        }
+        else if (point.Properties.IsLeftButtonPressed && TryHitTarget(screen, out var targetId))
+        {
+            Select(targetId);
+            _dragKind = DragKind.Target;
+            _dragId = targetId;
+        }
+        else if (point.Properties.IsLeftButtonPressed && TryHitParameterNode(screen, out var parameterNodeId))
+        {
+            Select(parameterNodeId);
+            _dragKind = DragKind.ParameterNode;
+            _dragId = parameterNodeId;
+        }
+        else if (point.Properties.IsLeftButtonPressed &&
+                 ScreenRect(BaseNodeRect(_workflow.BaseNode)).Contains(screen))
+        {
+            Select(_workflow.BaseNode.Id);
+            _dragKind = DragKind.BaseNode;
+            _dragId = _workflow.BaseNode.Id;
+        }
+        else if (point.Properties.IsLeftButtonPressed && TryHitConnection(screen, out var connectionId))
+        {
+            Select(connectionId);
+            _dragKind = DragKind.None;
+        }
+        else
+        {
+            Select(null);
+            _dragKind = DragKind.Pan;
+            _panStart = screen;
+            _viewportAtPanStart = _viewport;
+        }
         e.Pointer.Capture(this);
-        Cursor = new Cursor(StandardCursorType.SizeAll);
+        Cursor = new Cursor(_dragKind == DragKind.Connection
+            ? StandardCursorType.Cross
+            : StandardCursorType.SizeAll);
         e.Handled = true;
     }
 
     protected override void OnPointerMoved(PointerEventArgs e)
     {
         base.OnPointerMoved(e);
-        if (_panStart is not { } start)
+        if (_workflow is null || _workflowAtDragStart is null || _dragKind == DragKind.None)
             return;
-        var delta = e.GetPosition(this) - start;
-        _viewport = _viewportAtPanStart with
+        var screen = e.GetPosition(this);
+        if (_dragKind == DragKind.Connection)
         {
-            PanX = _viewportAtPanStart.PanX + delta.X,
-            PanY = _viewportAtPanStart.PanY + delta.Y
-        };
-        NotifyViewChanged();
+            _connectionPointer = screen;
+            InvalidateVisual();
+            e.Handled = true;
+            return;
+        }
+        if (_dragKind == DragKind.Pan && _panStart is { } panStart)
+        {
+            var panDelta = screen - panStart;
+            _viewport = _viewportAtPanStart with
+            {
+                PanX = _viewportAtPanStart.PanX + panDelta.X,
+                PanY = _viewportAtPanStart.PanY + panDelta.Y
+            };
+            NotifyViewChanged();
+            e.Handled = true;
+            return;
+        }
+        var world = LaserPmtWorkflowViewMath.ScreenToWorld(screen, _viewport, Bounds.Size);
+        var delta = world - _dragWorldStart;
+        try
+        {
+            _workflow = _dragKind switch
+            {
+                DragKind.Target => MoveTarget(_workflowAtDragStart, _dragId!, delta),
+                DragKind.TimestampResize => ResizeTimestamp(_workflowAtDragStart, _dragId!, delta),
+                DragKind.ParameterNode => MoveParameterNode(_workflowAtDragStart, _dragId!, delta),
+                DragKind.BaseNode => LaserPmtWorkflowEditor.MoveBaseNode(
+                    _workflowAtDragStart,
+                    new LaserPmtWorkflowPoint(
+                        _workflowAtDragStart.BaseNode.Position.X + delta.X,
+                        _workflowAtDragStart.BaseNode.Position.Y + delta.Y)),
+                _ => _workflow
+            };
+            NotifyWorkflowChanged();
+        }
+        catch (ArgumentException exception)
+        {
+            EditRejected?.Invoke(this, exception.Message);
+        }
         e.Handled = true;
     }
 
     protected override void OnPointerReleased(PointerReleasedEventArgs e)
     {
         base.OnPointerReleased(e);
-        if (_panStart is null)
+        if (_dragKind == DragKind.None && _panStart is null)
             return;
+        var screen = e.GetPosition(this);
+        if (_dragKind == DragKind.Connection && _workflow is not null &&
+            TryHitTarget(screen, out var targetId))
+        {
+            try
+            {
+                _workflow = LaserPmtWorkflowEditor.AddConnection(
+                    _workflow,
+                    new LaserPmtConnection(
+                        $"connection-{Guid.NewGuid():N}",
+                        _connectionNodeId!,
+                        _connectionPortId!,
+                        targetId));
+                NotifyWorkflowChanged();
+            }
+            catch (ArgumentException exception)
+            {
+                EditRejected?.Invoke(this, exception.Message);
+            }
+        }
+        _dragKind = DragKind.None;
+        _dragId = null;
+        _connectionNodeId = null;
+        _connectionPortId = null;
+        _workflowAtDragStart = null;
         _panStart = null;
         e.Pointer.Capture(null);
         Cursor = new Cursor(StandardCursorType.Arrow);
@@ -152,7 +293,34 @@ public sealed class LaserPmtWorkflowCanvas : Control
     {
         base.OnPointerCaptureLost(e);
         _panStart = null;
+        _dragKind = DragKind.None;
+        _workflowAtDragStart = null;
         Cursor = new Cursor(StandardCursorType.Arrow);
+    }
+
+    protected override void OnKeyDown(KeyEventArgs e)
+    {
+        base.OnKeyDown(e);
+        if (e.Key != Key.Delete || _workflow is null || _selectedId is null)
+            return;
+        try
+        {
+            if (_workflow.Connections.Any(connection => connection.Id == _selectedId))
+                _workflow = LaserPmtWorkflowEditor.RemoveConnection(_workflow, _selectedId);
+            else if (_workflow.ParameterNodes.Any(node => node.Id == _selectedId))
+                _workflow = LaserPmtWorkflowEditor.DeleteParameterNode(_workflow, _selectedId);
+            else if (_workflow.Targets.Any(target => target.Id == _selectedId))
+                _workflow = LaserPmtWorkflowEditor.DeleteTarget(_workflow, _selectedId);
+            else
+                return;
+            Select(null);
+            NotifyWorkflowChanged();
+            e.Handled = true;
+        }
+        catch (ArgumentException exception)
+        {
+            EditRejected?.Invoke(this, exception.Message);
+        }
     }
 
     private void DrawWorkpiece(DrawingContext context)
@@ -169,7 +337,10 @@ public sealed class LaserPmtWorkflowCanvas : Control
         bool invalid)
     {
         var rect = ScreenRect(ToRect(target.Bounds));
-        var pen = new Pen(invalid ? UiTheme.DangerBrush : UiTheme.BorderMediumBrush, invalid ? 2 : 1);
+        var selected = target.Id == _selectedId;
+        var pen = new Pen(
+            invalid ? UiTheme.DangerBrush : selected ? UiTheme.AccentBrush : UiTheme.BorderMediumBrush,
+            invalid || selected ? 2 : 1);
         var fill = invalid ? UiTheme.GhostPressedBrush : UiTheme.GhostBrush;
         context.DrawRectangle(fill, pen, rect);
         var label = target switch
@@ -185,6 +356,9 @@ public sealed class LaserPmtWorkflowCanvas : Control
             for (var y = rect.Top + spacing / 2; y < rect.Bottom; y += spacing)
                 context.DrawLine(new Pen(UiTheme.BorderSubtleBrush, 1),
                     new Point(rect.Left + 2, y), new Point(rect.Right - 2, y));
+            if (selected)
+                context.FillRectangle(UiTheme.AccentBrush,
+                    new Rect(rect.Right - 7, rect.Bottom - 7, 7, 7));
         }
         if (rect.Width >= 18 && rect.Height >= 12)
             DrawText(context, label, rect.Center, 10.5,
@@ -194,7 +368,8 @@ public sealed class LaserPmtWorkflowCanvas : Control
     private void DrawBaseNode(DrawingContext context, LaserPmtBaseParameterNode node)
     {
         var rect = ScreenRect(BaseNodeRect(node));
-        context.DrawRectangle(UiTheme.CardBrush, new Pen(UiTheme.AccentBrush, 1.5), rect, 6, 6);
+        context.DrawRectangle(UiTheme.CardBrush,
+            new Pen(UiTheme.AccentBrush, node.Id == _selectedId ? 2.5 : 1.5), rect, 6, 6);
         DrawText(context, "基础参数", new Point(rect.Left + 8, rect.Top + 6), 11.5,
             UiTheme.TextPrimaryBrush);
         DrawText(context,
@@ -206,7 +381,9 @@ public sealed class LaserPmtWorkflowCanvas : Control
     {
         var worldRect = ParameterNodeRect(node);
         var rect = ScreenRect(worldRect);
-        context.DrawRectangle(UiTheme.CardBrush, new Pen(UiTheme.BorderStrongBrush, 1.2), rect, 6, 6);
+        context.DrawRectangle(UiTheme.CardBrush,
+            new Pen(node.Id == _selectedId ? UiTheme.AccentBrush : UiTheme.BorderStrongBrush,
+                node.Id == _selectedId ? 2 : 1.2), rect, 6, 6);
         var definition = LaserPmtConfiguration.Parameters.FirstOrDefault(item => item.Name == node.ParameterName);
         DrawText(context, definition?.DisplayName ?? node.ParameterName,
             new Point(rect.Left + 7, rect.Top + 5), 10.5, UiTheme.TextPrimaryBrush);
@@ -257,7 +434,8 @@ public sealed class LaserPmtWorkflowCanvas : Control
                     new Point(end.X - offset, end.Y),
                     end);
             }
-            context.DrawGeometry(null, new Pen(UiTheme.AccentBrush, 1.4), geometry);
+            context.DrawGeometry(null,
+                new Pen(UiTheme.AccentBrush, connection.Id == _selectedId ? 2.8 : 1.4), geometry);
             DrawText(context, (portIndex + 1).ToString(CultureInfo.InvariantCulture),
                 new Point((start.X + end.X) / 2, (start.Y + end.Y) / 2), 9,
                 UiTheme.AccentTextBrush, centered: true, background: UiTheme.AccentBrush);
@@ -284,6 +462,184 @@ public sealed class LaserPmtWorkflowCanvas : Control
 
     private static Rect ToRect(LaserPmtWorkflowBounds bounds) =>
         new(bounds.Left, bounds.Top, bounds.Width, bounds.Height);
+
+    private bool TryHitTarget(Point screen, out string targetId)
+    {
+        foreach (var target in _workflow!.Targets.Reverse())
+        {
+            if (!ScreenRect(ToRect(target.Bounds)).Contains(screen))
+                continue;
+            targetId = target.Id;
+            return true;
+        }
+        targetId = string.Empty;
+        return false;
+    }
+
+    private bool TryHitTimestampHandle(Point screen, out string targetId)
+    {
+        foreach (var timestamp in _workflow!.Targets.OfType<LaserPmtTimestampTarget>().Reverse())
+        {
+            var rect = ScreenRect(ToRect(timestamp.Bounds));
+            if (!new Rect(rect.Right - 10, rect.Bottom - 10, 12, 12).Contains(screen))
+                continue;
+            targetId = timestamp.Id;
+            return true;
+        }
+        targetId = string.Empty;
+        return false;
+    }
+
+    private bool TryHitParameterNode(Point screen, out string nodeId)
+    {
+        foreach (var node in _workflow!.ParameterNodes.Reverse())
+        {
+            if (!ScreenRect(ParameterNodeRect(node)).Contains(screen))
+                continue;
+            nodeId = node.Id;
+            return true;
+        }
+        nodeId = string.Empty;
+        return false;
+    }
+
+    private bool TryHitPort(Point screen, out string nodeId, out string portId)
+    {
+        foreach (var node in _workflow!.ParameterNodes.Reverse())
+        {
+            for (var index = node.Ports.Count - 1; index >= 0; index--)
+            {
+                var port = ScreenPoint(ParameterPortPoint(node, index));
+                if (Distance(screen, port) > 9)
+                    continue;
+                nodeId = node.Id;
+                portId = node.Ports[index].Id;
+                return true;
+            }
+        }
+        nodeId = string.Empty;
+        portId = string.Empty;
+        return false;
+    }
+
+    private bool TryHitConnection(Point screen, out string connectionId)
+    {
+        var nodes = _workflow!.ParameterNodes.ToDictionary(node => node.Id, StringComparer.Ordinal);
+        var targets = _workflow.Targets.ToDictionary(target => target.Id, StringComparer.Ordinal);
+        foreach (var connection in _workflow.Connections.Reverse())
+        {
+            if (!nodes.TryGetValue(connection.SourceNodeId, out var node) ||
+                !targets.TryGetValue(connection.TargetId, out var target))
+                continue;
+            var portIndex = node.Ports.ToList().FindIndex(port => port.Id == connection.SourcePortId);
+            if (portIndex < 0)
+                continue;
+            var start = ScreenPoint(ParameterPortPoint(node, portIndex));
+            var targetRect = ScreenRect(ToRect(target.Bounds));
+            var end = new Point(targetRect.Left, targetRect.Center.Y);
+            var offset = Math.Max(24, Math.Abs(end.X - start.X) * 0.42);
+            var control1 = new Point(start.X + offset, start.Y);
+            var control2 = new Point(end.X - offset, end.Y);
+            var previous = start;
+            for (var sample = 1; sample <= 24; sample++)
+            {
+                var current = CubicPoint(start, control1, control2, end, sample / 24d);
+                if (DistanceToSegment(screen, previous, current) <= 7)
+                {
+                    connectionId = connection.Id;
+                    return true;
+                }
+                previous = current;
+            }
+        }
+        connectionId = string.Empty;
+        return false;
+    }
+
+    private static Point CubicPoint(Point start, Point control1, Point control2, Point end, double t)
+    {
+        var inverse = 1 - t;
+        return new Point(
+            inverse * inverse * inverse * start.X + 3 * inverse * inverse * t * control1.X +
+            3 * inverse * t * t * control2.X + t * t * t * end.X,
+            inverse * inverse * inverse * start.Y + 3 * inverse * inverse * t * control1.Y +
+            3 * inverse * t * t * control2.Y + t * t * t * end.Y);
+    }
+
+    private static double DistanceToSegment(Point point, Point start, Point end)
+    {
+        var segment = end - start;
+        var lengthSquared = segment.X * segment.X + segment.Y * segment.Y;
+        if (lengthSquared <= double.Epsilon)
+            return Distance(point, start);
+        var fromStart = point - start;
+        var t = Math.Clamp((fromStart.X * segment.X + fromStart.Y * segment.Y) / lengthSquared, 0, 1);
+        return Distance(point, start + segment * t);
+    }
+
+    private static double Distance(Point first, Point second)
+    {
+        var x = first.X - second.X;
+        var y = first.Y - second.Y;
+        return Math.Sqrt(x * x + y * y);
+    }
+
+    private static LaserPmtWorkflow MoveTarget(
+        LaserPmtWorkflow workflow,
+        string targetId,
+        Vector delta)
+    {
+        var target = workflow.Targets.Single(item => item.Id == targetId);
+        return target switch
+        {
+            LaserPmtTarget pmt => LaserPmtWorkflowEditor.MovePmt(
+                workflow, targetId, pmt.Bounds.Left + delta.X, pmt.Bounds.Top + delta.Y),
+            LaserPmtTimestampTarget timestamp => LaserPmtWorkflowEditor.MoveTimestamp(
+                workflow, targetId, timestamp.Bounds.Left + delta.X, timestamp.Bounds.Top + delta.Y),
+            _ => workflow
+        };
+    }
+
+    private static LaserPmtWorkflow ResizeTimestamp(
+        LaserPmtWorkflow workflow,
+        string targetId,
+        Vector delta)
+    {
+        var timestamp = workflow.Targets.OfType<LaserPmtTimestampTarget>()
+            .Single(item => item.Id == targetId);
+        return LaserPmtWorkflowEditor.ResizeTimestamp(
+            workflow,
+            targetId,
+            Math.Max(0.5, timestamp.Bounds.Width + delta.X),
+            Math.Max(0.5, timestamp.Bounds.Height + delta.Y));
+    }
+
+    private static LaserPmtWorkflow MoveParameterNode(
+        LaserPmtWorkflow workflow,
+        string nodeId,
+        Vector delta)
+    {
+        var node = workflow.ParameterNodes.Single(item => item.Id == nodeId);
+        return LaserPmtWorkflowEditor.MoveParameterNode(
+            workflow,
+            nodeId,
+            new LaserPmtWorkflowPoint(node.Position.X + delta.X, node.Position.Y + delta.Y));
+    }
+
+    private void Select(string? id)
+    {
+        if (_selectedId == id)
+            return;
+        _selectedId = id;
+        InvalidateVisual();
+        SelectionChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    private void NotifyWorkflowChanged()
+    {
+        InvalidateVisual();
+        WorkflowChanged?.Invoke(this, EventArgs.Empty);
+    }
 
     private static void DrawText(
         DrawingContext context,
