@@ -125,6 +125,32 @@ public static class LaserPmtConfiguration
         return true;
     }
 
+    public static bool TryParseExplicitValues(
+        string parameterName,
+        string valuesText,
+        out IReadOnlyList<object> values,
+        out string error)
+    {
+        if (!TryParseRows(
+                [new LaserPmtParameterRow(parameterName, valuesText)],
+                out var parsed,
+                out _,
+                out error))
+        {
+            values = [];
+            return false;
+        }
+        values = parsed[0].Values;
+        return true;
+    }
+
+    public static string FormatParameterValue(object value) => value switch
+    {
+        bool boolean => boolean ? "true" : "false",
+        int integer => integer.ToString(CultureInfo.InvariantCulture),
+        _ => throw new ArgumentException("LaserPMT 参数值只支持整数或布尔值。", nameof(value))
+    };
+
     public static string BuildRequestJson(
         string baseMachineDirectory,
         string outputDirectory,
