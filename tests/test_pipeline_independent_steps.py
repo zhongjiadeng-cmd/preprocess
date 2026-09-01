@@ -101,6 +101,15 @@ class PipelineIndependentStepsTests(unittest.TestCase):
             save_source,
         )
 
+    def test_pmt_mode_immediately_collapses_the_pipeline_inspector(self):
+        self.assertIn("view.SetPmtMode(kind == SharedPreviewKind.Pmt)", SOURCE)
+        self.assertIn("SetPipelineInspectorCollapsed", SOURCE)
+        collapse = SOURCE.split("private void SetPipelineInspectorCollapsed", 1)[1]
+        collapse = collapse.split("private static void SetPaneVisibility", 1)[0]
+        self.assertIn("inspector.Width = new GridLength(0)", collapse)
+        self.assertIn("splitter.Width = new GridLength(0)", collapse)
+        self.assertNotIn("Animation", collapse)
+
 
 if __name__ == "__main__":
     unittest.main()

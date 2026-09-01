@@ -89,7 +89,8 @@ public sealed class MainWindow : Window
         PreviewPane PmtPane,
         Grid ContextToolsRow,
         SharedPreviewSelection Selection,
-        Action UpdateDxfOverlayControls);
+        Action UpdateDxfOverlayControls,
+        Action<bool> SetPmtMode);
 
     private sealed record WorkspaceColumns(
         ColumnDefinition Preview,
@@ -213,6 +214,7 @@ public sealed class MainWindow : Window
     private readonly ProgressBar _pipelineProgress = UiTheme.CreateProgress();
     private readonly TexturePreviewController _pipelinePreviewController;
     private readonly SharedPreviewView _pipelineSharedPreview;
+    private Grid? _pipelineWorkspaceGrid;
     private string? _lastMachineOutputPath;
     private string? _lastLaserPmtOutputPath;
     private CancellationTokenSource? _cancellation;
@@ -635,12 +637,13 @@ public sealed class MainWindow : Window
             _pipelinePmtWorkflowInspector,
             out _pipelineSharedPreview);
         ConfigurePipelineDxfHost();
-        var pipelineContent = MakeWorkspace(
+        var pipelineContent = (Grid)MakeWorkspace(
             pipelineInspector,
             pipelinePreviewPanel,
             _pipelineLogBox,
             "log",
             PipelineLogKey);
+        _pipelineWorkspaceGrid = pipelineContent;
 
         foreach (var secondaryButton in new[]
         {
@@ -1050,7 +1053,8 @@ public sealed class MainWindow : Window
             pmtPane,
             contextToolsRow,
             new SharedPreviewSelection(),
-            updateDxfOverlayControls);
+            updateDxfOverlayControls,
+            SetPipelineInspectorCollapsed);
         textureTab.Click += (_, _) => SelectSharedPreview(sharedView, SharedPreviewKind.Texture);
         dxfTab.Click += (_, _) => SelectSharedPreview(sharedView, SharedPreviewKind.Dxf);
         pmtTab.Click += (_, _) => SelectSharedPreview(sharedView, SharedPreviewKind.Pmt);
@@ -1145,7 +1149,12 @@ public sealed class MainWindow : Window
         };
 
         var matrixPicker = new PmtMatrixPicker();
-        var matrix = new DropDownButton { Content = UiIcons.Create(UiIcon.PmtMatrix) };
+        var matrix = new Button { Content = UiIcons.Create(UiIcon.PmtMatrix) };
+        var matrixFlyout = new Flyout
+        {
+            Placement = PlacementMode.BottomEdgeAlignedLeft,
+            Content = matrixPicker
+        };
         UiTheme.ApplyIconStyle(matrix, "新建 PMT 矩阵");
         ToolTip.SetTip(matrix, "像新建表格一样选择 PMT 行列；移动时实时预览");
         matrixPicker.PreviewChanged += (_, args) =>
@@ -1159,23 +1168,19 @@ public sealed class MainWindow : Window
             if (_pmtDraft is null)
                 return;
             _pmtDraft.CommitMatrix(args.Rows, args.Columns);
-            matrix.Flyout?.Hide();
+            matrixFlyout.Hide();
             _pipelinePmtWorkflowCanvas.FitWorkpiece();
         };
-        matrix.Flyout = new Flyout
-        {
-            Placement = PlacementMode.BottomEdgeAlignedLeft,
-            Content = matrixPicker
-        };
-        UiTheme.RemoveFlyoutOuterChrome((Flyout)matrix.Flyout);
+        UiTheme.RemoveFlyoutOuterChrome(matrixFlyout);
+        matrix.Click += (_, _) => matrixFlyout.ShowAt(matrix);
 
-        var sources = new DropDownButton { Content = UiIcons.Create(UiIcon.Source) };
+        var sources = new Button { Content = UiIcons.Create(UiIcon.Source) };
         UiTheme.ApplyIconStyle(sources, "原始加工文件");
         ToolTip.SetTip(sources, "选择活动来源；选中 PMT 时可直接切换其来源");
         var sourceFlyout = CreatePmtSourceFlyout();
         sourceFlyout.Opening += (_, _) =>
             sourceFlyout.Content = CreatePmtSourceFlyout().Content;
-        sources.Flyout = sourceFlyout;
+        sources.Click += (_, _) => sourceFlyout.ShowAt(sources);
 
         var renumber = new Button { Content = UiIcons.Create(UiIcon.Renumber) };
         UiTheme.ApplyIconStyle(renumber, "按位置重新编号");
@@ -1747,6 +1752,32 @@ public sealed class MainWindow : Window
         view.TextureTab.IsChecked = kind == SharedPreviewKind.Texture;
         view.DxfTab.IsChecked = kind == SharedPreviewKind.Dxf;
         view.PmtTab.IsChecked = kind == SharedPreviewKind.Pmt;
+        view.SetPmtMode(kind == SharedPreviewKind.Pmt);
+    }
+
+    private void SetPipelineInspectorCollapsed(bool collapsed)
+    {
+        if (_pipelineWorkspaceGrid is not { } grid || grid.ColumnDefinitions.Count < 3)
+            return;
+        var preview = grid.ColumnDefinitions[0];
+        var splitter = grid.ColumnDefinitions[1];
+        var inspector = grid.ColumnDefinitions[2];
+        if (collapsed)
+        {
+            preview.Width = new GridLength(1, GridUnitType.Star);
+            inspector.MinWidth = 0;
+            inspector.Width = new GridLength(0);
+            splitter.Width = new GridLength(0);
+        }
+        else
+        {
+            preview.Width = new GridLength(_workspacePreviewRatio, GridUnitType.Star);
+            inspector.MinWidth = 460;
+            inspector.Width = new GridLength(1 - _workspacePreviewRatio, GridUnitType.Star);
+            splitter.Width = new GridLength(8);
+        }
+        foreach (var child in grid.Children.Where(child => Grid.GetColumn(child) is 1 or 2))
+            child.IsVisible = !collapsed;
     }
 
     private static void SetPaneVisibility(PreviewPane pane, bool isVisible)
