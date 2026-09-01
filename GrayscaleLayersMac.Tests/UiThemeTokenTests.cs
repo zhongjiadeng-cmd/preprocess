@@ -17,6 +17,62 @@ public sealed class UiThemeTokenTests
     public void DarkSchemeExposesEveryRequiredSemanticRole() =>
         AssertSemanticRoles(AppColorScheme.Dark);
 
+    [TestMethod]
+    public void LightSchemeUsesApprovedWarmNeutralSurfacePalette()
+    {
+        try
+        {
+            UiTheme.ApplyScheme(AppColorScheme.Light);
+
+            CollectionAssert.AreEqual(
+                new[]
+                {
+                    Color.FromRgb(243, 242, 239),
+                    Color.FromRgb(250, 249, 247),
+                    Color.FromRgb(239, 238, 235),
+                    Color.FromRgb(253, 252, 251),
+                    Color.FromRgb(247, 246, 243),
+                    Color.FromRgb(236, 235, 232),
+                    Color.FromRgb(255, 254, 252)
+                },
+                new[]
+                {
+                    UiTheme.RootBrush.Color,
+                    UiTheme.HeaderBrush.Color,
+                    UiTheme.PanelBrush.Color,
+                    UiTheme.CardBrush.Color,
+                    UiTheme.BarBrush.Color,
+                    UiTheme.SunkenBrush.Color,
+                    UiTheme.PopupBrush.Color
+                });
+        }
+        finally
+        {
+            UiTheme.ApplyScheme(AppColorScheme.Dark);
+        }
+    }
+
+    [TestMethod]
+    public void LightSchemeUsesWarmNeutralInteractionSurfaces()
+    {
+        try
+        {
+            UiTheme.ApplyScheme(AppColorScheme.Light);
+
+            Assert.AreEqual(Color.FromArgb(14, 55, 52, 48), UiTheme.DisabledBackgroundBrush.Color);
+            Assert.AreEqual(Color.FromArgb(28, 55, 52, 48), UiTheme.BorderSubtleBrush.Color);
+            Assert.AreEqual(Color.FromArgb(52, 55, 52, 48), UiTheme.BorderMediumBrush.Color);
+            Assert.AreEqual(Color.FromArgb(82, 55, 52, 48), UiTheme.BorderStrongBrush.Color);
+            Assert.AreEqual(Color.FromArgb(8, 55, 52, 48), UiTheme.GhostBrush.Color);
+            Assert.AreEqual(Color.FromArgb(17, 55, 52, 48), UiTheme.GhostHoverBrush.Color);
+            Assert.AreEqual(Color.FromArgb(28, 55, 52, 48), UiTheme.GhostPressedBrush.Color);
+        }
+        finally
+        {
+            UiTheme.ApplyScheme(AppColorScheme.Dark);
+        }
+    }
+
     private static void AssertSemanticRoles(AppColorScheme scheme)
     {
         try
