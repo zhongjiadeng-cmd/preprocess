@@ -461,6 +461,21 @@ def test_cli_request_file_generates_package(capsys: pytest.CaptureFixture[str]) 
         assert "LaserPMT 生成完成" in capsys.readouterr().out
 
 
+def test_cli_inspect_base_prints_workflow_metadata(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with tempfile.TemporaryDirectory() as folder:
+        base = write_base_machine(Path(folder))
+
+        assert pmt.main(["--inspect-base", str(base)]) == 0
+
+        metadata = json.loads(capsys.readouterr().out)
+        assert metadata["base_machine_identity"] == str(base.absolute())
+        assert metadata["unit"] == {"width": 4.0, "height": 2.0}
+        assert metadata["parameters"]["layerFeedUm"] == 3
+        assert metadata["parameters"]["power"] == machine.DEFAULT_LASER_PARAMS[0]["power"]
+
+
 def test_base_loader_rejects_nonfirst_laser_index_and_layer_regression() -> None:
     with tempfile.TemporaryDirectory() as folder:
         root = Path(folder)

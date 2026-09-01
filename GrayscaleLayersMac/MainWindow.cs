@@ -172,6 +172,9 @@ public sealed class MainWindow : Window
     private readonly LaserPmtPanel _pipelinePmtPanel = new();
     private readonly PmtPreviewControl _pipelinePmtPreview = new();
     private readonly PmtDetailsEditor _pipelinePmtDetails = new();
+    private readonly LaserPmtWorkflowCanvas _pipelinePmtWorkflowCanvas = new();
+    private readonly LaserPmtWorkflowInspector _pipelinePmtWorkflowInspector = new();
+    private LaserPmtBaseMetadata? _pipelinePmtBaseMetadata;
     private string? _pipelinePmtLayoutPath;
     private readonly DxfPreviewControl _pipelineDxfPreview = new(startInTopView: true);
     private readonly TextBlock _pipelineDxfPreviewStatus = new() { Foreground = UiTheme.TextSecondaryBrush };
@@ -343,6 +346,14 @@ public sealed class MainWindow : Window
         _pipelinePmtPanel.ConfigurationChanged += (_, _) => UpdatePipelineReadiness();
         _pipelinePmtPreview.SelectionChanged += (_, _) => UpdatePmtSelectionDetails();
         _pipelinePmtDetails.SaveRequested += OnPmtDetailsSaveRequested;
+        _pipelinePmtWorkflowInspector.Attach(_pipelinePmtWorkflowCanvas);
+        _pipelinePmtWorkflowCanvas.EditRejected += (_, message) =>
+            AppendPipelineLog($"[PMT 编辑] {message}");
+        _pipelinePmtWorkflowCanvas.WorkflowChanged += (_, _) =>
+        {
+            if (_pipelinePmtWorkflowCanvas.Workflow is { } workflow)
+                _pipelinePmtPanel.ReflectWorkflow(workflow);
+        };
         _pipelineImportFlyout = new Flyout
         {
             Placement = PlacementMode.BottomEdgeAlignedLeft,
@@ -603,8 +614,8 @@ public sealed class MainWindow : Window
             _pipelineTextureSurface,
             _pipelineDxfPreview,
             _pipelineDxfPreviewStatus,
-            _pipelinePmtPreview,
-            _pipelinePmtDetails,
+            _pipelinePmtWorkflowCanvas,
+            _pipelinePmtWorkflowInspector,
             out _pipelineSharedPreview);
         ConfigurePipelineDxfHost();
         var pipelineContent = MakeWorkspace(
@@ -955,8 +966,8 @@ public sealed class MainWindow : Window
         GrayscaleLayerPreviewControl texture,
         DxfPreviewControl dxfPreview,
         TextBlock dxfStatus,
-        PmtPreviewControl pmtPreview,
-        PmtDetailsEditor pmtDetails,
+        LaserPmtWorkflowCanvas pmtPreview,
+        LaserPmtWorkflowInspector pmtDetails,
         out SharedPreviewView view)
     {
         var texturePane = MakeTexturePreviewContent(texture);
@@ -1058,7 +1069,9 @@ public sealed class MainWindow : Window
     private static PreviewPane MakeTexturePreviewContent(GrayscaleLayerPreviewControl view) =>
         new(view, view.ViewportTools, view.ContextTools);
 
-    private static PreviewPane MakePmtPreviewContent(PmtPreviewControl preview, PmtDetailsEditor details)
+    private PreviewPane MakePmtPreviewContent(
+        LaserPmtWorkflowCanvas preview,
+        LaserPmtWorkflowInspector details)
     {
         var fit = new Button { Content = UiIcons.Create(UiIcon.Fit) };
         var zoomOut = new Button { Content = UiIcons.Create(UiIcon.ZoomOut) };
@@ -1069,9 +1082,9 @@ public sealed class MainWindow : Window
         ToolTip.SetTip(fit, "适应窗口");
         ToolTip.SetTip(zoomOut, "缩小");
         ToolTip.SetTip(zoomIn, "放大");
-        fit.Click += (_, _) => preview.FitToView();
-        zoomOut.Click += (_, _) => preview.ZoomOut();
-        zoomIn.Click += (_, _) => preview.ZoomIn();
+        fit.Click += (_, _) => preview.FitAll();
+        zoomOut.Click += (_, _) => preview.ZoomBy(1 / 1.18);
+        zoomIn.Click += (_, _) => preview.ZoomBy(1.18);
 
         var zoomLabel = new TextBlock
         {
@@ -1082,18 +1095,48 @@ public sealed class MainWindow : Window
             TextAlignment = TextAlignment.Center,
             Foreground = UiTheme.TextPrimaryBrush
         };
-        void UpdateZoomLabel() => zoomLabel.Text = preview.Layout is null
+        void UpdateZoomLabel() => zoomLabel.Text = preview.Workflow is null
             ? "—"
-            : $"{preview.Zoom * 100:0.#}%";
+            : $"{preview.Viewport.Zoom * 100:0.#}%";
         preview.ViewChanged += (_, _) => UpdateZoomLabel();
         UpdateZoomLabel();
+
+        var rebuild = new Button { Content = "按左侧配置重建" };
+        var autoArrange = new Button { Content = "自动排列 PMT" };
+        var addTimestamp = new Button { Content = "+ 时间戳" };
+        var parameterSelector = new ComboBox
+        {
+            Width = 150,
+            ItemsSource = LaserPmtConfiguration.Parameters,
+            SelectedIndex = 0,
+            ItemTemplate = new FuncDataTemplate<LaserPmtParameterDefinition>(
+                (item, _) => new TextBlock { Text = item.DisplayName }, true)
+        };
+        var addParameter = new Button { Content = "+ 参数节点" };
+        UiTheme.ApplyInputStyle(parameterSelector);
+        UiTheme.ApplyGhostStyle(rebuild, small: true);
+        UiTheme.ApplyGhostStyle(autoArrange, small: true);
+        UiTheme.ApplyGhostStyle(addTimestamp, small: true);
+        UiTheme.ApplyGhostStyle(addParameter, small: true);
+        rebuild.Click += (_, _) => RebuildPmtWorkflow();
+        autoArrange.Click += (_, _) => AutoArrangePmtWorkflow();
+        addTimestamp.Click += (_, _) => AddPmtTimestamp();
+        addParameter.Click += (_, _) =>
+        {
+            if (parameterSelector.SelectedItem is LaserPmtParameterDefinition definition)
+                AddPmtParameterNode(definition.Name);
+        };
 
         var toolbar = new StackPanel
         {
             Orientation = Orientation.Horizontal,
             Spacing = 6,
             VerticalAlignment = VerticalAlignment.Center,
-            Children = { zoomOut, zoomLabel, zoomIn, fit }
+            Children =
+            {
+                zoomOut, zoomLabel, zoomIn, fit,
+                parameterSelector, addParameter, addTimestamp, autoArrange, rebuild
+            }
         };
 
         var detailsPanel = new Border
@@ -1117,6 +1160,135 @@ public sealed class MainWindow : Window
         Grid.SetColumn(detailsPanel, 1);
 
         return new PreviewPane(body, toolbar, new Grid(), HasContextTools: false);
+    }
+
+    private void RebuildPmtWorkflow()
+    {
+        if (_pipelinePmtBaseMetadata is null)
+        {
+            AppendPipelineLog("[PMT 编辑] 请先导入有效的基础加工目录。");
+            return;
+        }
+        try
+        {
+            _pipelinePmtWorkflowCanvas.Load(_pipelinePmtPanel.CreateWorkflow(_pipelinePmtBaseMetadata));
+            _pipelinePmtPanel.ReflectWorkflow(_pipelinePmtWorkflowCanvas.Workflow!);
+            _pipelinePmtWorkflowCanvas.FitAll();
+            AppendPipelineLog("已按左侧配置重建 PMT 节点工作流。");
+        }
+        catch (Exception exception) when (exception is ArgumentException or InvalidOperationException)
+        {
+            AppendPipelineLog($"[PMT 编辑] {exception.Message}");
+        }
+    }
+
+    private void AutoArrangePmtWorkflow()
+    {
+        if (_pipelinePmtWorkflowCanvas.Workflow is not { } workflow ||
+            _pipelinePmtBaseMetadata is not { } metadata)
+            return;
+        try
+        {
+            _pipelinePmtWorkflowCanvas.UpdateWorkflow(LaserPmtWorkflowEditor.AutoArrangePmts(
+                workflow, metadata.UnitWidth, metadata.UnitHeight));
+        }
+        catch (ArgumentException exception)
+        {
+            AppendPipelineLog($"[PMT 编辑] {exception.Message}");
+        }
+    }
+
+    private void AddPmtTimestamp()
+    {
+        if (_pipelinePmtWorkflowCanvas.Workflow is not { } workflow)
+        {
+            AppendPipelineLog("[PMT 编辑] 请先创建 PMT 工作流。");
+            return;
+        }
+        var width = Math.Min(30, workflow.Workpiece.Width * 0.5);
+        var height = Math.Min(8, workflow.Workpiece.Height * 0.2);
+        var left = Math.Max(0, (workflow.Workpiece.Width - width) / 2);
+        LaserPmtWorkflow? candidate = null;
+        for (var top = 0d; top + height <= workflow.Workpiece.Height; top += Math.Max(height, 1))
+        {
+            var next = LaserPmtWorkflowEditor.AddTimestamp(
+                workflow,
+                $"timestamp-{Guid.NewGuid():N}",
+                DateTime.Now.ToString("MMddHHmm", CultureInfo.InvariantCulture),
+                new LaserPmtWorkflowBounds(left, top, width, height));
+            if (LaserPmtWorkflowEditor.ValidateGeometry(next).Count == 0)
+            {
+                candidate = next;
+                break;
+            }
+        }
+        if (candidate is null)
+        {
+            AppendPipelineLog("[PMT 编辑] 工件中没有足够空间放置时间戳，请先移动或删除目标。");
+            return;
+        }
+        _pipelinePmtWorkflowCanvas.UpdateWorkflow(candidate);
+    }
+
+    private void AddPmtParameterNode(string parameterName)
+    {
+        if (_pipelinePmtWorkflowCanvas.Workflow is not { } workflow)
+        {
+            AppendPipelineLog("[PMT 编辑] 请先创建 PMT 工作流。");
+            return;
+        }
+        var defaultValue = workflow.BaseNode.Parameters[parameterName];
+        var node = new LaserPmtSingleParameterNode(
+            $"parameter-{Guid.NewGuid():N}",
+            new LaserPmtWorkflowPoint(
+                -80,
+                workflow.ParameterNodes.Count * 34),
+            parameterName,
+            defaultValue,
+            []);
+        var reconciled = LaserPmtWorkflowCompiler.ReconcilePorts(
+            node, defaultValue, () => $"port-{Guid.NewGuid():N}");
+        if (!reconciled.Success)
+        {
+            AppendPipelineLog($"[PMT 编辑] {reconciled.Error}");
+            return;
+        }
+        _pipelinePmtWorkflowCanvas.UpdateWorkflow(
+            LaserPmtWorkflowEditor.AddParameterNode(workflow, reconciled.Node!));
+    }
+
+    private async Task InitializePmtWorkflowAsync(
+        string directory,
+        string? python = null,
+        string? pmtScript = null,
+        CancellationToken cancellationToken = default)
+    {
+        python ??= await FindPythonAsync(cancellationToken);
+        if (python is null)
+            throw new InvalidOperationException("找不到带有 numpy 的 Python 3，无法读取基础加工尺寸。");
+        pmtScript ??= Path.Combine(
+            ApplicationLayout.GetScriptsDirectory(AppContext.BaseDirectory),
+            "laser_pmt.py");
+        if (!File.Exists(pmtScript))
+            throw new FileNotFoundException("找不到 laser_pmt.py。", pmtScript);
+        var info = CreatePythonProcess(python);
+        info.ArgumentList.Add(pmtScript);
+        info.ArgumentList.Add("--inspect-base");
+        info.ArgumentList.Add(directory);
+        using var process = Process.Start(info)
+            ?? throw new InvalidOperationException("无法启动基础加工检查进程。");
+        var outputTask = process.StandardOutput.ReadToEndAsync(cancellationToken);
+        var errorTask = process.StandardError.ReadToEndAsync(cancellationToken);
+        await process.WaitForExitAsync(cancellationToken);
+        var output = await outputTask;
+        var standardError = await errorTask;
+        if (process.ExitCode != 0)
+            throw new InvalidDataException(
+                string.IsNullOrWhiteSpace(standardError) ? "基础加工目录检查失败。" : standardError.Trim());
+        _pipelinePmtBaseMetadata = LaserPmtBaseMetadata.Parse(output);
+        _pipelinePmtWorkflowCanvas.Load(_pipelinePmtPanel.CreateWorkflow(_pipelinePmtBaseMetadata));
+        _pipelinePmtPanel.ReflectWorkflow(_pipelinePmtWorkflowCanvas.Workflow!);
+        _pipelinePmtWorkflowCanvas.FitAll();
     }
 
     /// <summary>
@@ -1710,10 +1882,12 @@ public sealed class MainWindow : Window
                 return;
             }
             _pipelinePmtPanel.BaseDirectory = directory;
+            await InitializePmtWorkflowAsync(directory);
             AppendPipelineLog($"已导入基础加工目录：{directory}");
             UpdatePipelineReadiness();
         }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        catch (Exception exception) when (
+            exception is IOException or UnauthorizedAccessException or InvalidDataException or InvalidOperationException)
         {
             await ShowMessageAsync($"无法读取基础加工目录：{exception.Message}");
         }
@@ -1896,6 +2070,8 @@ public sealed class MainWindow : Window
         _pipelinePreviewController.Reset();
         RenderTexturePreview(_pipelineTextureSurface, _pipelinePreviewController.State);
         _pipelinePmtPreview.Clear();
+        _pipelinePmtWorkflowCanvas.Clear();
+        _pipelinePmtBaseMetadata = null;
         _pipelineSharedPreview.Selection.ClearPmt();
         _pipelinePmtDetails.LoadJob(null);
         _pipelinePmtLayoutPath = null;
@@ -2637,6 +2813,7 @@ public sealed class MainWindow : Window
                 AppendPipelineLog($"加工文件目录：{machineOutputPath}");
                 _pipelineOpenButton.IsEnabled = true;
                 _pipelinePmtPanel.BaseDirectory = machineOutputPath;
+                await InitializePmtWorkflowAsync(machineOutputPath, python, pmtScript, _cancellation.Token);
                 if (mode == PipelineRunMode.MachineOnly)
                 {
                     await _pipelineRunProgress.ShowAndCollapseAsync(
@@ -2660,10 +2837,22 @@ public sealed class MainWindow : Window
                     !Directory.Exists(baseMachineDirectory))
                     throw new InvalidOperationException("第 4 步需要先生成或导入有效的基础加工目录。");
                 _pipelinePmtPanel.BaseDirectory = baseMachineDirectory;
+                if (_pipelinePmtWorkflowCanvas.Workflow is null ||
+                    !string.Equals(
+                        _pipelinePmtBaseMetadata?.Identity,
+                        Path.GetFullPath(baseMachineDirectory),
+                        StringComparison.Ordinal))
+                {
+                    await InitializePmtWorkflowAsync(
+                        baseMachineDirectory, python, pmtScript, _cancellation.Token);
+                }
                 var pmtOutputParent = Path.GetDirectoryName(Path.GetFullPath(baseMachineDirectory))
                     ?? throw new InvalidOperationException("无法确定 LaserPMT 输出目录。");
                 var pmtOwnerToken = Guid.NewGuid().ToString("N");
-                if (!_pipelinePmtPanel.TryBuildRequest(
+                if (_pipelinePmtWorkflowCanvas.Workflow is not { } pmtWorkflow)
+                    throw new InvalidOperationException("PMT 节点工作流尚未初始化。");
+                if (!_pipelinePmtPanel.TryBuildWorkflowRequest(
+                        pmtWorkflow,
                         pmtOutputParent,
                         pmtOwnerToken,
                         out var requestJson,
@@ -2716,10 +2905,11 @@ public sealed class MainWindow : Window
                 }
                 var layoutPath = Path.Combine(pmtOutputPath, "pmt-layout.json");
                 _pipelinePmtLayoutPath = layoutPath;
-                var layout = LaserPmtLayout.Load(layoutPath);
-                if (layout.Jobs.Count != pmtJobCount)
+                var generatedWorkflow = LaserPmtWorkflowSerializer.Load(layoutPath);
+                if (generatedWorkflow.Targets.Count != pmtJobCount)
                     throw new InvalidDataException("PMT 布局任务数量与请求不一致。");
-                _pipelinePmtPreview.Load(layout);
+                _pipelinePmtWorkflowCanvas.Load(generatedWorkflow);
+                _pipelinePmtPanel.ReflectWorkflow(generatedWorkflow);
                 _pipelineSharedPreview.Selection.CompletePmtLoad();
                 SelectSharedPreview(_pipelineSharedPreview, SharedPreviewKind.Pmt);
                 _lastLaserPmtOutputPath = pmtOutputPath;
@@ -2727,8 +2917,8 @@ public sealed class MainWindow : Window
                 _pipelineOpenButton.IsEnabled = true;
                 AppendPipelineLog(mode == PipelineRunMode.All
                     ? $"\n四步流程完成：已生成 {layerFiles.Length} 个 TIFF、" +
-                      $"{layerFiles.Length} 个 DXF、1 个基础加工文件和 {pmtJobCount} 个 LaserPMT 编号文件。"
-                    : $"\n第 4 步完成：已生成 {pmtJobCount} 个 LaserPMT 编号文件。");
+                      $"{layerFiles.Length} 个 DXF、1 个基础加工文件和 {pmtJobCount} 个 LaserPMT 加工目标。"
+                    : $"\n第 4 步完成：已生成 {pmtJobCount} 个 LaserPMT 加工目标。");
                 AppendPipelineLog($"LaserPMT 目录：{pmtOutputPath}");
                 await _pipelineRunProgress.ShowAndCollapseAsync(
                     PipelineProgressState.Succeeded(

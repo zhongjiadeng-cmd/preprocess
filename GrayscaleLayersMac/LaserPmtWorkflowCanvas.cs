@@ -57,6 +57,30 @@ public sealed class LaserPmtWorkflowCanvas : Control
         InvalidateVisual();
     }
 
+    public void UpdateWorkflow(LaserPmtWorkflow workflow, bool preserveSelection = true)
+    {
+        _workflow = workflow ?? throw new ArgumentNullException(nameof(workflow));
+        if (!preserveSelection || !ContainsId(workflow, _selectedId))
+            Select(null);
+        NotifyWorkflowChanged();
+    }
+
+    public void ZoomBy(double factor)
+    {
+        if (_workflow is null || !double.IsFinite(factor) || factor <= 0)
+            return;
+        _viewport = LaserPmtWorkflowViewMath.ZoomAt(
+            _viewport, Bounds.Center, Bounds.Size, _viewport.Zoom * factor);
+        NotifyViewChanged();
+    }
+
+    public void DeleteSelection()
+    {
+        if (_workflow is null || _selectedId is null)
+            return;
+        DeleteSelectedCore();
+    }
+
     public void Clear()
     {
         _workflow = null;
@@ -303,25 +327,39 @@ public sealed class LaserPmtWorkflowCanvas : Control
         base.OnKeyDown(e);
         if (e.Key != Key.Delete || _workflow is null || _selectedId is null)
             return;
+        DeleteSelectedCore();
+        e.Handled = true;
+    }
+
+    private void DeleteSelectedCore()
+    {
+        if (_workflow is not { } workflow || _selectedId is not { } selectedId)
+            return;
         try
         {
-            if (_workflow.Connections.Any(connection => connection.Id == _selectedId))
-                _workflow = LaserPmtWorkflowEditor.RemoveConnection(_workflow, _selectedId);
-            else if (_workflow.ParameterNodes.Any(node => node.Id == _selectedId))
-                _workflow = LaserPmtWorkflowEditor.DeleteParameterNode(_workflow, _selectedId);
-            else if (_workflow.Targets.Any(target => target.Id == _selectedId))
-                _workflow = LaserPmtWorkflowEditor.DeleteTarget(_workflow, _selectedId);
+            if (workflow.Connections.Any(connection => connection.Id == selectedId))
+                _workflow = LaserPmtWorkflowEditor.RemoveConnection(workflow, selectedId);
+            else if (workflow.ParameterNodes.Any(node => node.Id == selectedId))
+                _workflow = LaserPmtWorkflowEditor.DeleteParameterNode(workflow, selectedId);
+            else if (workflow.Targets.Any(target => target.Id == selectedId))
+                _workflow = LaserPmtWorkflowEditor.DeleteTarget(workflow, selectedId);
             else
                 return;
             Select(null);
             NotifyWorkflowChanged();
-            e.Handled = true;
         }
         catch (ArgumentException exception)
         {
             EditRejected?.Invoke(this, exception.Message);
         }
     }
+
+    private static bool ContainsId(LaserPmtWorkflow workflow, string? id) =>
+        id is not null &&
+        (workflow.BaseNode.Id == id ||
+         workflow.ParameterNodes.Any(node => node.Id == id) ||
+         workflow.Targets.Any(target => target.Id == id) ||
+         workflow.Connections.Any(connection => connection.Id == id));
 
     private void DrawWorkpiece(DrawingContext context)
     {
@@ -669,6 +707,8 @@ public sealed class LaserPmtWorkflowCanvas : Control
 
     private void NotifyViewChanged()
     {
+        if (_workflow is not null)
+            _workflow = LaserPmtWorkflowEditor.SetViewport(_workflow, _viewport);
         InvalidateVisual();
         ViewChanged?.Invoke(this, EventArgs.Empty);
     }

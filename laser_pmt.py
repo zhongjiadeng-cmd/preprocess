@@ -1307,12 +1307,33 @@ def generate_laser_pmt(request: LaserPmtRequest | LaserPmtWorkflowRequest) -> Pa
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Generate a LaserPMT parameter matrix")
-    parser.add_argument("request", type=Path, help="UTF-8 JSON request file")
+    parser.add_argument("request", type=Path, nargs="?", help="UTF-8 JSON request file")
+    parser.add_argument(
+        "--inspect-base",
+        type=Path,
+        help="Validate a base machine directory and print workflow metadata as JSON",
+    )
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
+    if args.inspect_base is not None:
+        if args.request is not None:
+            raise ValueError("request and --inspect-base cannot be used together")
+        base = load_base_machine(args.inspect_base)
+        parameters = {
+            **deepcopy(base.first_laser_params),
+            LAYER_FEED_KEY: base.layer_feed_um,
+        }
+        print(json.dumps({
+            "base_machine_identity": str(base.directory),
+            "unit": {"width": base.width, "height": base.height},
+            "parameters": parameters,
+        }, ensure_ascii=False, allow_nan=False, separators=(",", ":")))
+        return 0
+    if args.request is None:
+        raise ValueError("request is required unless --inspect-base is used")
     request = load_request(args.request)
     result = generate_laser_pmt(request)
     print("LaserPMT 生成完成")

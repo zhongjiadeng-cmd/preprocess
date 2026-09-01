@@ -214,6 +214,22 @@ public static class LaserPmtWorkflowEditor
             workflow,
             baseNode: workflow.BaseNode with { Position = position });
 
+    public static LaserPmtWorkflow SetViewport(
+        LaserPmtWorkflow workflow,
+        LaserPmtCanvasViewport viewport) => new(
+            workflow.BaseMachineIdentity,
+            workflow.Workpiece,
+            workflow.HatchSpacing,
+            viewport,
+            workflow.BaseNode,
+            workflow.ParameterNodes,
+            workflow.Targets,
+            workflow.Connections,
+            workflow.PmtColumns,
+            workflow.NextPmtNumber,
+            workflow.NextCreationOrder,
+            workflow.Numbering);
+
     public static LaserPmtWorkflow DeletePmt(LaserPmtWorkflow workflow, string targetId)
     {
         ArgumentNullException.ThrowIfNull(workflow);

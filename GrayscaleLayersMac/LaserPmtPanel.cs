@@ -19,6 +19,8 @@ public sealed class LaserPmtPanel : StackPanel
     private readonly NumericUpDown _workpieceWidth = NumberBox(200, 0.01m, 100000, 3);
     private readonly NumericUpDown _workpieceHeight = NumberBox(200, 0.01m, 100000, 3);
     private readonly NumericUpDown _columns = NumberBox(1, 1, 1000, 0);
+    private readonly NumericUpDown _pmtCount = NumberBox(1, 1, 1000, 0, 1);
+    private readonly NumericUpDown _hatchSpacing = NumberBox(0.1m, 0.01m, 1000, 3, 0.001m);
     private readonly TextBox _outputName = new() { Watermark = "留空则自动生成 LaserPMT_时间戳" };
     private readonly TextBox _prefix = new() { Text = "pmt_" };
     private readonly NumericUpDown _start = NumberBox(1, 1, int.MaxValue, 0);
@@ -48,6 +50,12 @@ public sealed class LaserPmtPanel : StackPanel
         set => _outputName.Text = value;
     }
 
+    public void ReflectWorkflow(LaserPmtWorkflow workflow)
+    {
+        ArgumentNullException.ThrowIfNull(workflow);
+        _pmtCount.Value = workflow.Targets.OfType<LaserPmtTarget>().Count();
+    }
+
     public LaserPmtPanel()
     {
         Spacing = 12;
@@ -59,13 +67,15 @@ public sealed class LaserPmtPanel : StackPanel
         Children.Add(Field("基础加工目录", _baseDirectory, _pickBaseButton));
         Children.Add(new Grid
         {
-            ColumnDefinitions = new ColumnDefinitions("*,*,*"),
+            ColumnDefinitions = new ColumnDefinitions("*,*,*,*,*"),
             ColumnSpacing = 12,
             Children =
             {
                 Labeled("工件宽度（mm）", _workpieceWidth, 0),
                 Labeled("工件高度（mm）", _workpieceHeight, 1),
-                Labeled("每行数量", _columns, 2)
+                Labeled("PMT 数量", _pmtCount, 2),
+                Labeled("每行数量", _columns, 3),
+                Labeled("Hatch 间距（mm）", _hatchSpacing, 4)
             }
         });
         Children.Add(new Grid
@@ -122,7 +132,8 @@ public sealed class LaserPmtPanel : StackPanel
         foreach (var control in new Control[]
         {
             _baseDirectory, _outputName, _prefix,
-            _workpieceWidth, _workpieceHeight, _columns, _start, _increment, _padding
+            _workpieceWidth, _workpieceHeight, _pmtCount, _columns, _hatchSpacing,
+            _start, _increment, _padding
         })
         {
             if (control is TextBox text)
@@ -131,6 +142,132 @@ public sealed class LaserPmtPanel : StackPanel
                 number.ValueChanged += (_, _) => Refresh();
         }
         Refresh();
+    }
+
+    public LaserPmtWorkflow CreateWorkflow(LaserPmtBaseMetadata metadata)
+    {
+        ArgumentNullException.ThrowIfNull(metadata);
+        var workpiece = new LaserPmtWorkflowBounds(
+            0,
+            0,
+            decimal.ToDouble(_workpieceWidth.Value ?? 0),
+            decimal.ToDouble(_workpieceHeight.Value ?? 0));
+        var numbering = new LaserPmtWorkflowNumbering(
+            _prefix.Text?.Trim() ?? string.Empty,
+            decimal.ToInt32(_increment.Value ?? 0),
+            decimal.ToInt32(_padding.Value ?? 0));
+        var workflow = new LaserPmtWorkflow(
+            metadata.Identity,
+            workpiece,
+            decimal.ToDouble(_hatchSpacing.Value ?? 0),
+            new LaserPmtCanvasViewport(1, 0, 0),
+            new LaserPmtBaseParameterNode(
+                "base-parameters",
+                new LaserPmtWorkflowPoint(-150, 0),
+                metadata.Parameters,
+                new HashSet<string>(StringComparer.Ordinal)),
+            [],
+            [],
+            [],
+            decimal.ToInt32(_columns.Value ?? 1),
+            decimal.ToInt32(_start.Value ?? 1),
+            1,
+            numbering);
+        workflow = LaserPmtWorkflowEditor.SetPmtCount(
+            workflow,
+            decimal.ToInt32(_pmtCount.Value ?? 1),
+            metadata.UnitWidth,
+            metadata.UnitHeight,
+            () => $"pmt-{Guid.NewGuid():N}");
+        var pmts = workflow.Targets.OfType<LaserPmtTarget>()
+            .OrderBy(target => target.Number)
+            .ToArray();
+        foreach (var (row, index) in GetRows().Select((row, index) => (row, index)))
+        {
+            var nodeId = $"parameter-{Guid.NewGuid():N}";
+            var seed = new LaserPmtSingleParameterNode(
+                nodeId,
+                new LaserPmtWorkflowPoint(-80, index * 34),
+                row.Name,
+                row.ValuesText,
+                []);
+            var reconciliation = LaserPmtWorkflowCompiler.ReconcilePorts(
+                seed,
+                row.ValuesText,
+                () => $"port-{Guid.NewGuid():N}");
+            if (!reconciliation.Success)
+                throw new ArgumentException(reconciliation.Error);
+            workflow = LaserPmtWorkflowEditor.AddParameterNode(workflow, reconciliation.Node!);
+            for (var targetIndex = 0; targetIndex < pmts.Length; targetIndex++)
+            {
+                var port = reconciliation.Node!.Ports[targetIndex % reconciliation.Node.Ports.Count];
+                workflow = LaserPmtWorkflowEditor.AddConnection(
+                    workflow,
+                    new LaserPmtConnection(
+                        $"connection-{Guid.NewGuid():N}", nodeId, port.Id, pmts[targetIndex].Id));
+            }
+        }
+        return workflow;
+    }
+
+    public bool TryBuildWorkflowRequest(
+        LaserPmtWorkflow workflow,
+        string outputParent,
+        string ownerToken,
+        out string requestJson,
+        out string resolvedOutputName,
+        out int targetCount,
+        out string error)
+    {
+        ArgumentNullException.ThrowIfNull(workflow);
+        requestJson = string.Empty;
+        resolvedOutputName = string.IsNullOrWhiteSpace(OutputName)
+            ? $"LaserPMT_{DateTime.Now:yyyyMMdd_HHmmss}"
+            : OutputName;
+        targetCount = workflow.Targets.Count;
+        if (string.IsNullOrWhiteSpace(BaseDirectory) || !Directory.Exists(BaseDirectory))
+        {
+            error = "请选择包含 machine.json 与 patches 的有效基础加工目录。";
+            return false;
+        }
+        if (resolvedOutputName is "." or ".." ||
+            resolvedOutputName.Contains('/') || resolvedOutputName.Contains('\\'))
+        {
+            error = "LaserPMT 输出名称不能包含路径。";
+            return false;
+        }
+        var compilation = LaserPmtWorkflowCompiler.Compile(workflow);
+        var geometryErrors = LaserPmtWorkflowEditor.ValidateGeometry(workflow);
+        if (!compilation.IsValid || geometryErrors.Count > 0)
+        {
+            error = string.Join(Environment.NewLine,
+                compilation.Errors.Select(item => item.Message)
+                    .Concat(geometryErrors.Select(item => item.Message)));
+            return false;
+        }
+        try
+        {
+            using var workflowDocument = System.Text.Json.JsonDocument.Parse(
+                LaserPmtWorkflowSerializer.Serialize(workflow));
+            requestJson = System.Text.Json.JsonSerializer.Serialize(
+                new Dictionary<string, object?>
+                {
+                    ["request_version"] = 2,
+                    ["base_machine_dir"] = BaseDirectory,
+                    ["output_dir"] = outputParent,
+                    ["output_name"] = resolvedOutputName,
+                    ["owner_token"] = ownerToken,
+                    ["workflow"] = workflowDocument.RootElement.Clone()
+                },
+                new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+            error = string.Empty;
+            return true;
+        }
+        catch (Exception exception) when (exception is ArgumentException or InvalidOperationException)
+        {
+            error = exception.Message;
+            return false;
+        }
     }
 
     public bool TryBuildRequest(
