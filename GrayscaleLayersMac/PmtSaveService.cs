@@ -67,7 +67,11 @@ public sealed class PythonPmtPackageGenerator(
         var requestPath = Path.Combine(Path.GetTempPath(), $"pmt-request-{Guid.NewGuid():N}.json");
         try
         {
-            await File.WriteAllTextAsync(requestPath, requestJson, cancellationToken);
+            await File.WriteAllTextAsync(
+                requestPath,
+                requestJson,
+                new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false),
+                cancellationToken);
             var info = new System.Diagnostics.ProcessStartInfo
             {
                 FileName = _pythonPath,

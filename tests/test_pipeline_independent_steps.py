@@ -15,7 +15,7 @@ THEME_SOURCE = (
 
 
 class PipelineIndependentStepsTests(unittest.TestCase):
-    def test_main_pipeline_exposes_all_four_entry_points_in_an_upward_split_button(self):
+    def test_main_pipeline_exposes_three_entry_points_in_an_upward_split_button(self):
         self.assertIn("private readonly SplitButton _pipelineRunSplitButton", SOURCE)
         self.assertIn('Content = "全部执行"', SOURCE)
         self.assertNotIn('Content = "单步执行 ▾"', SOURCE)
@@ -23,7 +23,7 @@ class PipelineIndependentStepsTests(unittest.TestCase):
         self.assertIn('"第 1 步：灰度分层"', SOURCE)
         self.assertIn('"第 2 步：生成 DXF"', SOURCE)
         self.assertIn('"第 3 步：生成加工文件"', SOURCE)
-        self.assertIn('"第 4 步：生成 LaserPMT"', SOURCE)
+        self.assertNotIn('"第 4 步：生成 LaserPMT"', SOURCE)
         self.assertIn("RunPipelineAsync(PipelineRunMode.All)", SOURCE)
         self.assertIn('button.Resources["SplitButtonSecondaryButtonSize"] = 40d', THEME_SOURCE)
         self.assertIn("arrow.RenderTransform = new RotateTransform(180)", THEME_SOURCE)
@@ -72,15 +72,15 @@ class PipelineIndependentStepsTests(unittest.TestCase):
         self.assertIn("PipelineRunMode.GrayscaleOnly", SOURCE)
         self.assertIn("PipelineRunMode.DxfOnly", SOURCE)
         self.assertIn("PipelineRunMode.MachineOnly", SOURCE)
-        self.assertIn("PipelineRunMode.LaserPmtOnly", SOURCE)
+        self.assertNotIn("PipelineRunMode.LaserPmtOnly", SOURCE)
         self.assertIn("第 2 步需要先在分层 TIFF 输出目录中生成", SOURCE)
         self.assertIn("第 3 步需要先在 DXF 输出目录中生成", SOURCE)
-        self.assertIn("第 4 步需要先生成或导入有效的基础加工目录", SOURCE)
+        self.assertNotIn("第 4 步需要先生成或导入有效的基础加工目录", SOURCE)
 
     def test_single_step_modes_return_before_following_steps(self):
         self.assertIn("if (mode == PipelineRunMode.GrayscaleOnly)", SOURCE)
         self.assertIn("if (mode == PipelineRunMode.DxfOnly)", SOURCE)
-        self.assertIn("if (mode == PipelineRunMode.MachineOnly)", SOURCE)
+        self.assertNotIn("if (mode == PipelineRunMode.LaserPmtOnly)", SOURCE)
 
     def test_all_pipeline_modes_use_the_progress_overlay_cancel_button(self):
         self.assertIn("private readonly ImportProgressOverlay _pipelineRunProgress", SOURCE)
@@ -88,12 +88,17 @@ class PipelineIndependentStepsTests(unittest.TestCase):
         self.assertIn('"正在执行第 1 步：灰度分层…"', SOURCE)
         self.assertIn('"正在执行第 2 步：生成 DXF…"', SOURCE)
         self.assertIn('"正在执行第 3 步：生成加工文件…"', SOURCE)
-        self.assertIn('"正在执行第 4 步：生成 LaserPMT…"', SOURCE)
+        self.assertNotIn('"正在执行第 4 步：生成 LaserPMT…"', SOURCE)
 
     def test_laser_pmt_request_is_written_as_utf8_without_bom(self):
+        save_source = (
+            Path(__file__).resolve().parents[1]
+            / "GrayscaleLayersMac"
+            / "PmtSaveService.cs"
+        ).read_text(encoding="utf-8")
         self.assertIn(
-            "new UTF8Encoding(encoderShouldEmitUTF8Identifier: false)",
-            SOURCE,
+            "new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false)",
+            save_source,
         )
 
 
