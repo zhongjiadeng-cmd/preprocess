@@ -45,6 +45,15 @@ public sealed class LaserPmtConfigurationTests
     }
 
     [TestMethod]
+    public void ParsesChineseCommaSeparatedValues()
+    {
+        Assert.IsTrue(LaserPmtConfiguration.TryParseExplicitValues(
+            "power", "20，40, 60", out var values, out var error), error);
+
+        CollectionAssert.AreEqual(new object[] { 20, 40, 60 }, values.ToArray());
+    }
+
+    [TestMethod]
     public void RejectsDuplicateParametersAndValues()
     {
         Assert.IsFalse(LaserPmtConfiguration.TryParseRows(

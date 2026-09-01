@@ -60,6 +60,24 @@ public sealed class LaserPmtWorkflowMultiSourceTests
         Assert.AreEqual(1.6d, result.Targets[0].ScaleY, 1e-9);
     }
 
+    [TestMethod]
+    public void BaseParameterEditsTargetOnlyTheSelectedSourceNode()
+    {
+        var workflow = CreateWorkflow();
+
+        var valued = LaserPmtWorkflowEditor.SetBaseParameterValue(
+            workflow, "base-b", "power", "77");
+        var disabled = LaserPmtWorkflowEditor.SetBaseParameterEnabled(
+            valued, "base-b", "frequency", false);
+
+        Assert.AreEqual("10", disabled.BaseNodes.Single(node => node.Id == "base-a").Parameters["power"]);
+        Assert.AreEqual("77", disabled.BaseNodes.Single(node => node.Id == "base-b").Parameters["power"]);
+        Assert.IsFalse(disabled.BaseNodes.Single(node => node.Id == "base-a")
+            .RemovedParameters.Contains("frequency"));
+        Assert.IsTrue(disabled.BaseNodes.Single(node => node.Id == "base-b")
+            .RemovedParameters.Contains("frequency"));
+    }
+
     private static LaserPmtWorkflow CreateWorkflow()
     {
         var sourceAValues = Values(power: 10, frequency: 100);

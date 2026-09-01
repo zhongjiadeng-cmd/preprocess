@@ -1125,28 +1125,40 @@ public sealed class MainWindow : Window
         var rebuild = new Button { Content = "按左侧配置重建" };
         var autoArrange = new Button { Content = "自动排列 PMT" };
         var addTimestamp = new Button { Content = "+ 时间戳" };
-        var parameterSelector = new ComboBox
-        {
-            Width = 150,
-            ItemsSource = LaserPmtConfiguration.Parameters,
-            SelectedIndex = 0,
-            ItemTemplate = new FuncDataTemplate<LaserPmtParameterDefinition>(
-                (item, _) => new TextBlock { Text = item.DisplayName }, true)
-        };
-        var addParameter = new Button { Content = "+ 参数节点" };
-        UiTheme.ApplyInputStyle(parameterSelector);
+        var addParameter = new Button { Content = UiIcons.Create(UiIcon.Nodes) };
         UiTheme.ApplyGhostStyle(rebuild, small: true);
         UiTheme.ApplyGhostStyle(autoArrange, small: true);
         UiTheme.ApplyGhostStyle(addTimestamp, small: true);
-        UiTheme.ApplyGhostStyle(addParameter, small: true);
+        UiTheme.ApplyIconStyle(addParameter, "添加参数节点");
+        ToolTip.SetTip(addParameter, "选择并添加一个参数节点");
         rebuild.Click += (_, _) => RebuildPmtWorkflow();
         autoArrange.Click += (_, _) => AutoArrangePmtWorkflow();
         addTimestamp.Click += (_, _) => AddPmtTimestamp();
-        addParameter.Click += (_, _) =>
+        var parameterMenu = new StackPanel { Spacing = 3, MinWidth = 220 };
+        var parameterFlyout = new Flyout
         {
-            if (parameterSelector.SelectedItem is LaserPmtParameterDefinition definition)
-                AddPmtParameterNode(definition.Name);
+            Placement = PlacementMode.BottomEdgeAlignedLeft,
+            Content = UiTheme.FlyoutSurface(parameterMenu)
         };
+        foreach (var definition in LaserPmtConfiguration.Parameters)
+        {
+            var item = new Button
+            {
+                Content = definition.DisplayName,
+                HorizontalAlignment = HorizontalAlignment.Stretch,
+                HorizontalContentAlignment = HorizontalAlignment.Left
+            };
+            UiTheme.ApplyQuietStyle(item);
+            item.Click += (_, _) =>
+            {
+                AddPmtParameterNode(definition.Name);
+                parameterFlyout.Hide();
+            };
+            parameterMenu.Children.Add(item);
+        }
+        UiTheme.RemoveFlyoutOuterChrome(parameterFlyout);
+        addParameter.Flyout = parameterFlyout;
+        addParameter.Click += (_, _) => parameterFlyout.ShowAt(addParameter);
 
         var matrixPicker = new PmtMatrixPicker();
         var matrix = new Button { Content = UiIcons.Create(UiIcon.PmtMatrix) };
@@ -1247,51 +1259,75 @@ public sealed class MainWindow : Window
                 zoomOut, zoomLabel, zoomIn, fit,
                 matrix, sources, renumber, lockSize, showNodes,
                 outputDirectory, save,
-                parameterSelector, addParameter, addTimestamp
+                addParameter, addTimestamp
             }
         };
 
-        var propertiesFlyout = new Flyout
+        details.IsVisible = false;
+        var overlay = new Canvas { ClipToBounds = true };
+        overlay.Children.Add(details);
+        Point? panelDragStart = null;
+        Point panelStart = default;
+        void ClampDetails(double left, double top)
         {
-            Placement = PlacementMode.RightEdgeAlignedTop,
-            Content = details
-        };
-        UiTheme.RemoveFlyoutOuterChrome(propertiesFlyout);
-        var workpieceFlyout = new Flyout { Placement = PlacementMode.RightEdgeAlignedTop };
-        UiTheme.RemoveFlyoutOuterChrome(workpieceFlyout);
-        workpieceFlyout.Opening += (_, _) =>
+            var panelWidth = Math.Max(details.Bounds.Width, details.DesiredSize.Width);
+            var panelHeight = Math.Max(details.Bounds.Height, details.DesiredSize.Height);
+            var maxLeft = Math.Max(8, overlay.Bounds.Width - panelWidth - 8);
+            var maxTop = Math.Max(8, overlay.Bounds.Height - panelHeight - 8);
+            if (!double.IsFinite(left))
+                left = 8;
+            if (!double.IsFinite(top))
+                top = 8;
+            Canvas.SetLeft(details, Math.Clamp(left, 8, maxLeft));
+            Canvas.SetTop(details, Math.Clamp(top, 8, maxTop));
+        }
+        void PositionDetailsNearSelection()
         {
-            if (_pmtDraft?.Snapshot.Workflow is not { } workflow)
+            details.IsVisible = preview.HasEditableSelection;
+            if (!details.IsVisible)
                 return;
-            var width = MakeNumberBox((decimal)workflow.Workpiece.Width, 0.001m, 100000, 3);
-            var height = MakeNumberBox((decimal)workflow.Workpiece.Height, 0.001m, 100000, 3);
-            width.ValueChanged += (_, _) => UpdatePmtWorkpiece(
-                decimal.ToDouble(width.Value ?? 0), null);
-            height.ValueChanged += (_, _) => UpdatePmtWorkpiece(
-                null, decimal.ToDouble(height.Value ?? 0));
-            workpieceFlyout.Content = UiTheme.FlyoutSurface(new StackPanel
-            {
-                Spacing = 9,
-                MinWidth = 240,
-                Children =
-                {
-                    new TextBlock { Text = "工件尺寸", FontWeight = FontWeight.SemiBold },
-                    MakeLabeledControl("宽度（mm）", width, 0),
-                    MakeLabeledControl("高度（mm）", height, 0)
-                }
-            });
-        };
-        preview.WorkpieceEditRequested += (_, _) => workpieceFlyout.ShowAt(preview);
+            details.MaxHeight = Math.Max(120, overlay.Bounds.Height - 16);
+            details.Measure(new Size(details.Width, details.MaxHeight));
+            var selected = preview.GetSelectionScreenBounds();
+            var panelWidth = details.DesiredSize.Width;
+            var left = selected?.Right + 10 ?? 12;
+            if (left + panelWidth > overlay.Bounds.Width - 8)
+                left = (selected?.Left ?? overlay.Bounds.Width) - panelWidth - 10;
+            ClampDetails(left, selected?.Top ?? 12);
+        }
         preview.SelectionChanged += (_, _) =>
+            Dispatcher.UIThread.Post(PositionDetailsNearSelection, DispatcherPriority.Render);
+        overlay.SizeChanged += (_, _) =>
         {
-            if (preview.SelectedId is { } selectedId &&
-                preview.Workflow?.Targets.Any(target => target.Id == selectedId) == true)
-                propertiesFlyout.ShowAt(preview);
-            else
-                propertiesFlyout.Hide();
+            details.MaxHeight = Math.Max(120, overlay.Bounds.Height - 16);
+            if (details.IsVisible)
+                ClampDetails(Canvas.GetLeft(details), Canvas.GetTop(details));
         };
-
-        var previewCard = UiTheme.CanvasCard(preview);
+        details.DragHandle.PointerPressed += (_, args) =>
+        {
+            if (!args.GetCurrentPoint(details.DragHandle).Properties.IsLeftButtonPressed)
+                return;
+            panelDragStart = args.GetPosition(overlay);
+            panelStart = new Point(Canvas.GetLeft(details), Canvas.GetTop(details));
+            args.Pointer.Capture(details.DragHandle);
+            args.Handled = true;
+        };
+        details.DragHandle.PointerMoved += (_, args) =>
+        {
+            if (panelDragStart is not { } start)
+                return;
+            var delta = args.GetPosition(overlay) - start;
+            ClampDetails(panelStart.X + delta.X, panelStart.Y + delta.Y);
+            args.Handled = true;
+        };
+        details.DragHandle.PointerReleased += (_, args) =>
+        {
+            panelDragStart = null;
+            args.Pointer.Capture(null);
+            args.Handled = true;
+        };
+        var canvasLayer = new Grid { Children = { preview, overlay } };
+        var previewCard = UiTheme.CanvasCard(canvasLayer);
         previewCard.MinHeight = 320;
         return new PreviewPane(previewCard, toolbar, new Grid(), HasContextTools: false);
     }

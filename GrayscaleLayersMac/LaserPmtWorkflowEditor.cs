@@ -151,19 +151,48 @@ public static class LaserPmtWorkflowEditor
     public static LaserPmtWorkflow SetBaseParameterEnabled(
         LaserPmtWorkflow workflow,
         string parameterName,
+        bool enabled) => SetBaseParameterEnabled(
+            workflow,
+            workflow.BaseNode.Id,
+            parameterName,
+            enabled);
+
+    public static LaserPmtWorkflow SetBaseParameterEnabled(
+        LaserPmtWorkflow workflow,
+        string nodeId,
+        string parameterName,
         bool enabled)
     {
         ArgumentNullException.ThrowIfNull(workflow);
-        if (!workflow.BaseNode.Parameters.ContainsKey(parameterName))
+        var node = workflow.BaseNodes.FirstOrDefault(item => item.Id == nodeId)
+            ?? throw new ArgumentException($"找不到基础参数节点：{nodeId}", nameof(nodeId));
+        if (!node.Parameters.ContainsKey(parameterName))
             throw new ArgumentException($"基础节点不包含参数：{parameterName}", nameof(parameterName));
-        var removed = new HashSet<string>(workflow.BaseNode.RemovedParameters, StringComparer.Ordinal);
+        var removed = new HashSet<string>(node.RemovedParameters, StringComparer.Ordinal);
         if (enabled)
             removed.Remove(parameterName);
         else
             removed.Add(parameterName);
-        return Rebuild(
-            workflow,
-            baseNode: workflow.BaseNode with { RemovedParameters = removed });
+        return ReplaceBaseNode(workflow, node with { RemovedParameters = removed });
+    }
+
+    public static LaserPmtWorkflow SetBaseParameterValue(
+        LaserPmtWorkflow workflow,
+        string nodeId,
+        string parameterName,
+        string value)
+    {
+        ArgumentNullException.ThrowIfNull(workflow);
+        var node = workflow.BaseNodes.FirstOrDefault(item => item.Id == nodeId)
+            ?? throw new ArgumentException($"找不到基础参数节点：{nodeId}", nameof(nodeId));
+        if (!node.Parameters.ContainsKey(parameterName))
+            throw new ArgumentException($"基础节点不包含参数：{parameterName}", nameof(parameterName));
+        if (!LaserPmtConfiguration.TryParseExplicitValues(
+                parameterName, value, out var values, out var error) || values.Count != 1)
+            throw new ArgumentException(error.Length == 0 ? "基础参数只能输入一个值。" : error, nameof(value));
+        var parameters = node.Parameters.ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal);
+        parameters[parameterName] = LaserPmtConfiguration.FormatParameterValue(values[0]);
+        return ReplaceBaseNode(workflow, node with { Parameters = parameters });
     }
 
     public static LaserPmtWorkflow AddParameterNode(
@@ -680,6 +709,22 @@ public static class LaserPmtWorkflowEditor
             nextCreationOrder ?? workflow.NextCreationOrder,
             workflow.Numbering);
     }
+
+    private static LaserPmtWorkflow ReplaceBaseNode(
+        LaserPmtWorkflow workflow,
+        LaserPmtBaseParameterNode replacement) => new(
+            workflow.Sources,
+            workflow.Workpiece,
+            workflow.HatchSpacing,
+            workflow.Viewport,
+            workflow.BaseNodes.Select(node => node.Id == replacement.Id ? replacement : node).ToArray(),
+            workflow.ParameterNodes,
+            workflow.Targets,
+            workflow.Connections,
+            workflow.PmtColumns,
+            workflow.NextPmtNumber,
+            workflow.NextCreationOrder,
+            workflow.Numbering);
 
     private static LaserPmtWorkflow UpdatePmt(
         LaserPmtWorkflow workflow,

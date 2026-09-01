@@ -1,5 +1,7 @@
+using System.Globalization;
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Input;
 using Avalonia.Layout;
 using Avalonia.Media;
 
@@ -7,21 +9,58 @@ namespace GrayscaleLayersMac;
 
 public sealed class LaserPmtWorkflowInspector : Border
 {
-    private readonly StackPanel _content = new() { Spacing = 10 };
+    private readonly StackPanel _content = new() { Spacing = 6 };
+    private readonly TextBlock _title = new()
+    {
+        Text = "属性", FontSize = 12.5, FontWeight = FontWeight.SemiBold,
+        Foreground = UiTheme.TextPrimaryBrush, VerticalAlignment = VerticalAlignment.Center
+    };
+    private readonly TextBlock _error = new()
+    {
+        FontSize = 10.5, Foreground = UiTheme.DangerTextBrush,
+        TextWrapping = TextWrapping.Wrap, IsVisible = false
+    };
     private LaserPmtWorkflowCanvas? _canvas;
+    private bool _isApplyingLive;
+
+    public Control DragHandle { get; }
 
     public LaserPmtWorkflowInspector()
     {
-        Width = 260;
-        Padding = new Thickness(12);
+        Width = 236;
         CornerRadius = UiTheme.ControlRadius;
         Background = UiTheme.CardBrush;
-        BorderBrush = UiTheme.BorderSubtleBrush;
+        BorderBrush = UiTheme.BorderMediumBrush;
         BorderThickness = new Thickness(1);
-        Child = new ScrollViewer
+        BoxShadow = new BoxShadows(new BoxShadow
         {
-            VerticalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Auto,
-            Content = _content
+            Blur = 18, OffsetY = 5, Color = Color.FromArgb(42, 0, 0, 0)
+        });
+        DragHandle = new Border
+        {
+            Padding = new Thickness(9, 6),
+            Background = UiTheme.GhostBrush,
+            Cursor = new Cursor(StandardCursorType.SizeAll),
+            Child = new Grid
+            {
+                ColumnDefinitions = new ColumnDefinitions("Auto,*"),
+                ColumnSpacing = 7,
+                Children = { UiIcons.CreateSmall(UiIcon.Nodes), Place(_title, 1) }
+            }
+        };
+        Child = new Grid
+        {
+            RowDefinitions = new RowDefinitions("Auto,*"),
+            Children =
+            {
+                DragHandle,
+                Place(new ScrollViewer
+                {
+                    Margin = new Thickness(9, 7, 9, 9),
+                    VerticalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Auto,
+                    Content = _content
+                }, row: 1)
+            }
         };
         Refresh();
     }
@@ -40,182 +79,237 @@ public sealed class LaserPmtWorkflowInspector : Border
         Refresh();
     }
 
-    private void OnCanvasChanged(object? sender, EventArgs e) => Refresh();
+    private void OnCanvasChanged(object? sender, EventArgs e)
+    {
+        if (!_isApplyingLive)
+            Refresh();
+    }
 
     private void Refresh()
     {
         _content.Children.Clear();
-        _content.Children.Add(new TextBlock
-        {
-            Text = "属性",
-            FontSize = 14,
-            FontWeight = FontWeight.SemiBold,
-            Foreground = UiTheme.TextPrimaryBrush
-        });
+        ShowError(null);
         var workflow = _canvas?.Workflow;
-        var selectedId = _canvas?.SelectedId;
         if (workflow is null)
         {
-            AddHint("导入基础加工目录后创建工作流。");
+            _title.Text = "属性";
+            AddHint("尚未创建 PMT 工作流。");
             return;
         }
+        if (_canvas!.IsWorkpieceSelected)
+        {
+            _title.Text = "工件";
+            AddWorkpieceEditor(workflow);
+            return;
+        }
+        var selectedId = _canvas.SelectedId;
         if (selectedId is null)
         {
-            AddHint("选择 PMT、时间戳、参数节点或连线进行编辑。拖动画布空白处平移，滚轮缩放。");
-            AddValidation(workflow);
+            _title.Text = "属性";
+            AddHint("选择画布元素后编辑。");
             return;
         }
-        if (selectedId == workflow.BaseNode.Id)
+        var baseNode = workflow.BaseNodes.FirstOrDefault(item => item.Id == selectedId);
+        if (baseNode is not null)
         {
-            AddBaseEditor(workflow);
+            _title.Text = "基础参数";
+            AddBaseEditor(baseNode);
             return;
         }
         var node = workflow.ParameterNodes.FirstOrDefault(item => item.Id == selectedId);
         if (node is not null)
         {
-            AddParameterNodeEditor(workflow, node);
+            _title.Text = LaserPmtConfiguration.Parameters
+                .First(item => item.Name == node.ParameterName).DisplayName;
+            AddParameterNodeEditor(node);
             return;
         }
         var target = workflow.Targets.FirstOrDefault(item => item.Id == selectedId);
         if (target is not null)
         {
+            _title.Text = target is LaserPmtTimestampTarget ? "时间戳" : "PMT";
             AddTargetEditor(workflow, target);
             return;
         }
         var connection = workflow.Connections.FirstOrDefault(item => item.Id == selectedId);
         if (connection is not null)
         {
-            AddLabel("参数连线");
-            AddHint($"{connection.SourceNodeId}\n端口：{connection.SourcePortId}\n目标：{connection.TargetId}");
-            AddDeleteButton();
+            _title.Text = "参数连线";
+            AddHint($"端口：{connection.SourcePortId}\n目标：{connection.TargetId}");
+            AddKeyboardHint();
         }
     }
 
-    private void AddBaseEditor(LaserPmtWorkflow workflow)
+    private void AddWorkpieceEditor(LaserPmtWorkflow workflow)
     {
-        AddLabel("基础参数（默认连接全部目标）");
+        var width = TextBoxFor(workflow.Workpiece.Width);
+        var height = TextBoxFor(workflow.Workpiece.Height);
+        _content.Children.Add(TwoFields("宽 mm", width, "高 mm", height));
+        width.TextChanged += (_, _) => ApplyDouble(width, value => value > 0,
+            current => LaserPmtWorkflowEditor.SetWorkpiece(
+                current, current.Workpiece with { Width = ParseDouble(width.Text!) }));
+        height.TextChanged += (_, _) => ApplyDouble(height, value => value > 0,
+            current => LaserPmtWorkflowEditor.SetWorkpiece(
+                current, current.Workpiece with { Height = ParseDouble(height.Text!) }));
+        AddError();
+    }
+
+    private void AddBaseEditor(LaserPmtBaseParameterNode node)
+    {
         foreach (var definition in LaserPmtConfiguration.Parameters)
         {
-            var check = new CheckBox
+            var enabled = new CheckBox
             {
-                Content = $"{definition.DisplayName} · {workflow.BaseNode.Parameters[definition.Name]}",
-                IsChecked = !workflow.BaseNode.RemovedParameters.Contains(definition.Name),
-                FontSize = 11.5
+                IsChecked = !node.RemovedParameters.Contains(definition.Name),
+                VerticalAlignment = VerticalAlignment.Center
             };
-            check.Click += (_, _) => Apply(current => LaserPmtWorkflowEditor.SetBaseParameterEnabled(
-                current, definition.Name, check.IsChecked == true));
-            _content.Children.Add(check);
+            var value = TextBoxFor(node.Parameters[definition.Name]);
+            var row = new Grid
+            {
+                ColumnDefinitions = new ColumnDefinitions("24,*,74"),
+                ColumnSpacing = 5,
+                Children =
+                {
+                    enabled,
+                    Place(new TextBlock
+                    {
+                        Text = definition.DisplayName.Split('（')[0],
+                        FontSize = 10.5,
+                        Foreground = UiTheme.TextSecondaryBrush,
+                        VerticalAlignment = VerticalAlignment.Center,
+                        TextTrimming = TextTrimming.CharacterEllipsis
+                    }, 1),
+                    Place(value, 2)
+                }
+            };
+            enabled.Click += (_, _) => ApplyLive(current =>
+                LaserPmtWorkflowEditor.SetBaseParameterEnabled(
+                    current, node.Id, definition.Name, enabled.IsChecked == true));
+            value.TextChanged += (_, _) => ApplyParameterValue(value, definition,
+                current => LaserPmtWorkflowEditor.SetBaseParameterValue(
+                    current, node.Id, definition.Name, value.Text ?? string.Empty));
+            _content.Children.Add(row);
         }
+        AddError();
     }
 
-    private void AddParameterNodeEditor(
-        LaserPmtWorkflow workflow,
-        LaserPmtSingleParameterNode node)
+    private void AddParameterNodeEditor(LaserPmtSingleParameterNode node)
     {
-        var definition = LaserPmtConfiguration.Parameters.First(item => item.Name == node.ParameterName);
-        AddLabel(definition.DisplayName);
-        var values = new TextBox
+        var values = TextBoxFor(node.ValuesText);
+        values.Watermark = "例如 20, 40, 60";
+        _content.Children.Add(Field("参数组（逗号分隔）", values));
+        var ports = new TextBlock
         {
-            Text = node.ValuesText,
-            Watermark = "逗号分隔多组值",
-            FontFamily = UiTheme.MonoFont
+            Text = PortSummary(node), FontSize = 10.5,
+            Foreground = UiTheme.TextSecondaryBrush, TextWrapping = TextWrapping.Wrap
         };
-        UiTheme.ApplyInputStyle(values);
-        _content.Children.Add(values);
-        AddHint(string.Join(" · ", node.Ports.Select((port, index) => $"{index + 1}: {port.Value}")));
-        var apply = new Button { Content = "更新参数组" };
-        UiTheme.ApplySecondaryStyle(apply);
-        apply.Click += (_, _) => Apply(current => LaserPmtWorkflowEditor.UpdateParameterNodeValues(
-            current,
-            node.Id,
-            values.Text ?? string.Empty,
-            () => $"port-{Guid.NewGuid():N}").Workflow);
-        _content.Children.Add(apply);
-        AddDeleteButton();
+        _content.Children.Add(ports);
+        values.TextChanged += (_, _) =>
+        {
+            if (!LaserPmtConfiguration.TryParseExplicitValues(
+                    node.ParameterName, values.Text ?? string.Empty, out _, out var error))
+            {
+                ShowError(error);
+                return;
+            }
+            if (ApplyLive(current => LaserPmtWorkflowEditor.UpdateParameterNodeValues(
+                    current, node.Id, values.Text ?? string.Empty,
+                    () => $"port-{Guid.NewGuid():N}").Workflow))
+                ports.Text = PortSummary(_canvas!.Workflow!.ParameterNodes.Single(item => item.Id == node.Id));
+        };
+        AddError();
+        AddKeyboardHint();
     }
 
     private void AddTargetEditor(LaserPmtWorkflow workflow, LaserPmtWorkflowTarget target)
     {
-        AddLabel(target is LaserPmtTimestampTarget ? "时间戳" : "PMT");
         if (target is LaserPmtTimestampTarget timestamp)
-        {
-            var text = new TextBox { Text = timestamp.Text, MaxLength = 8, FontFamily = UiTheme.MonoFont };
-            UiTheme.ApplyInputStyle(text);
-            var width = NumberBox((decimal)timestamp.Bounds.Width);
-            var height = NumberBox((decimal)timestamp.Bounds.Height);
-            _content.Children.Add(Field("月日时分（MMddHHmm）", text));
-            _content.Children.Add(Field("宽度（mm）", width));
-            _content.Children.Add(Field("高度（mm）", height));
-            var apply = new Button { Content = "应用时间戳" };
-            UiTheme.ApplySecondaryStyle(apply);
-            apply.Click += (_, _) => Apply(current =>
-            {
-                var updated = LaserPmtWorkflowEditor.UpdateTimestampText(
-                    current, timestamp.Id, text.Text ?? string.Empty);
-                return LaserPmtWorkflowEditor.ResizeTimestamp(
-                    updated,
-                    timestamp.Id,
-                    decimal.ToDouble(width.Value ?? 0),
-                    decimal.ToDouble(height.Value ?? 0));
-            });
-            _content.Children.Add(apply);
-        }
+            AddTimestampEditor(timestamp);
         else if (target is LaserPmtTarget pmt)
-        {
-            var number = NumberBox(pmt.Number);
-            var left = NumberBox((decimal)pmt.Bounds.Left);
-            var top = NumberBox((decimal)pmt.Bounds.Top);
-            var width = NumberBox((decimal)pmt.Bounds.Width);
-            var height = NumberBox((decimal)pmt.Bounds.Height);
-            var locked = new CheckBox { Content = "锁定原始尺寸", IsChecked = pmt.IsSizeLocked };
-            width.IsEnabled = height.IsEnabled = !pmt.IsSizeLocked;
-            _content.Children.Add(Field("编号", number));
-            _content.Children.Add(new Grid
-            {
-                ColumnDefinitions = new ColumnDefinitions("*,*"),
-                ColumnSpacing = 8,
-                Children = { Field("X（mm）", left), Place(Field("Y（mm）", top), 1) }
-            });
-            _content.Children.Add(new Grid
-            {
-                ColumnDefinitions = new ColumnDefinitions("*,*"),
-                ColumnSpacing = 8,
-                Children = { Field("宽（mm）", width), Place(Field("高（mm）", height), 1) }
-            });
-            _content.Children.Add(locked);
-            number.ValueChanged += (_, _) => Apply(current =>
-                LaserPmtWorkflowEditor.SetPmtNumber(current, pmt.Id, decimal.ToInt32(number.Value ?? 0)));
-            left.ValueChanged += (_, _) => Apply(current =>
-                LaserPmtWorkflowEditor.MovePmt(current, pmt.Id,
-                    decimal.ToDouble(left.Value ?? 0), current.Targets.OfType<LaserPmtTarget>().Single(item => item.Id == pmt.Id).Bounds.Top));
-            top.ValueChanged += (_, _) => Apply(current =>
-                LaserPmtWorkflowEditor.MovePmt(current, pmt.Id,
-                    current.Targets.OfType<LaserPmtTarget>().Single(item => item.Id == pmt.Id).Bounds.Left,
-                    decimal.ToDouble(top.Value ?? 0)));
-            width.ValueChanged += (_, _) => Apply(current =>
-                LaserPmtWorkflowEditor.ResizePmt(current, pmt.Id,
-                    decimal.ToDouble(width.Value ?? 0), current.Targets.OfType<LaserPmtTarget>().Single(item => item.Id == pmt.Id).Bounds.Height));
-            height.ValueChanged += (_, _) => Apply(current =>
-                LaserPmtWorkflowEditor.ResizePmt(current, pmt.Id,
-                    current.Targets.OfType<LaserPmtTarget>().Single(item => item.Id == pmt.Id).Bounds.Width,
-                    decimal.ToDouble(height.Value ?? 0)));
-            locked.Click += (_, _) => Apply(current => LaserPmtWorkflowEditor.SetPmtSizeLock(
-                current, pmt.Id, locked.IsChecked == true, restoreNativeSize: false));
-        }
+            AddPmtEditor(pmt);
         AddEditableCompiledParameters(workflow, target.Id);
-        AddDeleteButton();
+        AddError();
+        AddKeyboardHint();
+    }
+
+    private void AddTimestampEditor(LaserPmtTimestampTarget timestamp)
+    {
+        var text = TextBoxFor(timestamp.Text);
+        text.MaxLength = 8;
+        var left = TextBoxFor(timestamp.Bounds.Left);
+        var top = TextBoxFor(timestamp.Bounds.Top);
+        var width = TextBoxFor(timestamp.Bounds.Width);
+        var height = TextBoxFor(timestamp.Bounds.Height);
+        _content.Children.Add(Field("月日时分 MMddHHmm", text));
+        _content.Children.Add(TwoFields("X mm", left, "Y mm", top));
+        _content.Children.Add(TwoFields("宽 mm", width, "高 mm", height));
+        text.TextChanged += (_, _) => ApplyLive(current =>
+            LaserPmtWorkflowEditor.UpdateTimestampText(current, timestamp.Id, text.Text ?? string.Empty));
+        left.TextChanged += (_, _) => ApplyDouble(left, _ => true, current =>
+            LaserPmtWorkflowEditor.MoveTimestamp(current, timestamp.Id,
+                ParseDouble(left.Text!), CurrentTarget(current, timestamp.Id).Bounds.Top));
+        top.TextChanged += (_, _) => ApplyDouble(top, _ => true, current =>
+            LaserPmtWorkflowEditor.MoveTimestamp(current, timestamp.Id,
+                CurrentTarget(current, timestamp.Id).Bounds.Left, ParseDouble(top.Text!)));
+        width.TextChanged += (_, _) => ApplyDouble(width, value => value > 0, current =>
+            LaserPmtWorkflowEditor.ResizeTimestamp(current, timestamp.Id,
+                ParseDouble(width.Text!), CurrentTarget(current, timestamp.Id).Bounds.Height));
+        height.TextChanged += (_, _) => ApplyDouble(height, value => value > 0, current =>
+            LaserPmtWorkflowEditor.ResizeTimestamp(current, timestamp.Id,
+                CurrentTarget(current, timestamp.Id).Bounds.Width, ParseDouble(height.Text!)));
+    }
+
+    private void AddPmtEditor(LaserPmtTarget pmt)
+    {
+        var number = TextBoxFor(pmt.Number.ToString(CultureInfo.InvariantCulture));
+        var left = TextBoxFor(pmt.Bounds.Left);
+        var top = TextBoxFor(pmt.Bounds.Top);
+        var width = TextBoxFor(pmt.Bounds.Width);
+        var height = TextBoxFor(pmt.Bounds.Height);
+        var locked = new CheckBox { Content = "锁定尺寸", IsChecked = pmt.IsSizeLocked, FontSize = 10.5 };
+        width.IsEnabled = height.IsEnabled = !pmt.IsSizeLocked;
+        _content.Children.Add(Field("编号", number));
+        _content.Children.Add(TwoFields("X mm", left, "Y mm", top));
+        _content.Children.Add(TwoFields("宽 mm", width, "高 mm", height));
+        _content.Children.Add(locked);
+        number.TextChanged += (_, _) =>
+        {
+            if (!int.TryParse(number.Text, NumberStyles.None, CultureInfo.InvariantCulture, out var value) || value <= 0)
+            {
+                ShowError("编号必须是正整数。");
+                return;
+            }
+            ApplyLive(current => LaserPmtWorkflowEditor.SetPmtNumber(current, pmt.Id, value));
+        };
+        left.TextChanged += (_, _) => ApplyDouble(left, _ => true, current =>
+            LaserPmtWorkflowEditor.MovePmt(current, pmt.Id,
+                ParseDouble(left.Text!), CurrentPmt(current, pmt.Id).Bounds.Top));
+        top.TextChanged += (_, _) => ApplyDouble(top, _ => true, current =>
+            LaserPmtWorkflowEditor.MovePmt(current, pmt.Id,
+                CurrentPmt(current, pmt.Id).Bounds.Left, ParseDouble(top.Text!)));
+        width.TextChanged += (_, _) => ApplyDouble(width, value => value > 0, current =>
+            LaserPmtWorkflowEditor.ResizePmt(current, pmt.Id,
+                ParseDouble(width.Text!), CurrentPmt(current, pmt.Id).Bounds.Height));
+        height.TextChanged += (_, _) => ApplyDouble(height, value => value > 0, current =>
+            LaserPmtWorkflowEditor.ResizePmt(current, pmt.Id,
+                CurrentPmt(current, pmt.Id).Bounds.Width, ParseDouble(height.Text!)));
+        locked.Click += (_, _) =>
+        {
+            if (ApplyLive(current => LaserPmtWorkflowEditor.SetPmtSizeLock(
+                    current, pmt.Id, locked.IsChecked == true, restoreNativeSize: false)))
+                width.IsEnabled = height.IsEnabled = locked.IsChecked != true;
+        };
     }
 
     private void AddEditableCompiledParameters(LaserPmtWorkflow workflow, string targetId)
     {
         var compilation = LaserPmtWorkflowCompiler.Compile(workflow);
         var compiled = compilation.Targets.FirstOrDefault(item => item.TargetId == targetId);
-        AddLabel("最终参数（实时）");
+        AddSectionLabel("最终参数");
         if (compiled is null)
         {
-            AddHint(string.Join("\n", compilation.Errors
-                .Where(error => error.TargetId == targetId)
-                .Select(error => error.Message)));
+            AddHint(string.Join("\n", compilation.Errors.Where(error => error.TargetId == targetId)
+                .Select(error => error.Message)), true);
             return;
         }
         foreach (var definition in LaserPmtConfiguration.Parameters)
@@ -224,128 +318,145 @@ public sealed class LaserPmtWorkflowInspector : Border
                 continue;
             if (definition.IsBoolean)
             {
-                var check = new CheckBox { Content = definition.DisplayName, IsChecked = (bool)value };
-                check.Click += (_, _) => Apply(current => LaserPmtWorkflowEditor.SetDirectParameterOverride(
-                    current, targetId, definition.Name, check.IsChecked == true ? "true" : "false"));
+                var check = new CheckBox
+                {
+                    Content = definition.DisplayName.Split('（')[0],
+                    IsChecked = (bool)value, FontSize = 10.5
+                };
+                check.Click += (_, _) => ApplyLive(current =>
+                    LaserPmtWorkflowEditor.SetDirectParameterOverride(current, targetId,
+                        definition.Name, check.IsChecked == true ? "true" : "false"));
                 _content.Children.Add(check);
             }
             else
             {
-                var number = NumberBox(Convert.ToDecimal(value));
-                number.ValueChanged += (_, _) => Apply(current => LaserPmtWorkflowEditor.SetDirectParameterOverride(
-                    current, targetId, definition.Name,
-                    decimal.ToInt32(number.Value ?? 0).ToString(System.Globalization.CultureInfo.InvariantCulture)));
-                _content.Children.Add(Field(definition.DisplayName, number));
+                var input = TextBoxFor(Convert.ToString(value, CultureInfo.InvariantCulture) ?? string.Empty);
+                input.TextChanged += (_, _) => ApplyParameterValue(input, definition, current =>
+                    LaserPmtWorkflowEditor.SetDirectParameterOverride(current, targetId,
+                        definition.Name, input.Text ?? string.Empty));
+                _content.Children.Add(CompactField(definition.DisplayName.Split('（')[0], input));
             }
         }
     }
 
-    private void AddCompiledParameters(LaserPmtWorkflow workflow, string targetId)
+    private void ApplyDouble(TextBox input, Func<double, bool> validate,
+        Func<LaserPmtWorkflow, LaserPmtWorkflow> update)
     {
-        var compilation = LaserPmtWorkflowCompiler.Compile(workflow);
-        var compiled = compilation.Targets.FirstOrDefault(item => item.TargetId == targetId);
-        AddLabel("最终参数");
-        if (compiled is null)
+        if (!TryParseCompleteDouble(input.Text, out var value) || !validate(value))
         {
-            AddHint(string.Join("\n", compilation.Errors
-                .Where(error => error.TargetId == targetId)
-                .Select(error => error.Message)));
+            ShowError("请输入有效数值。");
             return;
         }
-        foreach (var definition in LaserPmtConfiguration.Parameters)
+        ApplyLive(update);
+    }
+
+    private void ApplyParameterValue(TextBox input, LaserPmtParameterDefinition definition,
+        Func<LaserPmtWorkflow, LaserPmtWorkflow> update)
+    {
+        if (!LaserPmtConfiguration.TryParseExplicitValues(definition.Name,
+                input.Text ?? string.Empty, out var values, out var error) || values.Count != 1)
         {
-            if (!compiled.Parameters.TryGetValue(definition.Name, out var value))
-                continue;
-            var sourceConnection = workflow.Connections.FirstOrDefault(connection =>
-                connection.TargetId == targetId &&
-                workflow.ParameterNodes.Any(node =>
-                    node.Id == connection.SourceNodeId && node.ParameterName == definition.Name));
-            var sourceLabel = "基础";
-            if (sourceConnection is not null)
-            {
-                var sourceNode = workflow.ParameterNodes.Single(node => node.Id == sourceConnection.SourceNodeId);
-                var portNumber = sourceNode.Ports.ToList()
-                    .FindIndex(port => port.Id == sourceConnection.SourcePortId) + 1;
-                sourceLabel = $"线 {portNumber}";
-            }
-            AddHint($"{definition.DisplayName}: {value}  ·  {sourceLabel}");
+            ShowError(error.Length == 0 ? "这里只能输入一个参数值。" : error);
+            return;
         }
+        ApplyLive(update);
     }
 
-    private void AddValidation(LaserPmtWorkflow workflow)
-    {
-        var compilation = LaserPmtWorkflowCompiler.Compile(workflow);
-        var geometry = LaserPmtWorkflowEditor.ValidateGeometry(workflow);
-        AddHint(compilation.IsValid && geometry.Count == 0
-            ? $"{workflow.Targets.OfType<LaserPmtTarget>().Count()} 个 PMT · " +
-              $"{workflow.Targets.OfType<LaserPmtTimestampTarget>().Count()} 个时间戳 · 可生成"
-            : string.Join("\n", compilation.Errors.Select(item => item.Message)
-                .Concat(geometry.Select(item => item.Message))));
-    }
-
-    private void AddDeleteButton()
-    {
-        var delete = new Button { Content = "删除所选元素" };
-        UiTheme.ApplyQuietStyle(delete);
-        delete.Click += (_, _) => _canvas?.DeleteSelection();
-        _content.Children.Add(delete);
-    }
-
-    private void Apply(Func<LaserPmtWorkflow, LaserPmtWorkflow> update)
+    private bool ApplyLive(Func<LaserPmtWorkflow, LaserPmtWorkflow> update)
     {
         if (_canvas?.Workflow is not { } workflow)
-            return;
+            return false;
         try
         {
+            _isApplyingLive = true;
             _canvas.UpdateWorkflow(update(workflow));
+            ShowError(null);
+            return true;
         }
         catch (Exception exception) when (exception is ArgumentException or InvalidOperationException)
         {
-            AddHint(exception.Message, true);
+            ShowError(exception.Message);
+            return false;
         }
+        finally { _isApplyingLive = false; }
     }
 
-    private void AddLabel(string text) => _content.Children.Add(new TextBlock
+    private void AddError() => _content.Children.Add(_error);
+    private void ShowError(string? message)
     {
-        Text = text,
-        FontSize = 12,
-        FontWeight = FontWeight.SemiBold,
-        Foreground = UiTheme.TextPrimaryBrush,
-        TextWrapping = TextWrapping.Wrap
+        _error.Text = message ?? string.Empty;
+        _error.IsVisible = !string.IsNullOrWhiteSpace(message);
+    }
+    private void AddSectionLabel(string text) => _content.Children.Add(new TextBlock
+    {
+        Text = text, Margin = new Thickness(0, 3, 0, 0), FontSize = 10.5,
+        FontWeight = FontWeight.SemiBold, Foreground = UiTheme.TextPrimaryBrush
     });
-
     private void AddHint(string text, bool danger = false) => _content.Children.Add(new TextBlock
     {
-        Text = text,
-        FontSize = 11,
+        Text = text, FontSize = 10.5,
         Foreground = danger ? UiTheme.DangerTextBrush : UiTheme.TextSecondaryBrush,
         TextWrapping = TextWrapping.Wrap
     });
-
+    private void AddKeyboardHint() => AddHint("Delete 删除所选元素");
     private static Control Field(string label, Control control) => new StackPanel
     {
-        Spacing = 5,
-        Children = { UiTheme.FieldLabel(label), control }
+        Spacing = 3, Children = { UiTheme.FieldLabel(label), control }
     };
-
-    private static T Place<T>(T control, int column) where T : Control
+    private static Control CompactField(string label, Control control) => new Grid
     {
-        Grid.SetColumn(control, column);
-        return control;
-    }
-
-    private static NumericUpDown NumberBox(decimal value)
-    {
-        var box = new NumericUpDown
+        ColumnDefinitions = new ColumnDefinitions("*,74"), ColumnSpacing = 6,
+        Children =
         {
-            Minimum = 0.001m,
-            Maximum = 100000,
-            Increment = 0.1m,
-            Value = value,
-            FormatString = "0.###",
-            FontFamily = UiTheme.MonoFont
+            new TextBlock
+            {
+                Text = label, FontSize = 10.5, Foreground = UiTheme.TextSecondaryBrush,
+                VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis
+            },
+            Place(control, 1)
+        }
+    };
+    private static Control TwoFields(string firstLabel, Control first, string secondLabel, Control second) =>
+        new Grid
+        {
+            ColumnDefinitions = new ColumnDefinitions("*,*"), ColumnSpacing = 6,
+            Children = { Field(firstLabel, first), Place(Field(secondLabel, second), 1) }
+        };
+    private static TextBox TextBoxFor(double value) => TextBoxFor(
+        value.ToString("0.###", CultureInfo.InvariantCulture));
+    private static TextBox TextBoxFor(string value)
+    {
+        var box = new TextBox
+        {
+            Text = value, Height = 27, MinHeight = 27, Padding = new Thickness(6, 3),
+            FontSize = 11, FontFamily = UiTheme.MonoFont
         };
         UiTheme.ApplyInputStyle(box);
         return box;
+    }
+    private static bool TryParseCompleteDouble(string? text, out double value)
+    {
+        var trimmed = text?.Trim() ?? string.Empty;
+        if (trimmed.Length == 0 || trimmed.EndsWith('.') || trimmed is "-" or "+")
+        {
+            value = 0;
+            return false;
+        }
+        return double.TryParse(trimmed, NumberStyles.Float, CultureInfo.InvariantCulture, out value) &&
+               double.IsFinite(value);
+    }
+    private static double ParseDouble(string text) =>
+        double.Parse(text, NumberStyles.Float, CultureInfo.InvariantCulture);
+    private static LaserPmtWorkflowTarget CurrentTarget(LaserPmtWorkflow workflow, string id) =>
+        workflow.Targets.Single(item => item.Id == id);
+    private static LaserPmtTarget CurrentPmt(LaserPmtWorkflow workflow, string id) =>
+        workflow.Targets.OfType<LaserPmtTarget>().Single(item => item.Id == id);
+    private static string PortSummary(LaserPmtSingleParameterNode node) =>
+        string.Join("  ·  ", node.Ports.Select((port, index) => $"{index + 1}: {port.Value}"));
+    private static T Place<T>(T control, int column = 0, int row = 0) where T : Control
+    {
+        Grid.SetColumn(control, column);
+        Grid.SetRow(control, row);
+        return control;
     }
 }

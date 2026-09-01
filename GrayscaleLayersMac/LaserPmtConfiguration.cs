@@ -64,7 +64,9 @@ public static class LaserPmtConfiguration
                 return false;
             }
 
-            var tokens = row.ValuesText.Split(',', StringSplitOptions.TrimEntries);
+            var tokens = row.ValuesText
+                .Replace('，', ',')
+                .Split(',', StringSplitOptions.TrimEntries);
             if (tokens.Length == 0 || tokens.Any(token => token.Length == 0))
             {
                 parsed = [];
