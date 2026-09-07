@@ -4,7 +4,7 @@ namespace GrayscaleLayersMac;
 
 public sealed record TextureImageInspection(TextureImageInfo Info, byte[] PreviewPng)
 {
-    public const int DefaultMaximumPreviewBytes = 64 * 1024 * 1024;
+    public const int DefaultMaximumPreviewBytes = 128 * 1024 * 1024;
     private static ReadOnlySpan<byte> PngSignature => [137, 80, 78, 71, 13, 10, 26, 10];
 
     public static TextureImageInspection ParseJson(

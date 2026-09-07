@@ -35,7 +35,7 @@ from PIL import Image
 MM_PER_INCH = 25.4
 MAX_IMAGE_PIXELS = 120_000_000
 Image.MAX_IMAGE_PIXELS = MAX_IMAGE_PIXELS
-MAX_PREVIEW_PNG_BYTES = 64 * 1024 * 1024
+MAX_PREVIEW_PNG_BYTES = 128 * 1024 * 1024
 
 
 class RepeatPeriodNotFoundError(ValueError):
@@ -1299,7 +1299,7 @@ def _encode_preview_png(image: Image.Image) -> str:
     preview.save(output, format="PNG", optimize=True)
     raw = output.getvalue()
     if len(raw) > MAX_PREVIEW_PNG_BYTES:
-        raise ValueError("图片预览 PNG 超过 64 MiB 限制。")
+        raise ValueError("图片预览 PNG 超过 128 MiB 限制。")
     return base64.b64encode(raw).decode("ascii")
 
 

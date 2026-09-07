@@ -61,6 +61,11 @@ public sealed class GrayscaleLayerPreviewControl : Grid, IDisposable
     private const double ThumbnailExpandedWidth = 180;
     private const double ThumbnailCompactWidth = 44;
 
+    // 原尺寸预览必须保留与 TIFF 一致的像素网格，但逐层串行启动 Python/Pillow
+    // 会让大图的“灰度分层”进度条长时间停在第 1 步。限制并行度，避免同时
+    // 解码过多大图造成内存峰值。
+    private const int MaxConcurrentPreviewLoads = 3;
+
     /// <summary>把手骑在缩略图卡片右边框上、一半探出卡片的像素数。</summary>
     private const double HandleOverhang = 10;
 
@@ -443,18 +448,59 @@ public sealed class GrayscaleLayerPreviewControl : Grid, IDisposable
         IReadOnlyList<GrayscaleLayerPreviewItem> items,
         CancellationToken cancellationToken)
     {
-        foreach (var item in items)
-        {
-            if (item.IsSourceTexture)
-                continue;   // 第 0 层的预览已经在内存里，不用再去读文件
+        using var gate = new SemaphoreSlim(MaxConcurrentPreviewLoads);
+        var results = await Task.WhenAll(items
+            .Where(item => !item.IsSourceTexture)
+            .Select(async item =>
+            {
+                await gate.WaitAsync(cancellationToken);
+                try
+                {
+                    try
+                    {
+                        var inspection = await _loadPreview!(
+                            item.FilePath,
+                            cancellationToken);
+                        cancellationToken.ThrowIfCancellationRequested();
+                        return (
+                            Item: item,
+                            Inspection: inspection,
+                            Error: (Exception?)null);
+                    }
+                    catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                    {
+                        throw;
+                    }
+                    catch (Exception error)
+                    {
+                        return (
+                            Item: item,
+                            Inspection: (TextureImageInspection?)null,
+                            Error: error);
+                    }
+                }
+                finally
+                {
+                    gate.Release();
+                }
+            }));
 
+        foreach (var result in results)
+        {
             try
             {
-                var inspection = await _loadPreview!(item.FilePath, cancellationToken);
                 cancellationToken.ThrowIfCancellationRequested();
+                if (result.Error is not null)
+                {
+                    result.Item.SetError(result.Error.Message);
+                    continue;
+                }
+
+                var inspection = result.Inspection ??
+                    throw new InvalidOperationException("图片预览数据缺失。");
                 using var stream = new MemoryStream(inspection.PreviewPng, writable: false);
                 var thumbnail = Bitmap.DecodeToWidth(stream, 120, BitmapInterpolationMode.MediumQuality);
-                item.SetPreview(
+                result.Item.SetPreview(
                     inspection.PreviewPng,
                     inspection.Info.PixelWidth,
                     inspection.Info.PixelHeight,
@@ -466,7 +512,7 @@ public sealed class GrayscaleLayerPreviewControl : Grid, IDisposable
             }
             catch (Exception error)
             {
-                item.SetError(error.Message);
+                result.Item.SetError(error.Message);
             }
         }
     }
