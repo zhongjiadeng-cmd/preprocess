@@ -142,6 +142,16 @@ class TextureImageInspectionTests(unittest.TestCase):
             with Image.open(io.BytesIO(base64.b64decode(payload["preview_png_base64"]))) as preview:
                 self.assertEqual(preview.size, (800, 200))
 
+    def test_preview_preserves_large_source_dimensions_and_metadata(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "large.png"
+            Image.new("L", (800, 400), 128).save(path)
+            payload = inspect_texture_image(path, include_preview=True)
+
+            with Image.open(io.BytesIO(base64.b64decode(payload["preview_png_base64"]))) as preview:
+                self.assertEqual(preview.size, (800, 400))
+            self.assertEqual((payload["pixel_width"], payload["pixel_height"]), (800, 400))
+
     def test_inspect_image_cli_includes_preview_when_requested(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "source.tif"
@@ -153,10 +163,10 @@ class TextureImageInspectionTests(unittest.TestCase):
             self.assertEqual(completed.returncode, 0, completed.stderr)
             self.assertIn("preview_png_base64", json.loads(completed.stdout))
 
-    def test_preview_rejects_encoded_png_over_64_mib(self):
+    def test_preview_rejects_encoded_png_over_128_mib(self):
         image = Image.new("RGB", (2, 2), "white")
         with mock.patch.object(hatch, "MAX_PREVIEW_PNG_BYTES", 1):
-            with self.assertRaisesRegex(ValueError, "64 MiB"):
+            with self.assertRaisesRegex(ValueError, "128 MiB"):
                 hatch._encode_preview_png(image)
 
     def test_inspect_texture_image_reports_pixels_and_axis_dpi(self):

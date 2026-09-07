@@ -14,6 +14,9 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
+MAX_IMAGE_PIXELS = 120_000_000
+Image.MAX_IMAGE_PIXELS = MAX_IMAGE_PIXELS
+
 MIN_GRAY_LEVEL = 0
 MAX_GRAY_LEVEL = 255
 
