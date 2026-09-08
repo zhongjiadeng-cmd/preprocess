@@ -18,7 +18,7 @@ public sealed class UiThemeTokenTests
         AssertSemanticRoles(AppColorScheme.Dark);
 
     [TestMethod]
-    public void LightSchemeUsesApprovedWarmNeutralSurfacePalette()
+    public void LightSchemeUsesCoolNeutralIndustrialSurfaces()
     {
         try
         {
@@ -27,13 +27,13 @@ public sealed class UiThemeTokenTests
             CollectionAssert.AreEqual(
                 new[]
                 {
-                    Color.FromRgb(243, 242, 239),
-                    Color.FromRgb(250, 249, 247),
-                    Color.FromRgb(239, 238, 235),
-                    Color.FromRgb(253, 252, 251),
-                    Color.FromRgb(247, 246, 243),
-                    Color.FromRgb(236, 235, 232),
-                    Color.FromRgb(255, 254, 252)
+                    Color.FromRgb(229, 233, 238),
+                    Color.FromRgb(246, 248, 250),
+                    Color.FromRgb(240, 243, 246),
+                    Color.FromRgb(252, 253, 254),
+                    Color.FromRgb(238, 241, 245),
+                    Color.FromRgb(232, 236, 241),
+                    Colors.White
                 },
                 new[]
                 {
@@ -53,19 +53,19 @@ public sealed class UiThemeTokenTests
     }
 
     [TestMethod]
-    public void LightSchemeUsesWarmNeutralInteractionSurfaces()
+    public void LightSchemeUsesCoolNeutralInteractionSurfaces()
     {
         try
         {
             UiTheme.ApplyScheme(AppColorScheme.Light);
 
-            Assert.AreEqual(Color.FromArgb(14, 55, 52, 48), UiTheme.DisabledBackgroundBrush.Color);
-            Assert.AreEqual(Color.FromArgb(28, 55, 52, 48), UiTheme.BorderSubtleBrush.Color);
-            Assert.AreEqual(Color.FromArgb(52, 55, 52, 48), UiTheme.BorderMediumBrush.Color);
-            Assert.AreEqual(Color.FromArgb(82, 55, 52, 48), UiTheme.BorderStrongBrush.Color);
-            Assert.AreEqual(Color.FromArgb(8, 55, 52, 48), UiTheme.GhostBrush.Color);
-            Assert.AreEqual(Color.FromArgb(17, 55, 52, 48), UiTheme.GhostHoverBrush.Color);
-            Assert.AreEqual(Color.FromArgb(28, 55, 52, 48), UiTheme.GhostPressedBrush.Color);
+            Assert.AreEqual(Color.FromArgb(14, 61, 73, 89), UiTheme.DisabledBackgroundBrush.Color);
+            Assert.AreEqual(Color.FromArgb(32, 61, 73, 89), UiTheme.BorderSubtleBrush.Color);
+            Assert.AreEqual(Color.FromArgb(64, 61, 73, 89), UiTheme.BorderMediumBrush.Color);
+            Assert.AreEqual(Color.FromArgb(160, 61, 73, 89), UiTheme.BorderStrongBrush.Color);
+            Assert.AreEqual(Color.FromArgb(8, 61, 73, 89), UiTheme.GhostBrush.Color);
+            Assert.AreEqual(Color.FromArgb(20, 61, 73, 89), UiTheme.GhostHoverBrush.Color);
+            Assert.AreEqual(Color.FromArgb(32, 61, 73, 89), UiTheme.GhostPressedBrush.Color);
         }
         finally
         {
@@ -107,7 +107,7 @@ public sealed class UiThemeTokenTests
     public void SharedMetricsMatchTheApprovedDesktopContract()
     {
         CollectionAssert.AreEqual(
-            new[] { 36d, 32d, 44d, 8d, 12d, 9d },
+            new[] { 32d, 32d, 32d, 4d, 6d, 4d },
             new[]
             {
                 UiTheme.ControlHeight, UiTheme.IconButtonSize, UiTheme.PrimaryButtonHeight,

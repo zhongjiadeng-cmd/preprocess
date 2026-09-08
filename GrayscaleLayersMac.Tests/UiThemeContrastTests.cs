@@ -44,7 +44,7 @@ public sealed class UiThemeContrastTests
                 "焦点环与卡片背景应达到非文字控件对比度");
             Assert.IsGreaterThanOrEqualTo(
                 3.0,
-                Contrast(UiTheme.BorderStrongColor, UiTheme.SunkenColor),
+                Contrast(CompositeOver(UiTheme.BorderStrongColor, UiTheme.SunkenColor), UiTheme.SunkenColor),
                 "强输入边界与下沉表面应达到非文字控件对比度");
         }
         finally
@@ -79,6 +79,13 @@ public sealed class UiThemeContrastTests
         var lighter = Math.Max(Luminance(first), Luminance(second));
         var darker = Math.Min(Luminance(first), Luminance(second));
         return (lighter + 0.05) / (darker + 0.05);
+    }
+
+    private static Color CompositeOver(Color foreground, Color background)
+    {
+        var alpha = foreground.A / 255d;
+        byte Mix(byte front, byte back) => (byte)Math.Round(front * alpha + back * (1 - alpha));
+        return Color.FromRgb(Mix(foreground.R, background.R), Mix(foreground.G, background.G), Mix(foreground.B, background.B));
     }
 
     private static double Luminance(Color color) =>

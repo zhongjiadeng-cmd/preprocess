@@ -52,7 +52,7 @@ internal sealed class InlineProgress<T>(Action<T> report) : IProgress<T>
 
 public sealed class MainWindow : Window
 {
-    internal const double AppHeaderHeight = 64;
+    internal const double AppHeaderHeight = 48;
     internal static readonly bool AppExtendsIntoWindowDecorations = true;
     internal static readonly SystemDecorations AppSystemDecorations = SystemDecorations.Full;
     internal static readonly ExtendClientAreaChromeHints AppChromeHints =
@@ -308,6 +308,7 @@ public sealed class MainWindow : Window
         MinWidth = 1080;
         MinHeight = 720;
         FontFamily = UiTheme.UiFont;
+        FontSize = 12.5;
         Background = UiTheme.RootBrush;
         WindowStartupLocation = WindowStartupLocation.CenterScreen;
         _pipelinePreviewController = new TexturePreviewController(
@@ -637,7 +638,7 @@ public sealed class MainWindow : Window
             _pipelinePmtWorkflowInspector,
             out _pipelineSharedPreview);
         ConfigurePipelineDxfHost();
-        var pipelineContent = (Grid)MakeWorkspace(
+        var pipelineContent = MakeWorkspace(
             pipelineInspector,
             pipelinePreviewPanel,
             _pipelineLogBox,
@@ -666,11 +667,6 @@ public sealed class MainWindow : Window
 
         var headerTools = new Border
         {
-            Padding = new Thickness(4),
-            CornerRadius = UiTheme.SegmentRadius,
-            Background = UiTheme.CardBrush,
-            BorderBrush = UiTheme.BorderSubtleBrush,
-            BorderThickness = new Thickness(1),
             VerticalAlignment = VerticalAlignment.Center,
             Child = new StackPanel
             {
@@ -684,14 +680,14 @@ public sealed class MainWindow : Window
         {
             Background = Brushes.Transparent,
             ColumnDefinitions = new ColumnDefinitions("Auto,*"),
-            ColumnSpacing = 12,
+            ColumnSpacing = 10,
             Children =
             {
                 Place(new Border
                 {
-                    Width = 38,
-                    Height = 38,
-                    Padding = new Thickness(6),
+                    Width = 28,
+                    Height = 28,
+                    Padding = new Thickness(2),
                     CornerRadius = UiTheme.SegmentRadius,
                     Background = UiTheme.CardBrush,
                     BorderBrush = UiTheme.BorderSubtleBrush,
@@ -702,29 +698,31 @@ public sealed class MainWindow : Window
                         Source = new Bitmap(
                             AssetLoader.Open(
                                 new Uri("avares://GrayscaleLayersMac/Assets/AppIcon.png"))),
-                        Width = 26,
-                        Height = 26
+                        Width = 24,
+                        Height = 24
                     }
                 }, 0),
                 Place(new StackPanel
                 {
-                    Spacing = 2,
+                    Orientation = Orientation.Horizontal,
+                    Spacing = 14,
                     VerticalAlignment = VerticalAlignment.Center,
                     Children =
                     {
                         new TextBlock
                         {
-                            Text = "纹理预处理工作台",
-                            FontSize = 15.5,
+                            Text = "PMT 加工工作台",
+                            FontSize = 13,
                             FontWeight = FontWeight.SemiBold,
-                            LetterSpacing = 0.3
+                            Foreground = UiTheme.TextPrimaryBrush,
+                            VerticalAlignment = VerticalAlignment.Center
                         },
                         new TextBlock
                         {
-                            Text = "GRAYSCALE · HATCH · DXF",
-                            FontSize = 9.5,
+                            Text = "纹理 / 路径 / 加工",
+                            FontSize = 11,
                             Foreground = UiTheme.TextFaintBrush,
-                            LetterSpacing = 2.2
+                            VerticalAlignment = VerticalAlignment.Center
                         }
                     }
                 }, 1)
@@ -750,17 +748,34 @@ public sealed class MainWindow : Window
             }
         };
 
+        var workspaceTabs = new TabControl
+        {
+            Background = UiTheme.HeaderBrush,
+            Padding = new Thickness(0),
+            HorizontalContentAlignment = HorizontalAlignment.Stretch,
+            VerticalContentAlignment = VerticalAlignment.Stretch,
+            Items =
+            {
+                new TabItem { Header = UiIcons.Labeled(UiIcon.Nodes, "节点工作流"), Classes = { "workspace-tab" }, Content = new ProcessingWorkspace() },
+                new TabItem { Header = UiIcons.Labeled(UiIcon.Source, "加工流程"), Classes = { "workspace-tab" }, Content = pipelineContent }
+            },
+            SelectedIndex = 0
+        };
+        _pipelineImportButton.IsVisible = false;
+        _pipelineClearButton.IsVisible = false;
+        workspaceTabs.SelectionChanged += (_, _) =>
+        {
+            _pipelineImportButton.IsVisible = workspaceTabs.SelectedIndex == 1;
+            _pipelineClearButton.IsVisible = workspaceTabs.SelectedIndex == 1;
+        };
+
         var root = new Grid
         {
-            RowDefinitions = new RowDefinitions("64,*"),
+            RowDefinitions = new RowDefinitions($"{AppHeaderHeight},*"),
             Children =
             {
                 AtRow(appHeader, 0),
-                AtRow(new Border
-                {
-                    Child = pipelineContent,
-                    Margin = new Thickness(16, 0, 16, 16)
-                }, 1),
+                AtRow(workspaceTabs, 1),
                 _pipelineImportProgress.Root,
                 _pipelineRunProgress.Root
             }
@@ -964,7 +979,7 @@ public sealed class MainWindow : Window
     {
         var content = new Grid
         {
-            RowSpacing = 14,
+            RowSpacing = 10,
             HorizontalAlignment = HorizontalAlignment.Stretch
         };
         foreach (var control in controls)
@@ -1010,7 +1025,7 @@ public sealed class MainWindow : Window
         AutomationProperties.SetName(pmtTab, "显示 PMT 工件布局");
         var previewSegments = new Border
         {
-            Padding = new Thickness(3),
+            Padding = new Thickness(2),
             CornerRadius = UiTheme.SegmentRadius,
             Background = UiTheme.CardBrush,
             BorderBrush = UiTheme.BorderSubtleBrush,
@@ -1018,7 +1033,7 @@ public sealed class MainWindow : Window
             Child = new StackPanel
             {
                 Orientation = Orientation.Horizontal,
-                Spacing = 3,
+                Spacing = 2,
                 Children = { textureTab, dxfTab, pmtTab }
             }
         };
@@ -1063,9 +1078,9 @@ public sealed class MainWindow : Window
 
         return new Grid
         {
-            Margin = new Thickness(0, 12, 12, 12),
+            Margin = new Thickness(10, 8, 2, 8),
             RowDefinitions = new RowDefinitions("Auto,Auto,*"),
-            RowSpacing = 10,
+            RowSpacing = 6,
             Children =
             {
                 AtRow(new Grid
@@ -1812,7 +1827,7 @@ public sealed class MainWindow : Window
             preview.Width = new GridLength(_workspacePreviewRatio, GridUnitType.Star);
             inspector.MinWidth = 460;
             inspector.Width = new GridLength(1 - _workspacePreviewRatio, GridUnitType.Star);
-            splitter.Width = new GridLength(8);
+            splitter.Width = new GridLength(WorkspacePanelLayout.SplitterWidth);
         }
         foreach (var child in grid.Children.Where(child => Grid.GetColumn(child) is 1 or 2))
             child.IsVisible = !collapsed;
@@ -1837,7 +1852,7 @@ public sealed class MainWindow : Window
         return panel;
     }
 
-    private Control MakeWorkspace(
+    private Grid MakeWorkspace(
         StackPanel inspector,
         Control previewPanel,
         TextBox log,
@@ -1848,8 +1863,8 @@ public sealed class MainWindow : Window
         inspector.Children.RemoveAt(inspector.Children.Count - 1);
         var progress = inspector.Children[^1];
         inspector.Children.RemoveAt(inspector.Children.Count - 1);
-        inspector.Margin = new Thickness(18, 16, 18, 16);
-        inspector.Spacing = 14;
+        inspector.Margin = new Thickness(12, 12, 12, 12);
+        inspector.Spacing = 10;
         inspector.HorizontalAlignment = HorizontalAlignment.Stretch;
         var inspectorSurface = new Border
         {
@@ -1872,13 +1887,13 @@ public sealed class MainWindow : Window
                     }, 0),
                     AtRow(new Border
                     {
-                        Padding = new Thickness(18, 14, 18, 18),
+                        Padding = new Thickness(12, 10),
                         BorderBrush = UiTheme.BorderSubtleBrush,
                         BorderThickness = new Thickness(0, 1, 0, 0),
                         Background = UiTheme.BarBrush,
                         Child = new StackPanel
                         {
-                            Spacing = 10,
+                            Spacing = 6,
                             Children = { progress, actionRow }
                         }
                     }, 1)
@@ -1887,7 +1902,7 @@ public sealed class MainWindow : Window
         };
         var logPanel = PersistLogCollapse(UiTheme.LogPanel(log, logTitle), logKey);
         var logSurface = logPanel.Root;
-        logSurface.Margin = new Thickness(0, 0, 12, 0);
+        logSurface.Margin = new Thickness(10, 0, 2, 8);
 
         previewPanel.MinWidth = 420;
 
@@ -1935,14 +1950,14 @@ public sealed class MainWindow : Window
             ColumnDefinitions =
             {
                 previewColumn,
-                new ColumnDefinition(new GridLength(8)),
+                new ColumnDefinition(new GridLength(WorkspacePanelLayout.SplitterWidth)),
                 inspectorColumn
             },
             // 底部日志行自适应：面板自身动画收拢高度，行高跟着走，
             // 多出来的空间由上方 Star 行（预览区）自动吃掉。
             RowDefinitions = new RowDefinitions("*,Auto"),
             ColumnSpacing = 0,
-            RowSpacing = 12,
+            RowSpacing = 0,
             Children =
             {
                 previewPanel,
@@ -3745,25 +3760,37 @@ public sealed class MainWindow : Window
 
     private async Task ShowMessageAsync(string message)
     {
-        var ok = new Button { Content = "确定", HorizontalAlignment = HorizontalAlignment.Center, MinWidth = 90 };
+        var ok = new Button { Content = "确定", HorizontalAlignment = HorizontalAlignment.Right, MinWidth = 90 };
+        UiTheme.ApplyPrimaryStyle(ok);
         var dialog = new Window
         {
             Title = "提示",
             Width = 420,
-            Height = 190,
+            MinHeight = 160,
+            SizeToContent = SizeToContent.Height,
             CanResize = false,
+            Background = UiTheme.PanelBrush,
+            Foreground = UiTheme.TextPrimaryBrush,
+            FontFamily = UiTheme.UiFont,
+            FontSize = 12.5,
             WindowStartupLocation = WindowStartupLocation.CenterOwner,
             Content = new StackPanel
             {
-                Margin = new Thickness(24),
-                Spacing = 22,
+                Margin = new Thickness(20),
+                Spacing = 20,
                 Children =
                 {
-                    new TextBlock { Text = message, TextWrapping = TextWrapping.Wrap },
+                    new ScrollViewer
+                    {
+                        MaxHeight = 400,
+                        Content = new TextBlock { Text = message, TextWrapping = TextWrapping.Wrap }
+                    },
                     ok
                 }
             }
         };
+        dialog.Styles.Add(UiTheme.CreateGlobalStyles());
+        UiTheme.ApplyFluentResourceOverrides(dialog);
         ok.Click += (_, _) => dialog.Close();
         await dialog.ShowDialog(this);
     }

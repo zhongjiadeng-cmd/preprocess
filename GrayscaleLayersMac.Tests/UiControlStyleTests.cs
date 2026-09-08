@@ -2,6 +2,7 @@ using Avalonia;
 using Avalonia.Automation;
 using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
+using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Styling;
 using System.Linq;
@@ -22,6 +23,31 @@ public sealed class UiControlStyleTests
         Assert.IsTrue(button.Classes.Contains("btn-secondary"));
         Assert.AreEqual(UiTheme.ControlHeight, button.MinHeight);
         Assert.AreEqual(UiTheme.ControlRadius, button.CornerRadius);
+    }
+
+    [TestMethod]
+    public void CommandStylesCenterContentWhileMenusKeepTheirExplicitAlignment()
+    {
+        var primary = new Button();
+        var secondary = new Button();
+        var quiet = new Button();
+        var icon = new Button();
+        var ghost = new Button();
+        var menu = new Button { HorizontalContentAlignment = HorizontalAlignment.Left };
+        UiTheme.ApplyPrimaryStyle(primary);
+        UiTheme.ApplySecondaryStyle(secondary);
+        UiTheme.ApplyQuietStyle(quiet);
+        UiTheme.ApplyIconStyle(icon, "示例");
+        UiTheme.ApplyGhostStyle(ghost);
+        UiTheme.ApplyQuietStyle(menu);
+
+        foreach (var button in new[] { primary, secondary, quiet, icon, ghost })
+        {
+            Assert.AreEqual(HorizontalAlignment.Center, button.HorizontalContentAlignment);
+            Assert.AreEqual(VerticalAlignment.Center, button.VerticalContentAlignment);
+        }
+        Assert.AreEqual(HorizontalAlignment.Left, menu.HorizontalContentAlignment);
+        Assert.AreEqual(VerticalAlignment.Center, menu.VerticalContentAlignment);
     }
 
     [TestMethod]

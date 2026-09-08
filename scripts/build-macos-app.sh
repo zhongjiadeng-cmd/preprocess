@@ -42,7 +42,7 @@ trap cleanup EXIT
 [[ -s "$icon_source" ]] || { echo "源图标不存在：$icon_source" >&2; exit 1; }
 [[ -s "$plist_source" ]] || { echo "Info.plist 不存在：$plist_source" >&2; exit 1; }
 
-dotnet publish "$project_path" -c Release -r osx-arm64 -p:NuGetAudit=false \
+dotnet publish "$project_path" -c Release -r osx-arm64 -p:NuGetAudit=false -p:UsedAvaloniaProducts= \
   --self-contained true -o "$publish_path"
 
 mkdir -p "$macos_path" "$resources_path/scripts" "$iconset_path"

@@ -48,6 +48,7 @@ internal static class UiIcons
     {
         Orientation = Orientation.Horizontal,
         Spacing = 7,
+        HorizontalAlignment = HorizontalAlignment.Center,
         VerticalAlignment = VerticalAlignment.Center,
         Children =
         {
@@ -74,10 +75,11 @@ internal static class UiIcons
         {
             Icon = Resolve(kind),
             IconVariant = IconVariant.Regular,
-            IconSize = size,
-            FontSize = pixels,
-            Width = pixels,
-            Height = pixels,
+            // These glyphs ship at 20 px; the visual mask scales them for compact labels.
+            IconSize = kind is UiIcon.Nodes or UiIcon.Source ? IconSize.Size20 : size,
+            FontSize = kind is UiIcon.Nodes or UiIcon.Source ? 20 : pixels,
+            Width = kind is UiIcon.Nodes or UiIcon.Source ? 20 : pixels,
+            Height = kind is UiIcon.Nodes or UiIcon.Source ? 20 : pixels,
             Foreground = Brushes.Black,
             HorizontalAlignment = HorizontalAlignment.Center,
             VerticalAlignment = VerticalAlignment.Center

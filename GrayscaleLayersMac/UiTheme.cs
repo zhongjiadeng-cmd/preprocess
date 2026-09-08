@@ -63,18 +63,18 @@ internal static class UiTheme
         Color IconDisabled);
 
     private static readonly Palette DarkPalette = new(
-        Root: Color.FromRgb(12, 14, 18),
-        Header: Color.FromRgb(18, 21, 27),
-        Panel: Color.FromRgb(22, 25, 32),
-        Card: Color.FromRgb(28, 32, 40),
-        Bar: Color.FromRgb(25, 29, 36),
-        Sunken: Color.FromRgb(8, 10, 14),
-        Popup: Color.FromRgb(32, 36, 45),
-        TextPrimary: Color.FromRgb(242, 244, 248),
-        TextSecondary: Color.FromRgb(177, 185, 198),
-        TextFaint: Color.FromRgb(121, 131, 147),
+        Root: Color.FromRgb(22, 26, 32),
+        Header: Color.FromRgb(31, 36, 43),
+        Panel: Color.FromRgb(35, 40, 48),
+        Card: Color.FromRgb(43, 49, 58),
+        Bar: Color.FromRgb(37, 43, 51),
+        Sunken: Color.FromRgb(17, 21, 27),
+        Popup: Color.FromRgb(45, 52, 61),
+        TextPrimary: Color.FromRgb(232, 237, 243),
+        TextSecondary: Color.FromRgb(178, 189, 202),
+        TextFaint: Color.FromRgb(143, 157, 174),
         TextDisabled: Color.FromRgb(104, 113, 128),
-        Accent: Color.FromRgb(10, 111, 209),
+        Accent: Color.FromRgb(36, 112, 193),
         AccentHover: Color.FromRgb(42, 134, 224),
         AccentPressed: Color.FromRgb(0, 86, 170),
         AccentText: Colors.White,
@@ -90,30 +90,30 @@ internal static class UiTheme
         DisabledBackground: Color.FromArgb(18, 255, 255, 255),
         BorderSubtle: Color.FromArgb(24, 255, 255, 255),
         BorderMedium: Color.FromArgb(48, 255, 255, 255),
-        BorderStrong: Color.FromArgb(78, 255, 255, 255),
+        BorderStrong: Color.FromArgb(102, 255, 255, 255),
         Ghost: Color.FromArgb(9, 255, 255, 255),
         GhostHover: Color.FromArgb(24, 255, 255, 255),
         GhostPressed: Color.FromArgb(38, 255, 255, 255),
-        Handle: Color.FromRgb(35, 40, 50),
-        HandleHover: Color.FromRgb(47, 54, 67),
-        Selection: Color.FromArgb(48, 10, 111, 209),
-        Icon: Color.FromRgb(177, 185, 198),
-        IconHover: Color.FromRgb(242, 244, 248),
+        Handle: Color.FromRgb(43, 49, 58),
+        HandleHover: Color.FromRgb(57, 65, 77),
+        Selection: Color.FromArgb(52, 65, 147, 231),
+        Icon: Color.FromRgb(178, 189, 202),
+        IconHover: Color.FromRgb(232, 237, 243),
         IconPressed: Colors.White,
         IconDisabled: Color.FromRgb(104, 113, 128));
 
     private static readonly Palette LightPalette = new(
-        Root: Color.FromRgb(243, 242, 239),
-        Header: Color.FromRgb(250, 249, 247),
-        Panel: Color.FromRgb(239, 238, 235),
-        Card: Color.FromRgb(253, 252, 251),
-        Bar: Color.FromRgb(247, 246, 243),
-        Sunken: Color.FromRgb(236, 235, 232),
-        Popup: Color.FromRgb(255, 254, 252),
-        TextPrimary: Color.FromRgb(31, 32, 34),
-        TextSecondary: Color.FromRgb(78, 81, 87),
-        TextFaint: Color.FromRgb(110, 113, 119),
-        TextDisabled: Color.FromRgb(140, 142, 146),
+        Root: Color.FromRgb(229, 233, 238),
+        Header: Color.FromRgb(246, 248, 250),
+        Panel: Color.FromRgb(240, 243, 246),
+        Card: Color.FromRgb(252, 253, 254),
+        Bar: Color.FromRgb(238, 241, 245),
+        Sunken: Color.FromRgb(232, 236, 241),
+        Popup: Colors.White,
+        TextPrimary: Color.FromRgb(31, 41, 55),
+        TextSecondary: Color.FromRgb(75, 89, 107),
+        TextFaint: Color.FromRgb(95, 109, 127),
+        TextDisabled: Color.FromRgb(137, 146, 158),
         Accent: Color.FromRgb(0, 101, 204),
         AccentHover: Color.FromRgb(0, 119, 230),
         AccentPressed: Color.FromRgb(0, 78, 164),
@@ -127,20 +127,20 @@ internal static class UiTheme
         Info: Color.FromRgb(0, 93, 184),
         InfoText: Color.FromRgb(0, 78, 155),
         FocusRing: Color.FromRgb(0, 101, 204),
-        DisabledBackground: Color.FromArgb(14, 55, 52, 48),
-        BorderSubtle: Color.FromArgb(28, 55, 52, 48),
-        BorderMedium: Color.FromArgb(52, 55, 52, 48),
-        BorderStrong: Color.FromArgb(82, 55, 52, 48),
-        Ghost: Color.FromArgb(8, 55, 52, 48),
-        GhostHover: Color.FromArgb(17, 55, 52, 48),
-        GhostPressed: Color.FromArgb(28, 55, 52, 48),
-        Handle: Color.FromRgb(247, 246, 243),
-        HandleHover: Color.FromRgb(232, 230, 225),
+        DisabledBackground: Color.FromArgb(14, 61, 73, 89),
+        BorderSubtle: Color.FromArgb(32, 61, 73, 89),
+        BorderMedium: Color.FromArgb(64, 61, 73, 89),
+        BorderStrong: Color.FromArgb(160, 61, 73, 89),
+        Ghost: Color.FromArgb(8, 61, 73, 89),
+        GhostHover: Color.FromArgb(20, 61, 73, 89),
+        GhostPressed: Color.FromArgb(32, 61, 73, 89),
+        Handle: Color.FromRgb(238, 241, 245),
+        HandleHover: Color.FromRgb(222, 228, 235),
         Selection: Color.FromArgb(32, 0, 101, 204),
-        Icon: Color.FromRgb(78, 81, 87),
-        IconHover: Color.FromRgb(31, 32, 34),
+        Icon: Color.FromRgb(75, 89, 107),
+        IconHover: Color.FromRgb(31, 41, 55),
         IconPressed: Colors.White,
-        IconDisabled: Color.FromRgb(140, 142, 146));
+        IconDisabled: Color.FromRgb(137, 146, 158));
 
     public static AppColorScheme CurrentScheme { get; private set; } = AppColorScheme.Dark;
 
@@ -165,13 +165,13 @@ internal static class UiTheme
     public static Color BorderMediumColor { get; private set; } = DarkPalette.BorderMedium;
     public static Color BorderStrongColor { get; private set; } = DarkPalette.BorderStrong;
 
-    // ---- 圆角 ----
-    public const double ControlHeight = 36;
+    // ---- 紧凑桌面控件：同一高度与小圆角贯穿节点、加工流程和弹出面板 ----
+    public const double ControlHeight = 32;
     public const double IconButtonSize = 32;
-    public const double PrimaryButtonHeight = 44;
-    public static readonly CornerRadius CardRadius = new(12);
-    public static readonly CornerRadius ControlRadius = new(8);
-    public static readonly CornerRadius SegmentRadius = new(9);
+    public const double PrimaryButtonHeight = 32;
+    public static readonly CornerRadius CardRadius = new(6);
+    public static readonly CornerRadius ControlRadius = new(4);
+    public static readonly CornerRadius SegmentRadius = new(4);
 
     // ---- 画刷 ----
     public static readonly SolidColorBrush RootBrush = new(RootColor);
@@ -307,6 +307,26 @@ internal static class UiTheme
     public static Styles CreateGlobalStyles()
     {
         var styles = new Styles();
+
+        var buttonContent = new Style(x => x.OfType<Button>());
+        buttonContent.Setters.Add(new Setter(Button.HorizontalContentAlignmentProperty, HorizontalAlignment.Center));
+        buttonContent.Setters.Add(new Setter(Button.VerticalContentAlignmentProperty, VerticalAlignment.Center));
+        styles.Add(buttonContent);
+
+        // 工作区导航与内容采用桌面应用的紧凑标签，不继承 Fluent 的大标题尺寸。
+        var workspaceTab = new Style(x => x.OfType<TabItem>().Class("workspace-tab"));
+        workspaceTab.Setters.Add(new Setter(TabItem.FontSizeProperty, 12.5d));
+        workspaceTab.Setters.Add(new Setter(TabItem.FontWeightProperty, FontWeight.Medium));
+        workspaceTab.Setters.Add(new Setter(TabItem.MinHeightProperty, 36d));
+        workspaceTab.Setters.Add(new Setter(TabItem.PaddingProperty, new Thickness(16, 6)));
+        workspaceTab.Setters.Add(new Setter(TabItem.ForegroundProperty, TextSecondaryBrush));
+        styles.Add(workspaceTab);
+
+        var workspaceTabSelected = new Style(
+            x => x.OfType<TabItem>().Class("workspace-tab").Class(":selected"));
+        workspaceTabSelected.Setters.Add(new Setter(TabItem.ForegroundProperty, TextPrimaryBrush));
+        workspaceTabSelected.Setters.Add(new Setter(TabItem.FontWeightProperty, FontWeight.SemiBold));
+        styles.Add(workspaceTabSelected);
 
         // ---- 主操作按钮（统一蓝色强调）----
         var primary = new Style(x => x.OfType<Button>().Class("accent"));
@@ -537,8 +557,9 @@ internal static class UiTheme
         previewTab.Setters.Add(new Setter(Button.BorderBrushProperty, BorderMediumBrush));
         previewTab.Setters.Add(new Setter(Button.BorderThicknessProperty, new Thickness(1)));
         previewTab.Setters.Add(new Setter(Button.CornerRadiusProperty, ControlRadius));
-        previewTab.Setters.Add(new Setter(Button.MinHeightProperty, 34d));
-        previewTab.Setters.Add(new Setter(Button.PaddingProperty, new Thickness(14, 5)));
+        previewTab.Setters.Add(new Setter(Button.MinHeightProperty, ControlHeight));
+        previewTab.Setters.Add(new Setter(Button.FontSizeProperty, 12.5d));
+        previewTab.Setters.Add(new Setter(Button.PaddingProperty, new Thickness(12, 4)));
         styles.Add(previewTab);
 
         var previewTabHover = new Style(
@@ -628,7 +649,7 @@ internal static class UiTheme
     public static TextBlock PageTitle(string text) => new()
     {
         Text = text,
-        FontSize = 20,
+        FontSize = 15,
         FontWeight = FontWeight.SemiBold,
         LetterSpacing = 0.2,
         Foreground = TextPrimaryBrush
@@ -638,7 +659,7 @@ internal static class UiTheme
     public static TextBlock PageSubtitle(string text) => new()
     {
         Text = text,
-        FontSize = 12.5,
+        FontSize = 12,
         TextWrapping = TextWrapping.Wrap,
         Foreground = TextSecondaryBrush
     };
@@ -647,9 +668,9 @@ internal static class UiTheme
     public static TextBlock PanelLabel(string text) => new()
     {
         Text = text,
-        FontSize = 11,
+        FontSize = 12,
         FontWeight = FontWeight.SemiBold,
-        LetterSpacing = 1,
+        LetterSpacing = 0.2,
         Foreground = TextSecondaryBrush,
         VerticalAlignment = VerticalAlignment.Center
     };
@@ -658,7 +679,7 @@ internal static class UiTheme
     public static TextBlock FieldLabel(string text) => new()
     {
         Text = text,
-        FontSize = 11.5,
+        FontSize = 12,
         Foreground = TextSecondaryBrush
     };
 
@@ -667,10 +688,11 @@ internal static class UiTheme
     {
         button.Classes.Add("accent");
         button.Height = PrimaryButtonHeight;
-        button.FontSize = 15;
+        button.FontSize = 12.5;
         button.FontWeight = FontWeight.SemiBold;
         button.CornerRadius = ControlRadius;
         button.Foreground = AccentTextBrush;
+        button.Padding = new Thickness(12, 4);
         button.HorizontalContentAlignment = HorizontalAlignment.Center;
         AttachButtonTransitions(button);
     }
@@ -682,13 +704,14 @@ internal static class UiTheme
     public static void ApplyPrimaryStyle(SplitButton button)
     {
         button.Classes.Add("accent");
-        button.Height = 44;
-        button.MinWidth = 150;
-        button.FontSize = 15;
+        button.Height = PrimaryButtonHeight;
+        button.MinWidth = 130;
+        button.FontSize = 12.5;
         button.FontWeight = FontWeight.SemiBold;
         button.CornerRadius = ControlRadius;
         button.Foreground = AccentTextBrush;
         button.HorizontalContentAlignment = HorizontalAlignment.Center;
+        button.VerticalContentAlignment = VerticalAlignment.Center;
 
         button.Resources["SplitButtonBackground"] = AccentBrush;
         button.Resources["SplitButtonBackgroundPointerOver"] = AccentHoverBrush;
@@ -702,7 +725,7 @@ internal static class UiTheme
         button.Resources["SplitButtonBorderBrushPointerOver"] = BorderMediumBrush;
         button.Resources["SplitButtonBorderBrushPressed"] = BorderMediumBrush;
         button.Resources["SplitButtonBorderBrushDisabled"] = BorderSubtleBrush;
-        button.Resources["SplitButtonMinHeight"] = 44d;
+        button.Resources["SplitButtonMinHeight"] = PrimaryButtonHeight;
         button.Resources["SplitButtonSecondaryButtonSize"] = 40d;
         button.Resources["SplitButtonSeparatorWidth"] = 1d;
 
@@ -728,11 +751,11 @@ internal static class UiTheme
     {
         if (!button.Classes.Contains("btn-ghost"))
             button.Classes.Add("btn-ghost");
-        button.MinHeight = small ? 26 : 34;
-        button.FontSize = small ? 11.5 : 13;
+        button.MinHeight = small ? 28 : ControlHeight;
+        button.FontSize = small ? 12 : 12.5;
         button.FontWeight = small ? FontWeight.Medium : FontWeight.Regular;
-        button.Padding = small ? new Thickness(10, 2, 10, 2) : new Thickness(16, 6, 16, 6);
-        button.CornerRadius = small ? new CornerRadius(6) : ControlRadius;
+        button.Padding = small ? new Thickness(8, 3) : new Thickness(12, 4);
+        button.CornerRadius = ControlRadius;
         AttachButtonTransitions(button);
     }
 
@@ -742,9 +765,9 @@ internal static class UiTheme
         if (!button.Classes.Contains("btn-secondary"))
             button.Classes.Add("btn-secondary");
         button.MinHeight = small ? IconButtonSize : ControlHeight;
-        button.FontSize = small ? 11.5 : 13;
+        button.FontSize = small ? 12 : 12.5;
         button.FontWeight = FontWeight.Medium;
-        button.Padding = small ? new Thickness(10, 3) : new Thickness(14, 6);
+        button.Padding = small ? new Thickness(8, 3) : new Thickness(10, 4);
         button.CornerRadius = ControlRadius;
         AttachButtonTransitions(button);
     }
@@ -755,9 +778,9 @@ internal static class UiTheme
         if (!button.Classes.Contains("btn-quiet"))
             button.Classes.Add("btn-quiet");
         button.MinHeight = small ? IconButtonSize : ControlHeight;
-        button.FontSize = small ? 11.5 : 13;
+        button.FontSize = small ? 12 : 12.5;
         button.FontWeight = FontWeight.Medium;
-        button.Padding = small ? new Thickness(9, 3) : new Thickness(12, 6);
+        button.Padding = small ? new Thickness(8, 3) : new Thickness(10, 4);
         button.CornerRadius = ControlRadius;
         AttachButtonTransitions(button);
     }
@@ -784,15 +807,18 @@ internal static class UiTheme
             control.Classes.Add("input-control");
         control.MinHeight = ControlHeight;
         if (control is TemplatedControl templated)
+        {
             templated.CornerRadius = ControlRadius;
+            templated.FontSize = 12.5;
+        }
         if (control is TextBox { IsReadOnly: true } && !control.Classes.Contains("input-readonly"))
             control.Classes.Add("input-readonly");
         if (control is TextBox textBox)
-            textBox.Padding = new Thickness(10, 6);
+            textBox.Padding = new Thickness(8, 4);
         else if (control is NumericUpDown numberBox)
-            numberBox.Padding = new Thickness(6, 5);
+            numberBox.Padding = new Thickness(6, 4);
         else if (control is ComboBox comboBox)
-            comboBox.Padding = new Thickness(10, 5);
+            comboBox.Padding = new Thickness(8, 4);
     }
 
     /// <summary>显式切换输入错误状态，供校验逻辑复用，不改变字段值或绑定。</summary>
@@ -825,6 +851,8 @@ internal static class UiTheme
             tab.Classes.Add("preview-tab");
         tab.MinHeight = ControlHeight;
         tab.CornerRadius = ControlRadius;
+        tab.HorizontalContentAlignment = HorizontalAlignment.Center;
+        tab.VerticalContentAlignment = VerticalAlignment.Center;
     }
 
     /// <summary>把幽灵按钮标记为危险操作（悬停泛红），用于"取消"。</summary>
@@ -837,6 +865,11 @@ internal static class UiTheme
     /// <summary>按钮状态色的过渡动画；把手等自定义按钮也复用这一套。</summary>
     internal static void AttachButtonTransitions(Button button)
     {
+        // 保留菜单项等显式指定的左对齐，普通命令的内容则在命中区中央对齐。
+        if (!button.IsSet(Button.HorizontalContentAlignmentProperty))
+            button.HorizontalContentAlignment = HorizontalAlignment.Center;
+        if (!button.IsSet(Button.VerticalContentAlignmentProperty))
+            button.VerticalContentAlignment = VerticalAlignment.Center;
         var duration = MotionPreferences.ColorDuration(HoverDuration);
         button.Transitions = new Transitions
         {
@@ -865,11 +898,11 @@ internal static class UiTheme
         VerticalAlignment = VerticalAlignment.Center
     };
 
-    /// <summary>头部右侧的小徽章（胶囊描边）。</summary>
+    /// <summary>紧凑状态标记，使用与表单一致的小圆角。</summary>
     public static Border Badge(string text) => new()
     {
-        Padding = new Thickness(10, 4),
-        CornerRadius = new CornerRadius(999),
+        Padding = new Thickness(6, 2),
+        CornerRadius = ControlRadius,
         BorderBrush = BorderMediumBrush,
         BorderThickness = new Thickness(1),
         Background = Brushes.Transparent,
@@ -944,7 +977,7 @@ internal static class UiTheme
             },
             IsExpanded = true,
             Background = Brushes.Transparent,
-            Padding = new Thickness(16, 12, 16, 16),
+            Padding = new Thickness(12, 8, 12, 12),
             HorizontalAlignment = HorizontalAlignment.Stretch,
             HorizontalContentAlignment = HorizontalAlignment.Stretch,
             Content = content
@@ -991,34 +1024,39 @@ internal static class UiTheme
     {
         var control = new GridSplitter
         {
-            Background = Brushes.Transparent,
+            Background = BorderSubtleBrush,
+            Width = WorkspacePanelLayout.SplitterWidth,
+            MinWidth = 0,
+            MaxWidth = WorkspacePanelLayout.SplitterWidth,
             Cursor = new Cursor(StandardCursorType.SizeWestEast),
             ResizeDirection = GridResizeDirection.Columns,
             ResizeBehavior = GridResizeBehavior.PreviousAndNext,
             ShowsPreview = false,
             DragIncrement = 1,
             KeyboardIncrement = 8,
+            Focusable = true,
             HorizontalAlignment = HorizontalAlignment.Stretch,
             VerticalAlignment = VerticalAlignment.Stretch
         };
-        AutomationProperties.SetName(control, "调整预览区与参数区宽度");
+        AutomationProperties.SetName(control, "调整工作区与参数区宽度");
+        ToolTip.SetTip(control, "拖动调整宽度 · 方向键微调");
 
         var isDragging = false;
-        control.PointerEntered += (_, _) => control.Background = AccentBrush;
-        control.PointerExited += (_, _) =>
-        {
-            if (!isDragging)
-                control.Background = Brushes.Transparent;
-        };
+        void UpdateAppearance() => control.Background = isDragging || control.IsPointerOver || control.IsFocused
+            ? AccentBrush : BorderSubtleBrush;
+        control.PointerEntered += (_, _) => UpdateAppearance();
+        control.PointerExited += (_, _) => UpdateAppearance();
+        control.GotFocus += (_, _) => UpdateAppearance();
+        control.LostFocus += (_, _) => UpdateAppearance();
         control.DragStarted += (_, _) =>
         {
             isDragging = true;
-            control.Background = AccentBrush;
+            UpdateAppearance();
         };
         control.DragCompleted += (_, _) =>
         {
             isDragging = false;
-            control.Background = control.IsPointerOver ? AccentBrush : Brushes.Transparent;
+            UpdateAppearance();
         };
 
         return control;
