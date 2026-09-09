@@ -1,6 +1,6 @@
 # 纹理预处理工具（macOS）
 
-应用现在默认打开 **PMT 节点工作流**：在同一无限画布上连接 TIFF、灰度分层、DXF Hatch、Machine 和 PMT，支持按连接选择部分层、从单个 PMT 创建矩阵工件，以及复制、粘贴、撤销和重做。详见 [节点工作流使用说明](../docs/pmt-processing-workflow.md)。下文介绍保留在“原有加工流程”标签中的工具。
+应用现在默认打开 **PMT 节点工作流**：在同一无限画布上连接 TIFF、灰度分层、DXF Hatch、Machine 和 PMT，支持按连接选择部分层、从单个 PMT 创建矩阵工件，以及复制、粘贴、撤销和重做。详见 [节点工作流使用说明](../../docs/pmt-processing-workflow.md)。下文介绍保留在“原有加工流程”标签中的工具。
 
 这是一个 C# / Avalonia 图形界面，包含主流程与两个独立工具页：
 
@@ -30,7 +30,7 @@ Hatch DXF 默认被划分为 9 个面积受约束的 Voronoi 加工块，内部�
 命令行可通过 `--blocks`、`--min-block-area`、`--max-block-area`、`--boundary-blur`、`--boundary-correlation` 和 `--seed` 调整分块。使用 `--blocks 0` 可关闭分块并恢复单幅面输出。例如：
 
 ```bash
-python3 texture_to_hatch_dxf.py input.tiff output.dxf \
+python3 src/python/texture_to_hatch_dxf.py input.tiff output.dxf \
   --size 100 --blocks 9 \
   --min-block-area 500 --max-block-area 1800 \
   --boundary-blur 3 --boundary-correlation 1 --seed 12345
@@ -84,7 +84,7 @@ LaserPMT_YYYYMMDD_HHMMSS/
 ## 开发运行
 
 ```bash
-cd GrayscaleLayersMac
+cd src/GrayscaleLayersMac
 dotnet run
 ```
 

@@ -4,7 +4,7 @@
     <ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable>
   </PropertyGroup>
   <ItemGroup>
-    <ProjectReference Include="../../GrayscaleLayersMac/GrayscaleLayersMac.csproj" />
+    <ProjectReference Include="../../src/GrayscaleLayersMac/GrayscaleLayersMac.csproj" />
     <PackageReference Include="Avalonia.Headless" Version="11.3.18" />
   </ItemGroup>
 </Project>

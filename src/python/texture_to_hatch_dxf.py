@@ -1377,8 +1377,15 @@ def _axis_tokens(source: np.ndarray, axis: int) -> np.ndarray:
         if axis == 1
         else np.packbits(source, axis=1)
     )
-    _, tokens = np.unique(packed, axis=0, return_inverse=True)
-    return tokens
+    # Equality of whole packed rows is all period detection needs. Treat each
+    # row as one byte record instead of sorting hundreds of structured fields.
+    # Use void (not strings) so trailing zero bytes remain part of the record.
+    rows = np.ascontiguousarray(packed)
+    if rows.shape[1] == 0:
+        return np.zeros(rows.shape[0], dtype=np.intp)
+    records = rows.view(np.dtype((np.void, rows.shape[1]))).reshape(-1)
+    _, tokens = np.unique(records, return_inverse=True)
+    return tokens.reshape(-1)
 
 
 def _detect_axis_period(
@@ -1395,13 +1402,12 @@ def _detect_axis_period(
 
     similarities: list[float] = []
     for period in range(2, length // 2 + 1):
-        similarities.append(float(np.mean(tokens[period:] == tokens[:-period])))
-
-    # 优先选择完全匹配的最小周期，避免稀疏纹理在很小位移下因大量
-    # 空白列/行相同而被误判为更小周期。
-    for index, similarity in enumerate(similarities):
+        similarity = float(np.mean(tokens[period:] == tokens[:-period]))
+        similarities.append(similarity)
+        # Candidates are ascending: later periods cannot replace the first
+        # exact match. Approximate peaks still wait until all candidates finish.
         if similarity >= 1.0 - 1e-12:
-            return index + 2, similarity
+            return period, similarity
 
     # 对含少量噪声或压缩误差的图片，接受明显的局部匹配峰值。
     for index, similarity in enumerate(similarities):
@@ -1423,16 +1429,25 @@ def _best_seam(source: np.ndarray, period: int, axis: int) -> tuple[int, float]:
     best_phase = 0
     best_score = math.inf
 
+    # Count each adjacent boundary once, in bounded slices. The old phase-wise
+    # advanced indexing copied large, strided image arrays for every phase.
+    boundary_counts = np.zeros(length, dtype=np.int64)
+    for start in range(1, length, 256):
+        end = min(length, start + 256)
+        if axis == 1:
+            boundary_counts[start:end] = np.count_nonzero(
+                source[:, start:end] & source[:, start - 1:end - 1], axis=0)
+        else:
+            boundary_counts[start:end] = np.count_nonzero(
+                source[start:end, :] & source[start - 1:end - 1, :], axis=1)
+    perpendicular_length = source.shape[1 - axis]
+
     for phase in range(period):
         positions = np.arange(phase, length, period)
         positions = positions[(positions > 0) & (positions < length)]
         if positions.size == 0:
             continue
-        if axis == 1:
-            boundary = source[:, positions] & source[:, positions - 1]
-        else:
-            boundary = source[positions, :] & source[positions - 1, :]
-        score = float(np.mean(boundary))
+        score = float(boundary_counts[positions].sum()) / (positions.size * perpendicular_length)
         if score < best_score:
             best_phase, best_score = phase, score
 
@@ -2542,12 +2557,13 @@ def convert_texture_to_dxf(
     print(f"输出文件: {output_path}")
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="裁剪/拼接单层黑白纹理，并将黑区转换为 DXF 水平阴影线。"
     )
     parser.add_argument("input", type=Path, help="输入单层 TIFF/PNG")
     parser.add_argument("output", type=Path, nargs="?", help="输出 DXF")
+    parser.add_argument("--batch", action="store_true", help="将输入路径作为多层命令参数 JSON，依次处理")
     parser.add_argument(
         "--inspect-image",
         action="store_true",
@@ -2666,7 +2682,12 @@ def parse_args() -> argparse.Namespace:
         default=80,
         help="满足块面积约束时最多尝试的随机布局数量，默认 80",
     )
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
+
+    if args.batch:
+        if args.output is not None or args.inspect_image or args.include_preview:
+            parser.error("批处理模式只接受输入 JSON 路径")
+        return args
 
     if args.include_preview and not args.inspect_image:
         parser.error("--include-preview 只能与 --inspect-image 一起使用")
@@ -2696,8 +2717,31 @@ def parse_args() -> argparse.Namespace:
     return args
 
 
-def main() -> None:
-    args = parse_args()
+def main(argv: list[str] | None = None) -> None:
+    args = parse_args(argv)
+    if args.batch:
+        with args.input.open(encoding="utf-8") as stream:
+            request = stream.read(2_000_001)
+        if len(request) > 2_000_000:
+            raise ValueError("批处理请求过大")
+        jobs = json.loads(request)
+        if (not isinstance(jobs, list) or not 1 <= len(jobs) <= 255 or
+                any(not isinstance(job, list) or not job or
+                    any(not isinstance(arg, str) for arg in job) for job in jobs)):
+            raise ValueError("批处理请求必须包含 1–255 组命令参数")
+        # Parse every job before publishing any output. Reuse the exact CLI
+        # defaults, seed and validation used by individual layer generation.
+        parsed = [parse_args(job) for job in jobs]
+        if any(job.batch or job.inspect_image for job in parsed):
+            raise ValueError("批处理仅支持转换任务，不能嵌套批处理")
+        for index, job in enumerate(parsed, 1):
+            print(f"Hatch [{index}/{len(parsed)}]", flush=True)
+            _run_conversion(job)
+        return
+    _run_conversion(args)
+
+
+def _run_conversion(args: argparse.Namespace) -> None:
     if args.inspect_image:
         print(json.dumps(
             inspect_texture_image(args.input, args.include_preview),

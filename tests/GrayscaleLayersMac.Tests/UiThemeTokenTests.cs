@@ -156,11 +156,11 @@ public sealed class UiThemeTokenTests
         var root = FindRepositoryRoot();
         foreach (var file in new[] { "MainWindow.cs", "GrayscaleLayerPreviewControl.cs", "App.cs" })
         {
-            var source = File.ReadAllText(Path.Combine(root, "GrayscaleLayersMac", file));
+            var source = File.ReadAllText(Path.Combine(root, "src", "GrayscaleLayersMac", file));
             Assert.DoesNotContain("Brushes.OrangeRed", source, file);
         }
 
-        var appSource = File.ReadAllText(Path.Combine(root, "GrayscaleLayersMac", "App.cs"));
+        var appSource = File.ReadAllText(Path.Combine(root, "src", "GrayscaleLayersMac", "App.cs"));
         Assert.DoesNotContain("Color.FromRgb", appSource);
     }
 
@@ -169,7 +169,7 @@ public sealed class UiThemeTokenTests
         var directory = new DirectoryInfo(AppContext.BaseDirectory);
         while (directory is not null)
         {
-            if (Directory.Exists(Path.Combine(directory.FullName, "GrayscaleLayersMac")))
+            if (Directory.Exists(Path.Combine(directory.FullName, "src", "GrayscaleLayersMac")))
                 return directory.FullName;
             directory = directory.Parent;
         }

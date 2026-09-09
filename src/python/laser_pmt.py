@@ -1446,6 +1446,8 @@ def generate_laser_pmt(request: LaserPmtRequest | LaserPmtWorkflowRequest) -> Pa
 
         patch_ranges: list[tuple[tuple[int, int], ...]] = []
         patch_groups: list[tuple[np.ndarray, ...]] = []
+        # Run-local identity is safe: each loaded base is retained and immutable.
+        geometry_groups: dict[tuple[int, float, float, int], int] = {}
         all_targets: list[tuple[float, float, float]] = []
         all_patch_references: list[tuple[int, int]] = []
         all_laser_indices: list[int] = []
@@ -1465,6 +1467,8 @@ def generate_laser_pmt(request: LaserPmtRequest | LaserPmtWorkflowRequest) -> Pa
             all_laser_params.append(deepcopy(laser_params))
             generated_group: list[np.ndarray] = []
             local_targets: list[tuple[float, float, float]] = []
+            geometry_key = None
+            cached_group_index = None
             if workflow_target is not None and workflow_target.kind == "timestamp":
                 patch = laser_timestamp.generate_timestamp_patch(
                     workflow_target.timestamp_text,
@@ -1478,14 +1482,17 @@ def generate_laser_pmt(request: LaserPmtRequest | LaserPmtWorkflowRequest) -> Pa
             else:
                 scale_x = workflow_target.scale_x if workflow_target is not None else 1.0
                 scale_y = workflow_target.scale_y if workflow_target is not None else 1.0
+                geometry_key = (id(target_base), scale_x, scale_y, layer_feed)
+                cached_group_index = geometry_groups.get(geometry_key)
                 for base_patch in target_base.patches:
-                    patch = base_patch.array.copy()
-                    patch[:, [0, 3]] *= np.float32(scale_x)
-                    patch[:, [1, 4]] *= np.float32(scale_y)
                     z = np.float32(-base_patch.layer_index * layer_feed / 1000)
-                    patch[:, 2] = z
-                    patch[:, 5] = z
-                    generated_group.append(patch)
+                    if cached_group_index is None:
+                        patch = base_patch.array.copy()
+                        patch[:, [0, 3]] *= np.float32(scale_x)
+                        patch[:, [1, 4]] *= np.float32(scale_y)
+                        patch[:, 2] = z
+                        patch[:, 5] = z
+                        generated_group.append(patch)
                     local_target = (
                         base_patch.center_x * scale_x,
                         base_patch.center_y * scale_y,
@@ -1498,8 +1505,9 @@ def generate_laser_pmt(request: LaserPmtRequest | LaserPmtWorkflowRequest) -> Pa
                         float(z),
                     ))
                     all_laser_indices.append(job_index)
-            group = tuple(generated_group)
-            group_index = next(
+            group = (patch_groups[cached_group_index] if cached_group_index is not None
+                     else tuple(generated_group))
+            group_index = cached_group_index if cached_group_index is not None else next(
                 (
                     index for index, existing in enumerate(patch_groups)
                     if _patch_groups_equal(group, existing)
@@ -1511,6 +1519,8 @@ def generate_laser_pmt(request: LaserPmtRequest | LaserPmtWorkflowRequest) -> Pa
                 patch_groups.append(group)
                 for local_index, patch in enumerate(group):
                     np.save(patches_path / f"{group_index}_{local_index}.npy", patch)
+            if geometry_key is not None:
+                geometry_groups[geometry_key] = group_index
             owned = tuple(
                 (group_index, local_index)
                 for local_index in range(len(group))

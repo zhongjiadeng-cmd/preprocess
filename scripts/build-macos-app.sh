@@ -20,9 +20,9 @@ done
 
 script_dir="$(cd "$(dirname "$0")" && pwd)"
 repo_root="$(cd "$script_dir/.." && pwd)"
-project_path="$repo_root/GrayscaleLayersMac/GrayscaleLayersMac.csproj"
-icon_source="$repo_root/GrayscaleLayersMac/Assets/AppIcon.png"
-plist_source="$repo_root/GrayscaleLayersMac/Packaging/Info.plist"
+project_path="$repo_root/src/GrayscaleLayersMac/GrayscaleLayersMac.csproj"
+icon_source="$repo_root/src/GrayscaleLayersMac/Assets/AppIcon.png"
+plist_source="$repo_root/src/GrayscaleLayersMac/Packaging/Info.plist"
 artifact_root="$repo_root/artifacts/macos-arm64"
 final_app="$artifact_root/灰度图分层工具.app"
 package_tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/grayscale-layers-macos.XXXXXX")"

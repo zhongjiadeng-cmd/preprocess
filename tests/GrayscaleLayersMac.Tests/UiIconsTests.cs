@@ -77,7 +77,7 @@ public sealed class UiIconsTests
     public void TexturePreviewUsesNamedFluentIconButtons()
     {
         var source = File.ReadAllText(Path.Combine(
-            FindRepositoryRoot(), "GrayscaleLayersMac", "GrayscaleLayerPreviewControl.cs"));
+            FindRepositoryRoot(), "src", "GrayscaleLayersMac", "GrayscaleLayerPreviewControl.cs"));
 
         StringAssert.Contains(source, "MakeButton(UiIcon.ZoomOut, \"缩小\"");
         StringAssert.Contains(source, "MakeButton(UiIcon.ZoomIn, \"放大\"");
@@ -108,7 +108,7 @@ public sealed class UiIconsTests
         var directory = new DirectoryInfo(AppContext.BaseDirectory);
         while (directory is not null)
         {
-            if (Directory.Exists(Path.Combine(directory.FullName, "GrayscaleLayersMac")))
+            if (Directory.Exists(Path.Combine(directory.FullName, "src", "GrayscaleLayersMac")))
                 return directory.FullName;
             directory = directory.Parent;
         }

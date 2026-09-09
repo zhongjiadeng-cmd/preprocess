@@ -7,7 +7,7 @@
             "type": "process",
             "args": [
                 "build",
-                "${workspaceFolder}/GrayscaleLayersMac/GrayscaleLayersMac.csproj",
+                "${workspaceFolder}/src/GrayscaleLayersMac/GrayscaleLayersMac.csproj",
                 "/property:GenerateFullPaths=true",
                 "/consoleloggerparameters:NoSummary;ForceNoAlign"
             ],
@@ -19,7 +19,7 @@
             "type": "process",
             "args": [
                 "publish",
-                "${workspaceFolder}/GrayscaleLayersMac/GrayscaleLayersMac.csproj",
+                "${workspaceFolder}/src/GrayscaleLayersMac/GrayscaleLayersMac.csproj",
                 "/property:GenerateFullPaths=true",
                 "/consoleloggerparameters:NoSummary;ForceNoAlign"
             ],
@@ -33,7 +33,7 @@
                 "watch",
                 "run",
                 "--project",
-                "${workspaceFolder}/GrayscaleLayersMac/GrayscaleLayersMac.csproj"
+                "${workspaceFolder}/src/GrayscaleLayersMac/GrayscaleLayersMac.csproj"
             ],
             "problemMatcher": "$msCompile"
         }

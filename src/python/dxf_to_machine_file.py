@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from array import array
 from copy import deepcopy
 import ctypes
 from dataclasses import dataclass
@@ -321,7 +322,7 @@ def _simulate_vendor_machine_cycles(
         delta_z, cursor = _consume_vendor_axis(command, cursor, "Z")
         cursor = _consume_vendor_literal(command, cursor, "F40")
 
-        # Vendor contract: reaching F40 completes motion with the mode active now.
+        # Apply the relative motion block before the separate mode-reset block.
         if absolute_mode:
             raise ValueError("vendor motion must execute in G91 relative mode")
         x += delta_x
@@ -445,44 +446,43 @@ def select_layer_dxf_files(
 
 def read_dxf_lines(path: Path) -> np.ndarray:
     """Read LINE entities from a minimal ASCII DXF file."""
-    raw_lines = path.read_text(encoding="ascii").splitlines()
-    if len(raw_lines) % 2:
-        raise ValueError("DXF contains a truncated group-code/value pair")
+    coordinates = array("d")
 
-    entities: list[dict[int, str]] = []
-    current_entity: dict[int, str] | None = None
-    for index in range(0, len(raw_lines), 2):
-        try:
-            group_code = int(raw_lines[index].strip())
-        except ValueError as exc:
-            raise ValueError("DXF group code must be an integer") from exc
-        value = raw_lines[index + 1]
-        if group_code == 0:
-            if current_entity is not None:
-                entities.append(current_entity)
-            current_entity = {0: value.strip()}
-        elif current_entity is not None:
-            current_entity[group_code] = value.strip()
-    if current_entity is not None:
-        entities.append(current_entity)
-
-    rows: list[list[float]] = []
-    for entity in entities:
+    def append_entity(entity: dict[int, str]) -> None:
         if entity[0] != "LINE":
-            continue
+            return
         if any(code not in entity for code in _LINE_COORDINATE_CODES):
             raise ValueError("LINE entity is missing a required coordinate")
         try:
             row = [float(entity[code]) for code in _LINE_COORDINATE_CODES]
         except ValueError as exc:
             raise ValueError("LINE coordinate must be numeric") from exc
-        if not np.isfinite(row).all():
+        if not all(math.isfinite(value) for value in row):
             raise ValueError("LINE coordinate must be finite")
-        rows.append(row)
+        coordinates.extend(row)
 
-    if not rows:
+    current_entity: dict[int, str] | None = None
+    with path.open(encoding="ascii") as stream:
+        for code_line in stream:
+            value = stream.readline()
+            if value == "":
+                raise ValueError("DXF contains a truncated group-code/value pair")
+            try:
+                group_code = int(code_line.strip())
+            except ValueError as exc:
+                raise ValueError("DXF group code must be an integer") from exc
+            if group_code == 0:
+                if current_entity is not None:
+                    append_entity(current_entity)
+                current_entity = {0: value.strip()}
+            elif current_entity is not None:
+                current_entity[group_code] = value.strip()
+    if current_entity is not None:
+        append_entity(current_entity)
+
+    if not coordinates:
         raise ValueError("DXF contains no LINE entities")
-    return np.array(rows, dtype=np.float64)
+    return np.frombuffer(coordinates, dtype=np.float64).reshape(-1, 6)
 
 
 def _reject_duplicate_json_keys(pairs: list[tuple[str, object]]) -> dict[str, object]:

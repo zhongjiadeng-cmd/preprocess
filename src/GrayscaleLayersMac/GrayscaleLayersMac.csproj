@@ -16,23 +16,23 @@
 
   <ItemGroup>
     <AvaloniaResource Include="Assets/AppIcon.png" />
-    <Content Include="../grayscale_layers.py"
+    <Content Include="../python/grayscale_layers.py"
              Link="grayscale_layers.py"
              CopyToOutputDirectory="PreserveNewest"
              CopyToPublishDirectory="PreserveNewest" />
-    <Content Include="../texture_to_hatch_dxf.py"
+    <Content Include="../python/texture_to_hatch_dxf.py"
              Link="texture_to_hatch_dxf.py"
              CopyToOutputDirectory="PreserveNewest"
              CopyToPublishDirectory="PreserveNewest" />
-    <Content Include="../dxf_to_machine_file.py"
+    <Content Include="../python/dxf_to_machine_file.py"
              Link="dxf_to_machine_file.py"
              CopyToOutputDirectory="PreserveNewest"
              CopyToPublishDirectory="PreserveNewest" />
-    <Content Include="../laser_pmt.py"
+    <Content Include="../python/laser_pmt.py"
              Link="laser_pmt.py"
              CopyToOutputDirectory="PreserveNewest"
              CopyToPublishDirectory="PreserveNewest" />
-    <Content Include="../laser_timestamp.py"
+    <Content Include="../python/laser_timestamp.py"
              Link="laser_timestamp.py"
              CopyToOutputDirectory="PreserveNewest"
              CopyToPublishDirectory="PreserveNewest" />

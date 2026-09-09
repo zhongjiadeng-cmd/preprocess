@@ -76,6 +76,10 @@ public sealed class DxfPreviewControl : Control, IDisposable
         Color.FromRgb(236, 64, 122)
     ];
 
+    private readonly Pen[] _layerPens = LayerColors
+        .Select(color => new Pen(new SolidColorBrush(color), 0.9)).ToArray();
+    private readonly Pen _arrowPen = new(new SolidColorBrush(Color.FromRgb(255, 196, 92)), 1);
+
     public string Summary { get; private set; } = "尚未生成或加载 DXF";
     public int LineCount { get; private set; }
     public bool HasTexture => _textureBitmap is not null;
@@ -511,17 +515,7 @@ public sealed class DxfPreviewControl : Control, IDisposable
         if (_segments.Count == 0)
             return;
 
-        var pens = _segments
-            .Where(segment => !segment.IsBorder)
-            .Select(segment => segment.BlockIndex)
-            .Distinct()
-            .ToDictionary(
-                blockIndex => blockIndex,
-                blockIndex => new Pen(
-                    new SolidColorBrush(LayerColors[blockIndex % LayerColors.Length]),
-                    0.9));
         var borderPen = new Pen(UiTheme.TextSecondaryBrush, 1.2);
-        var arrowPen = new Pen(new SolidColorBrush(Color.FromRgb(255, 196, 92)), 1);
         var lastRenderedScreenY = new Dictionary<int, double>();
         const double minimumRowSpacingPixels = 1.15;
         foreach (var group in _rowGroups)
@@ -550,12 +544,12 @@ public sealed class DxfPreviewControl : Control, IDisposable
                 {
                     var pen = segment.IsBorder
                         ? borderPen
-                        : pens[segment.BlockIndex];
+                        : _layerPens[segment.BlockIndex % _layerPens.Length];
                     context.DrawLine(pen, clippedStart, clippedEnd);
                     if (_overlay.ShouldDrawDirectionArrows && !segment.IsBorder)
                         DrawEndpointDirectionArrows(
                             context,
-                            arrowPen,
+                            _arrowPen,
                             start,
                             end,
                             viewport);

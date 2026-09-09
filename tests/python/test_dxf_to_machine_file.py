@@ -84,6 +84,15 @@ def write_two_layer_block_fixture(dxf_dir: Path) -> list[Path]:
 
 
 class ReadDxfLinesTests(unittest.TestCase):
+    def test_final_entity_without_eof_or_trailing_newline_remains_writable(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "source.dxf"
+            path.write_bytes(b"0\r\nLINE\r\n10\r\n1\r\n20\r\n2\r\n30\r\n3\r\n11\r\n4\r\n21\r\n5\r\n31\r\n6")
+            lines = read_dxf_lines(path)
+        np.testing.assert_array_equal(lines, [[1, 2, 3, 4, 5, 6]])
+        lines[0, 0] = 7
+        self.assertEqual(lines[0, 0], 7)
+
     def test_reads_line_entities_in_source_order_and_preserves_direction(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "source.dxf"
@@ -1280,7 +1289,7 @@ class GenerateMachineFileTests(unittest.TestCase):
                 completed = subprocess.run(
                     [
                         sys.executable,
-                        str(Path(__file__).parents[1] / "dxf_to_machine_file.py"),
+                        str(Path(__file__).parents[2] / "src" / "python" / "dxf_to_machine_file.py"),
                         str(dxf_dir),
                         "fifo-job",
                         "--block-center-positioning",
@@ -1834,8 +1843,8 @@ class ValidateMachineDirectoryTests(unittest.TestCase):
 class AvaloniaLayerStepSourceContractTests(unittest.TestCase):
     def test_layer_step_control_and_preflight_require_whole_micrometres(self) -> None:
         source = (
-            Path(__file__).resolve().parents[1]
-            / "GrayscaleLayersMac"
+            Path(__file__).resolve().parents[2]
+            / "src" / "GrayscaleLayersMac"
             / "MainWindow.cs"
         ).read_text(encoding="utf-8")
         field_start = source.index("private readonly NumericUpDown _pipelineLayerStepBox")
@@ -1858,8 +1867,8 @@ class AvaloniaLayerStepSourceContractTests(unittest.TestCase):
 
     def test_cancellation_leaves_machine_artifacts_for_owner_safe_recovery(self) -> None:
         source = (
-            Path(__file__).resolve().parents[1]
-            / "GrayscaleLayersMac"
+            Path(__file__).resolve().parents[2]
+            / "src" / "GrayscaleLayersMac"
             / "MainWindow.cs"
         ).read_text(encoding="utf-8")
         catch_start = source.index("catch (OperationCanceledException)")
@@ -1886,7 +1895,7 @@ class CliTests(unittest.TestCase):
             completed = subprocess.run(
                 [
                     sys.executable,
-                    str(Path(__file__).parents[1] / "dxf_to_machine_file.py"),
+                    str(Path(__file__).parents[2] / "src" / "python" / "dxf_to_machine_file.py"),
                     str(dxf_dir), "cli-symlink",
                 ],
                 text=True,
@@ -1912,7 +1921,7 @@ class CliTests(unittest.TestCase):
             completed = subprocess.run(
                 [
                     sys.executable,
-                    str(Path(__file__).parents[1] / "dxf_to_machine_file.py"),
+                    str(Path(__file__).parents[2] / "src" / "python" / "dxf_to_machine_file.py"),
                     str(dxf_dir), "cli-manifest",
                     "--layer-dxf", str(second),
                     "--layer-dxf", str(first),
@@ -1936,7 +1945,7 @@ class CliTests(unittest.TestCase):
             write_dxf(dxf_dir / "layer_1_a.dxf", [(1, 2, 3, 4, 5, 6)])
             write_dxf(dxf_dir / "layer_2_b.dxf", [(2, 3, 4, 5, 6, 7), (3, 4, 5, 6, 7, 8)])
             completed = subprocess.run(
-                [sys.executable, str(Path(__file__).parents[1] / "dxf_to_machine_file.py"),
+                [sys.executable, str(Path(__file__).parents[2] / "src" / "python" / "dxf_to_machine_file.py"),
                  str(dxf_dir), "cli-job",
                  "--owner-token", "cli_owner-01",
                  "--layer-step-um", "5.0",
@@ -2011,7 +2020,7 @@ class CliTests(unittest.TestCase):
                 completed = subprocess.run(
                     [
                         sys.executable,
-                        str(Path(__file__).parents[1] / "dxf_to_machine_file.py"),
+                        str(Path(__file__).parents[2] / "src" / "python" / "dxf_to_machine_file.py"),
                         str(dxf_dir),
                         "cli-invalid-step",
                         "--layer-step-um",
@@ -2039,7 +2048,7 @@ class CliTests(unittest.TestCase):
             completed = subprocess.run(
                 [
                     sys.executable,
-                    str(Path(__file__).parents[1] / "dxf_to_machine_file.py"),
+                    str(Path(__file__).parents[2] / "src" / "python" / "dxf_to_machine_file.py"),
                     str(dxf_dir),
                     "cli-max-step",
                     "--layer-step-um",
@@ -2067,7 +2076,7 @@ class CliTests(unittest.TestCase):
             completed = subprocess.run(
                 [
                     sys.executable,
-                    str(Path(__file__).parents[1] / "dxf_to_machine_file.py"),
+                    str(Path(__file__).parents[2] / "src" / "python" / "dxf_to_machine_file.py"),
                     str(dxf_dir),
                     "cli-block-job",
                     "--layer-step-um", "6",
@@ -2096,7 +2105,7 @@ class CliTests(unittest.TestCase):
             completed = subprocess.run(
                 [
                     sys.executable,
-                    str(Path(__file__).parents[1] / "dxf_to_machine_file.py"),
+                    str(Path(__file__).parents[2] / "src" / "python" / "dxf_to_machine_file.py"),
                     str(dxf_dir),
                     "cli-block-job",
                     "--block-center-positioning",

@@ -3,13 +3,13 @@ from pathlib import Path
 
 
 SOURCE = (
-    Path(__file__).resolve().parents[1]
-    / "GrayscaleLayersMac"
+    Path(__file__).resolve().parents[2]
+    / "src" / "GrayscaleLayersMac"
     / "MainWindow.cs"
 ).read_text(encoding="utf-8")
 THEME_SOURCE = (
-    Path(__file__).resolve().parents[1]
-    / "GrayscaleLayersMac"
+    Path(__file__).resolve().parents[2]
+    / "src" / "GrayscaleLayersMac"
     / "UiTheme.cs"
 ).read_text(encoding="utf-8")
 
@@ -92,8 +92,8 @@ class PipelineIndependentStepsTests(unittest.TestCase):
 
     def test_laser_pmt_request_is_written_as_utf8_without_bom(self):
         save_source = (
-            Path(__file__).resolve().parents[1]
-            / "GrayscaleLayersMac"
+            Path(__file__).resolve().parents[2]
+            / "src" / "GrayscaleLayersMac"
             / "PmtSaveService.cs"
         ).read_text(encoding="utf-8")
         self.assertIn(

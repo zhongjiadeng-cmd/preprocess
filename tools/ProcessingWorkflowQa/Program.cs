@@ -166,7 +166,7 @@ Capture("processing-workflow-compact");
 var resultsRoot = Path.GetFullPath("加工文件");
 if (Directory.Exists(resultsRoot))
 {
-    var executor = new ProcessingExecutor(new PythonProcessingRunner("python3", Directory.GetCurrentDirectory()));
+    var executor = new ProcessingExecutor(new PythonProcessingRunner("python3", AppContext.BaseDirectory));
     var texturePreview = Directory.EnumerateDirectories(resultsRoot, "Texture_*").Order(StringComparer.Ordinal)
         .Select(path => Path.Combine(path, "texture.png")).FirstOrDefault(File.Exists);
     if (texturePreview is not null && File.Exists(samplePath))

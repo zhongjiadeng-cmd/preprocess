@@ -8,7 +8,7 @@ namespace GrayscaleLayersMac.Tests;
 public sealed class UiStructureContractTests
 {
     private static readonly string MainWindowSource = File.ReadAllText(
-        Path.Combine(FindRepositoryRoot(), "GrayscaleLayersMac", "MainWindow.cs"));
+        Path.Combine(FindRepositoryRoot(), "src", "GrayscaleLayersMac", "MainWindow.cs"));
 
     [TestMethod]
     public void OriginalInspectorSectionsRemainInOrder()
@@ -224,10 +224,10 @@ public sealed class UiStructureContractTests
     public void AppUsesPlatformFontFallbackInsteadOfInterOnlyDefault()
     {
         var root = FindRepositoryRoot();
-        var program = File.ReadAllText(Path.Combine(root, "GrayscaleLayersMac", "Program.cs"));
-        var app = File.ReadAllText(Path.Combine(root, "GrayscaleLayersMac", "App.cs"));
+        var program = File.ReadAllText(Path.Combine(root, "src", "GrayscaleLayersMac", "Program.cs"));
+        var app = File.ReadAllText(Path.Combine(root, "src", "GrayscaleLayersMac", "App.cs"));
         var project = File.ReadAllText(Path.Combine(
-            root, "GrayscaleLayersMac", "GrayscaleLayersMac.csproj"));
+            root, "src", "GrayscaleLayersMac", "GrayscaleLayersMac.csproj"));
 
         Assert.DoesNotContain("WithInterFont", program);
         Assert.DoesNotContain("Avalonia.Fonts.Inter", project);
@@ -249,13 +249,13 @@ public sealed class UiStructureContractTests
             "GrayscaleLayerThumbnailCanvas.cs"
         })
         {
-            var source = File.ReadAllText(Path.Combine(root, "GrayscaleLayersMac", file));
+            var source = File.ReadAllText(Path.Combine(root, "src", "GrayscaleLayersMac", file));
             Assert.DoesNotContain("Typeface.Default", source, file);
             StringAssert.Contains(source, "UiTheme.UiTypeface", file);
         }
 
         var host = File.ReadAllText(Path.Combine(
-            root, "GrayscaleLayersMac", "DxfPreviewHost.cs"));
+            root, "src", "GrayscaleLayersMac", "DxfPreviewHost.cs"));
         StringAssert.Contains(host, "status.FontFamily = UiTheme.UiFont;");
     }
 
@@ -272,8 +272,8 @@ public sealed class UiStructureContractTests
         var directory = new DirectoryInfo(AppContext.BaseDirectory);
         while (directory is not null)
         {
-            if (File.Exists(Path.Combine(directory.FullName, "GrayscaleLayersMac.sln")) ||
-                Directory.Exists(Path.Combine(directory.FullName, "GrayscaleLayersMac")))
+            if (File.Exists(Path.Combine(directory.FullName, "Preprocess.slnx")) ||
+                Directory.Exists(Path.Combine(directory.FullName, "src", "GrayscaleLayersMac")))
             {
                 return directory.FullName;
             }

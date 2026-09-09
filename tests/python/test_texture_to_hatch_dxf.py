@@ -27,7 +27,7 @@ from texture_to_hatch_dxf import (
 )
 
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 
 
 class NonrepeatingTextureFallbackTests(unittest.TestCase):
@@ -157,7 +157,7 @@ class TextureImageInspectionTests(unittest.TestCase):
             path = Path(tmp) / "source.tif"
             Image.new("L", (1500, 1500), 255).save(path, dpi=(1270, 1270))
             completed = subprocess.run(
-                [sys.executable, str(ROOT / "texture_to_hatch_dxf.py"), str(path),
+                [sys.executable, str(ROOT / "src" / "python" / "texture_to_hatch_dxf.py"), str(path),
                  "--inspect-image", "--include-preview"],
                 check=False, capture_output=True, text=True)
             self.assertEqual(completed.returncode, 0, completed.stderr)
@@ -201,7 +201,7 @@ class TextureImageInspectionTests(unittest.TestCase):
             path = Path(tmp) / "source.png"
             Image.new("L", (80, 40), 255).save(path, dpi=(200, 100))
             completed = subprocess.run(
-                [sys.executable, str(ROOT / "texture_to_hatch_dxf.py"),
+                [sys.executable, str(ROOT / "src" / "python" / "texture_to_hatch_dxf.py"),
                  str(path), "--inspect-image"],
                 check=False, capture_output=True, text=True,
             )
@@ -225,7 +225,7 @@ class TextureImageInspectionTests(unittest.TestCase):
                 completed = subprocess.run(
                     [
                         sys.executable,
-                        str(ROOT / "texture_to_hatch_dxf.py"),
+                        str(ROOT / "src" / "python" / "texture_to_hatch_dxf.py"),
                         str(source),
                         str(output),
                         "--inspect-image",
@@ -277,7 +277,7 @@ class FallbackDpiValidationTests(unittest.TestCase):
                     completed = subprocess.run(
                         [
                             sys.executable,
-                            str(ROOT / "texture_to_hatch_dxf.py"),
+                            str(ROOT / "src" / "python" / "texture_to_hatch_dxf.py"),
                             str(source),
                             str(output),
                             "--size",
@@ -307,7 +307,7 @@ class FallbackDpiValidationTests(unittest.TestCase):
             completed = subprocess.run(
                 [
                     sys.executable,
-                    str(ROOT / "texture_to_hatch_dxf.py"),
+                    str(ROOT / "src" / "python" / "texture_to_hatch_dxf.py"),
                     str(source),
                     str(output),
                     "--width",
@@ -2140,7 +2140,7 @@ class FittedPreviewOutputTests(unittest.TestCase):
             completed = subprocess.run(
                 [
                     sys.executable,
-                    str(ROOT / "texture_to_hatch_dxf.py"),
+                    str(ROOT / "src" / "python" / "texture_to_hatch_dxf.py"),
                     str(input_path),
                     str(dxf_path),
                     "--size",
@@ -2430,7 +2430,7 @@ class FittedPreviewOutputTests(unittest.TestCase):
 class AvaloniaArtifactValidationSourceContractTests(unittest.TestCase):
     def test_validates_each_expected_artifact_before_manifest_and_preview_acceptance(self) -> None:
         source = (
-            Path(__file__).resolve().parents[1] / "GrayscaleLayersMac" / "MainWindow.cs"
+            Path(__file__).resolve().parents[2] / "src" / "GrayscaleLayersMac" / "MainWindow.cs"
         ).read_text(encoding="utf-8")
         hatch_success = source.index("if (hatchExitCode != 0)")
         validation = source.index("ValidateGeneratedLayerArtifacts(", hatch_success)
@@ -2451,7 +2451,7 @@ class AvaloniaArtifactValidationSourceContractTests(unittest.TestCase):
 
     def test_manifest_missing_check_revalidates_expected_paths_directly(self) -> None:
         source = (
-            Path(__file__).resolve().parents[1] / "GrayscaleLayersMac" / "MainWindow.cs"
+            Path(__file__).resolve().parents[2] / "src" / "GrayscaleLayersMac" / "MainWindow.cs"
         ).read_text(encoding="utf-8")
         manifest_start = source.index("var pathComparer = StringComparer.OrdinalIgnoreCase")
         manifest_end = source.index(
@@ -2470,7 +2470,7 @@ class AvaloniaArtifactValidationSourceContractTests(unittest.TestCase):
 
     def test_pipeline_passes_each_current_run_dxf_as_explicit_machine_input(self) -> None:
         source = (
-            Path(__file__).resolve().parents[1] / "GrayscaleLayersMac" / "MainWindow.cs"
+            Path(__file__).resolve().parents[2] / "src" / "GrayscaleLayersMac" / "MainWindow.cs"
         ).read_text(encoding="utf-8")
         start = source.index("var machineInfo = CreatePythonProcess(python)")
         end = source.index("var machineExitCode = await RunProcessAsync", start)
@@ -2481,7 +2481,7 @@ class AvaloniaArtifactValidationSourceContractTests(unittest.TestCase):
 
     def test_pipeline_ignores_historical_dxfs_but_revalidates_current_manifest(self) -> None:
         source = (
-            Path(__file__).resolve().parents[1] / "GrayscaleLayersMac" / "MainWindow.cs"
+            Path(__file__).resolve().parents[2] / "src" / "GrayscaleLayersMac" / "MainWindow.cs"
         ).read_text(encoding="utf-8")
         start = source.index("var pathComparer = StringComparer.OrdinalIgnoreCase")
         end = source.index("步骤 3/3：开始生成机器加工文件", start)
@@ -2495,8 +2495,8 @@ class AvaloniaArtifactValidationSourceContractTests(unittest.TestCase):
 class AvaloniaHatchAngleSourceContractTests(unittest.TestCase):
     def test_single_layer_uses_step_while_multiple_layers_keep_zero_based_sequence(self) -> None:
         source = (
-            Path(__file__).resolve().parents[1]
-            / "GrayscaleLayersMac"
+            Path(__file__).resolve().parents[2]
+            / "src" / "GrayscaleLayersMac"
             / "MainWindow.cs"
         ).read_text(encoding="utf-8")
         calculation_start = source.index("var layerHatchAngle")
@@ -2510,7 +2510,7 @@ class AvaloniaHatchAngleSourceContractTests(unittest.TestCase):
 
 class AvaloniaTextureOverlaySourceContractTests(unittest.TestCase):
     def test_dxf_control_draws_texture_with_dxf_transform_and_owns_bitmap(self) -> None:
-        source = (ROOT / "GrayscaleLayersMac" / "DxfPreviewControl.cs").read_text()
+        source = (ROOT / "src" / "GrayscaleLayersMac" / "DxfPreviewControl.cs").read_text()
         self.assertIn("IDisposable", source)
         self.assertIn("public void LoadTexture(", source)
         self.assertIn("public void ClearTexture()", source)
@@ -2528,7 +2528,7 @@ class AvaloniaTextureOverlaySourceContractTests(unittest.TestCase):
         self.assertIn("plan.ImageToScreenTransform", draw_texture)
 
     def test_loading_dxf_after_texture_keeps_paired_processing_bounds(self) -> None:
-        source = (ROOT / "GrayscaleLayersMac" / "DxfPreviewControl.cs").read_text()
+        source = (ROOT / "src" / "GrayscaleLayersMac" / "DxfPreviewControl.cs").read_text()
         load_file = source[
             source.index("public void LoadFile("):source.index("public override void Render")
         ]
@@ -2540,7 +2540,7 @@ class AvaloniaTextureOverlaySourceContractTests(unittest.TestCase):
 
 class AvaloniaLayerOverlayWiringTests(unittest.TestCase):
     def test_layer_overlay_controls_and_status_are_pipeline_only(self) -> None:
-        source = (ROOT / "GrayscaleLayersMac" / "MainWindow.cs").read_text()
+        source = (ROOT / "src" / "GrayscaleLayersMac" / "MainWindow.cs").read_text()
         pipeline_call = source[
             source.index("var pipelinePreviewPanel = MakeSharedPreviewPanel"):
             source.index("var pipelineContent = MakeWorkspace")
@@ -2555,7 +2555,7 @@ class AvaloniaLayerOverlayWiringTests(unittest.TestCase):
         self.assertIn("TextureStatus", pipeline_builder)
 
     def test_hidden_texture_disables_opacity_without_resetting_its_value(self) -> None:
-        source = (ROOT / "GrayscaleLayersMac" / "MainWindow.cs").read_text()
+        source = (ROOT / "src" / "GrayscaleLayersMac" / "MainWindow.cs").read_text()
         toolbar = source[
             source.index("private static Control MakePipelineDxfPreviewContent"):
             source.index("private static void SelectSharedPreview")
@@ -2574,7 +2574,7 @@ class AvaloniaLayerOverlayWiringTests(unittest.TestCase):
         self.assertNotIn("textureOpacity.Value =", texture_handler)
 
     def test_pipeline_requests_and_registers_matching_preview_png(self) -> None:
-        source = (ROOT / "GrayscaleLayersMac" / "MainWindow.cs").read_text()
+        source = (ROOT / "src" / "GrayscaleLayersMac" / "MainWindow.cs").read_text()
         loop = source[source.index("for (var index = 0;"):source.index("步骤 2/3 完成")]
         self.assertIn('Path.ChangeExtension(outputFile, ".preview.png")', loop)
         self.assertIn('hatchInfo.ArgumentList.Add("--preview-output")', loop)
@@ -2582,7 +2582,7 @@ class AvaloniaLayerOverlayWiringTests(unittest.TestCase):
         self.assertIn("new DxfLayerPreviewItem(", loop)
 
     def test_only_pipeline_preview_opts_into_initial_top_view(self) -> None:
-        source = (ROOT / "GrayscaleLayersMac" / "MainWindow.cs").read_text()
+        source = (ROOT / "src" / "GrayscaleLayersMac" / "MainWindow.cs").read_text()
         self.assertIn(
             "private readonly DxfPreviewControl _pipelineDxfPreview = "
             "new(startInTopView: true);",
@@ -2591,7 +2591,7 @@ class AvaloniaLayerOverlayWiringTests(unittest.TestCase):
         self.assertNotIn("_hatchDxfPreview", source)
 
     def test_selector_clears_stale_texture_before_loading_new_item(self) -> None:
-        source = (ROOT / "GrayscaleLayersMac" / "MainWindow.cs").read_text()
+        source = (ROOT / "src" / "GrayscaleLayersMac" / "MainWindow.cs").read_text()
         handler = source[
             source.index("private bool LoadPipelineLayerPreview"):
             source.index("public MainWindow()")
@@ -2601,7 +2601,7 @@ class AvaloniaLayerOverlayWiringTests(unittest.TestCase):
         self.assertIn("_pipelineDxfPreview.LoadTexture", handler)
 
     def test_orbiting_refreshes_the_top_view_texture_explanation(self) -> None:
-        source = (ROOT / "GrayscaleLayersMac" / "MainWindow.cs").read_text()
+        source = (ROOT / "src" / "GrayscaleLayersMac" / "MainWindow.cs").read_text()
         toolbar = source[
             source.index("private static Control MakePipelineDxfPreviewContent"):
             source.index("private static void SelectSharedPreview")

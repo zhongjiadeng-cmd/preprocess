@@ -48,10 +48,11 @@ public sealed class ProcessingExecutor(IProcessingStepRunner runner)
                 token.ThrowIfCancellationRequested();
                 var config = Configuration(snapshot, node.Id);
                 States.TryGetValue(node.Id, out var old);
-                var currentHash = old?.Result is null ? "" : await HashFilesAsync(node, old.Result, token);
-                if (!upstreamChanged && old?.Status == "已完成" && old.Configuration == config && currentHash.Length > 0 &&
+                var canReuse = !upstreamChanged && old?.Status == "已完成" && old.Configuration == config && old.Result is not null;
+                var currentHash = canReuse ? await HashFilesAsync(node, old!.Result!, token) : "";
+                if (canReuse && currentHash.Length > 0 &&
                     _fileHashes.GetValueOrDefault(node.Id) == currentHash)
-                { last = old.Result; continue; }
+                { last = old!.Result; continue; }
                 upstreamChanged = true;
                 States[node.Id] = new(config, "运行中", old?.Result);
                 Changed?.Invoke();
@@ -202,6 +203,7 @@ public sealed class PythonProcessingRunner(string python, string scripts, Action
             var width = Number(node, "width"); var height = Number(node, "height");
             var step = Number(node, "angle-step", allowZero: true);
             var output = new List<ProcessingLayer>();
+            var jobs = new List<List<string>>();
             foreach (var (layer, index) in input.Layers.Select((layer, index) => (layer, index)))
             {
                 token.ThrowIfCancellationRequested();
@@ -216,8 +218,16 @@ public sealed class PythonProcessingRunner(string python, string scripts, Action
                     "--max-block-area", F(width * height * Number(node, "max-area-percent") / 100) };
                 AddSettings(args, node, ["width", "height", "spacing", "blocks", "boundary-blur", "boundary-correlation", "anchor", "tile-mode", "threshold"]);
                 foreach (var flag in new[] { "bidirectional", "border" }) if (node.Setting(flag) == "true") args.Add("--" + flag);
-                await Script("texture_to_hatch_dxf.py", args, token);
+                jobs.Add(args);
                 output.Add(new(node.Id + ":" + layer.Id, layer.Name, path, layer.Order, preview));
+            }
+            if (jobs.Count == 1)
+                await Script("texture_to_hatch_dxf.py", jobs[0], token);
+            else
+            {
+                var hatchRequestPath = Path.Combine(directory, "hatch-request.json");
+                await File.WriteAllTextAsync(hatchRequestPath, JsonSerializer.Serialize(jobs), new UTF8Encoding(false), token);
+                await Script("texture_to_hatch_dxf.py", [hatchRequestPath, "--batch"], token);
             }
             return new(output.ToArray(), Width: width, Height: height);
         }
