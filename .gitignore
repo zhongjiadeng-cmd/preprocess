@@ -25,3 +25,6 @@ design-evidence/
 
 # Packaged application artifacts
 artifacts/
+
+# Local assistant state
+.workbuddy/

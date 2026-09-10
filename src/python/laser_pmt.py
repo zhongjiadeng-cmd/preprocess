@@ -35,7 +35,7 @@ _SAFE_PREFIX_RE = re.compile(r"[A-Za-z0-9_-]{0,64}")
 _COMMAND_RE = re.compile(
     r"(?P<prefix>G91)?G00X(?P<x>-?(?:0|[1-9][0-9]*)\.[0-9]{3})"
     r"Y(?P<y>-?(?:0|[1-9][0-9]*)\.[0-9]{3})"
-    r"Z(?P<z>-?(?:0|[1-9][0-9]*)\.[0-9]{3})F40(?P<suffix>G90)?"
+    r"Z(?P<z>-?(?:0|[1-9][0-9]*)\.[0-9]{3})F40(?P<suffix>\nG90)?"
 )
 
 
@@ -280,7 +280,7 @@ def _simulate_cycles(cycles: object) -> tuple[tuple[Decimal, Decimal, Decimal], 
         if (match.group("prefix") is not None) != (index in {0, final}):
             raise ValueError("G91 must prefix the first and final cycles")
         if (match.group("suffix") is not None) != (index == final):
-            raise ValueError("G90 must suffix only the final cycle")
+            raise ValueError("A separate G90 line must end only the final cycle")
         x += Decimal(match.group("x"))
         y += Decimal(match.group("y"))
         z += Decimal(match.group("z"))
@@ -459,7 +459,7 @@ def _build_cycles(
         if index in {0, final}:
             command = "G91" + command
         if index == final:
-            command += "G90"
+            command += "\nG90"
         cycles.append({"galvo_0": [laser_index, command, list(patch_reference)]})
         previous_x, previous_y, previous_z = target_x, target_y, target_z
     return cycles

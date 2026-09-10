@@ -232,9 +232,8 @@ def build_machine_document(
         if patch_index == 0 or patch_index == len(placements) - 1:
             command = "G91" + command
         if patch_index == len(placements) - 1:
-            # Target-controller contract: F40 completes this relative motion
-            # before the lexically trailing G90 restores absolute mode.
-            command += "G90"
+            # Restore absolute mode in a separate program block.
+            command += "\nG90"
         cycles.append({"galvo_0": [0, command, [patch_index, 0]]})
         previous_commanded_x = target_x
         previous_commanded_y = target_y
@@ -278,11 +277,9 @@ def _decimal_from_thousandths(value: int) -> Decimal:
 def _simulate_vendor_machine_cycles(
     machine_cycles: object,
 ) -> list[tuple[Decimal, Decimal, Decimal]]:
-    """Strictly simulate the target controller's supported lexical command grammar.
+    """Validate relative motion blocks followed by a separate final G90 block.
 
-    This controller executes the pending G00 motion when the lexical ``F40`` token
-    completes, then applies a trailing ``G90``. Consequently the approved final
-    ``...F40G90`` command finishes its G91-relative move before restoring G90.
+    This checks the exported sequence, not the receiving controller's execution.
     """
     if type(machine_cycles) is not list or not machine_cycles:
         raise ValueError("machine_cycle must be a non-empty list")
@@ -334,7 +331,7 @@ def _simulate_vendor_machine_cycles(
         ))
 
         if cycle_index == final_index:
-            cursor = _consume_vendor_literal(command, cursor, "G90")
+            cursor = _consume_vendor_literal(command, cursor, "\nG90")
             absolute_mode = True
         if cursor != len(command):
             raise ValueError("vendor command contains unsupported or misplaced tokens")

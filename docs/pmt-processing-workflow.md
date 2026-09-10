@@ -56,7 +56,7 @@ Hatch 角度保留源层序号语义，挑选子集不会重新计算层号。Ma
 ## 开发验证
 
 ```bash
-PMT_WORKFLOW_PYTHON=/usr/bin/python3 dotnet test GrayscaleLayersMac.Tests -p:UsedAvaloniaProducts= -p:UseSharedCompilation=false
+PMT_WORKFLOW_PYTHON=/usr/bin/python3 dotnet test tests/GrayscaleLayersMac.Tests -p:UsedAvaloniaProducts= -p:UseSharedCompilation=false
 python3 -m pytest tests -q
 dotnet run --project tools/ProcessingWorkflowQa -p:UsedAvaloniaProducts= -p:UseSharedCompilation=false -- artifacts
 ```

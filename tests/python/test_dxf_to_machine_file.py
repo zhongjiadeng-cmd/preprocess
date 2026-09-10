@@ -364,7 +364,7 @@ class MachineDocumentTests(unittest.TestCase):
         self.assertEqual(document["machine_cycle"], [
             {"galvo_0": [0, "G91G00X0.000Y0.000Z0.000F40", [0, 0]]},
             {"galvo_0": [0, "G00X0.000Y0.000Z-0.003F40", [1, 0]]},
-            {"galvo_0": [0, "G91G00X0.000Y0.000Z-0.003F40G90", [2, 0]]},
+            {"galvo_0": [0, "G91G00X0.000Y0.000Z-0.003F40\nG90", [2, 0]]},
         ])
 
     def test_deep_copies_defaults_and_caller_data(self) -> None:
@@ -413,7 +413,7 @@ class MachineDocumentTests(unittest.TestCase):
             [
                 "G91G00X0.000Y0.000Z0.000F40",
                 "G00X0.000Y0.000Z-0.006F40",
-                "G91G00X0.000Y0.000Z-0.006F40G90",
+                "G91G00X0.000Y0.000Z-0.006F40\nG90",
             ],
         )
 
@@ -428,7 +428,7 @@ class MachineDocumentTests(unittest.TestCase):
             [cycle["galvo_0"][1] for cycle in document["machine_cycle"]],
             [
                 "G91G00X1.000Y2.000Z0.000F40",
-                "G91G00X3.000Y4.000Z0.000F40G90",
+                "G91G00X3.000Y4.000Z0.000F40\nG90",
             ],
         )
 
@@ -444,7 +444,7 @@ class MachineDocumentTests(unittest.TestCase):
             [
                 "G91G00X10.000Y5.000Z0.000F40",
                 "G00X8.000Y-3.000Z0.000F40",
-                "G91G00X-22.000Y5.000Z-0.006F40G90",
+                "G91G00X-22.000Y5.000Z-0.006F40\nG90",
             ],
         )
 
@@ -454,7 +454,7 @@ class MachineDocumentTests(unittest.TestCase):
         )
         self.assertEqual(
             document["machine_cycle"][0]["galvo_0"][1],
-            "G91G00X2.000Y-3.000Z0.000F40G90",
+            "G91G00X2.000Y-3.000Z0.000F40\nG90",
         )
 
     def test_relative_deltas_accumulate_to_each_three_decimal_target(self) -> None:
@@ -467,7 +467,7 @@ class MachineDocumentTests(unittest.TestCase):
             [cycle["galvo_0"][1] for cycle in document["machine_cycle"]],
             [
                 "G91G00X0.000Y0.000Z0.000F40",
-                "G91G00X0.001Y0.000Z0.000F40G90",
+                "G91G00X0.001Y0.000Z0.000F40\nG90",
             ],
         )
 
@@ -498,10 +498,10 @@ class MachineDocumentTests(unittest.TestCase):
 
 
 class VendorCommandSimulatorTests(unittest.TestCase):
-    def test_executes_final_motion_before_trailing_g90_in_vendor_lexical_order(self) -> None:
+    def test_executes_final_relative_block_before_separate_g90_block(self) -> None:
         cycles = [
             {"galvo_0": [0, "G91G00X10.000Y5.000Z0.000F40", [0, 0]]},
-            {"galvo_0": [0, "G91G00X-2.000Y3.000Z-0.006F40G90", [1, 0]]},
+            {"galvo_0": [0, "G91G00X-2.000Y3.000Z-0.006F40\nG90", [1, 0]]},
         ]
 
         states = machine._simulate_vendor_machine_cycles(cycles)
@@ -516,7 +516,7 @@ class VendorCommandSimulatorTests(unittest.TestCase):
 
     def test_single_command_moves_relatively_then_restores_absolute_mode(self) -> None:
         states = machine._simulate_vendor_machine_cycles([
-            {"galvo_0": [0, "G91G00X2.000Y-3.000Z-0.001F40G90", [0, 0]]}
+            {"galvo_0": [0, "G91G00X2.000Y-3.000Z-0.001F40\nG90", [0, 0]]}
         ])
 
         self.assertEqual(
@@ -528,7 +528,7 @@ class VendorCommandSimulatorTests(unittest.TestCase):
         large = "1000000000000000019884624838656.000"
         states = machine._simulate_vendor_machine_cycles([
             {"galvo_0": [0, f"G91G00X{large}Y0.000Z0.000F40", [0, 0]]},
-            {"galvo_0": [0, f"G91G00X-{large}Y0.000Z-0.001F40G90", [1, 0]]},
+            {"galvo_0": [0, f"G91G00X-{large}Y0.000Z-0.001F40\nG90", [1, 0]]},
         ])
 
         self.assertEqual(
@@ -541,15 +541,16 @@ class VendorCommandSimulatorTests(unittest.TestCase):
 
     def test_rejects_commands_outside_the_restricted_vendor_grammar(self) -> None:
         invalid_cycle_lists = [
-            [{"galvo_0": [0, "G00X1.000Y2.000Z0.000F40G90", [0, 0]]}],
+            [{"galvo_0": [0, "G91G00X1.000Y2.000Z0.000F40G90", [0, 0]]}],
+            [{"galvo_0": [0, "G00X1.000Y2.000Z0.000F40\nG90", [0, 0]]}],
             [{"galvo_0": [0, "G91G00X1.000Y2.000Z0.000G90F40", [0, 0]]}],
             [{"galvo_0": [0, "G91G00X1.000Y2.000Z0.000F40", [0, 0]]}],
-            [{"galvo_0": [0, "G91G00XnanY2.000Z0.000F40G90", [0, 0]]}],
-            [{"galvo_0": [0, "G91G00X1.00١Y2.000Z0.000F40G90", [0, 0]]}],
-            [{"galvo_0": [0, "G91G00X1.000Y2.000Z0.000F40G90X0.000", [0, 0]]}],
-            [{"galvo_0": [0, "G91G00X1.000Y2.000Z0.000F40G90", [1, 0]]}],
+            [{"galvo_0": [0, "G91G00XnanY2.000Z0.000F40\nG90", [0, 0]]}],
+            [{"galvo_0": [0, "G91G00X1.00١Y2.000Z0.000F40\nG90", [0, 0]]}],
+            [{"galvo_0": [0, "G91G00X1.000Y2.000Z0.000F40\nG90X0.000", [0, 0]]}],
+            [{"galvo_0": [0, "G91G00X1.000Y2.000Z0.000F40\nG90", [1, 0]]}],
             [
-                {"galvo_0": [0, "G91G00X1.000Y2.000Z0.000F40G90", [0, 0]]},
+                {"galvo_0": [0, "G91G00X1.000Y2.000Z0.000F40\nG90", [0, 0]]},
                 {"galvo_0": [0, "G00X1.000Y2.000Z0.000F40", [1, 0]]},
             ],
         ]
@@ -559,7 +560,7 @@ class VendorCommandSimulatorTests(unittest.TestCase):
 
     def test_simulator_is_independent_of_generation_helpers(self) -> None:
         cycles = [
-            {"galvo_0": [0, "G91G00X1.000Y2.000Z-0.003F40G90", [0, 0]]}
+            {"galvo_0": [0, "G91G00X1.000Y2.000Z-0.003F40\nG90", [0, 0]]}
         ]
         with (
             mock.patch.object(
@@ -1083,7 +1084,7 @@ class GenerateMachineFileTests(unittest.TestCase):
                 "G91G00X10.000Y5.000Z0.000F40",
                 "G00X8.000Y-3.000Z0.000F40",
                 "G00X-22.000Y5.000Z-0.006F40",
-                "G91G00X3.000Y4.000Z0.000F40G90",
+                "G91G00X3.000Y4.000Z0.000F40\nG90",
             ])
             simulated_states = machine._simulate_vendor_machine_cycles(
                 document["machine_cycle"]
@@ -1673,7 +1674,7 @@ class GenerateMachineFileTests(unittest.TestCase):
                 [
                     "G91G00X0.000Y0.000Z0.000F40",
                     "G00X0.000Y0.000Z-0.005F40",
-                    "G91G00X0.000Y0.000Z-0.005F40G90",
+                    "G91G00X0.000Y0.000Z-0.005F40\nG90",
                 ],
             )
 
@@ -1995,7 +1996,7 @@ class CliTests(unittest.TestCase):
                 [cycle["galvo_0"][1] for cycle in document["machine_cycle"]],
                 [
                     "G91G00X0.000Y0.000Z0.000F40",
-                    "G91G00X0.000Y0.000Z-0.005F40G90",
+                    "G91G00X0.000Y0.000Z-0.005F40\nG90",
                 ],
             )
             second_patch = np.load(root / "cli-job" / "patches" / "1_0.npy", allow_pickle=False)

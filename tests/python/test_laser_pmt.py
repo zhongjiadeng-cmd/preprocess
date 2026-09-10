@@ -566,10 +566,10 @@ def test_base_loader_rejects_nonfirst_laser_index_and_layer_regression() -> None
         document["machine_cycle"][-1]["galvo_0"][1] = (
             document["machine_cycle"][-1]["galvo_0"][1]
             .removeprefix("G91")
-            .removesuffix("G90")
+            .removesuffix("\nG90")
         )
         document["machine_cycle"].append({
-            "galvo_0": [0, "G91G00X-2.000Y-2.000Z0.003F40G90", [2, 0]]
+            "galvo_0": [0, "G91G00X-2.000Y-2.000Z0.003F40\nG90", [2, 0]]
         })
         (base / "machine.json").write_text(json.dumps(document), encoding="utf-8")
         np.save(
@@ -578,3 +578,19 @@ def test_base_loader_rejects_nonfirst_laser_index_and_layer_regression() -> None
         )
         with pytest.raises(ValueError, match="earlier layer"):
             pmt.load_base_machine(base)
+
+
+@pytest.mark.parametrize("suffix", ["G90", " G90", "\nG90\nG00X1.000"])
+def test_rejects_same_block_or_extra_commands_after_final_motion(suffix: str) -> None:
+    cycles = [{"galvo_0": [0, "G91G00X1.000Y2.000Z0.000F40" + suffix, [0, 0]]}]
+    with pytest.raises(ValueError, match="unsupported vendor command"):
+        pmt._simulate_cycles(cycles)
+
+
+def test_final_mode_reset_survives_json_roundtrip_as_separate_line() -> None:
+    cycles = pmt._build_cycles([(1.0, 2.0, -0.003)], [(0, 0)], [0])
+    decoded = json.loads(json.dumps(cycles))
+    assert decoded[0]["galvo_0"][1].splitlines() == [
+        "G91G00X1.000Y2.000Z-0.003F40", "G90"
+    ]
+    assert pmt._simulate_cycles(decoded) == ((pmt.Decimal("1"), pmt.Decimal("2"), pmt.Decimal("-0.003")),)

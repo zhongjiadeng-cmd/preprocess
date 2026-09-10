@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="VcsDirectoryMappings">
+    <mapping directory="$PROJECT_DIR$/../.." vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/../../SubModule/ConexCC" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/../../SubModule/ECamera" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/../../SubModule/ELight" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/../../SubModule/EUtility" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/../../SubModule/FLIRCamera" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/../../SubModule/Motion" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/../../SubModule/Tools" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/../../SubModule/WoodSrc" vcs="Git" />
+  </component>
+</project>
